@@ -4,6 +4,9 @@
 > (`${CLAUDE_PLUGIN_ROOT}/skills/sdd/references/flow-rules.md`) hold here too. Paths like
 > `references/…` and `assets/…` are in the spec skill's folder.
 
+**Found a bug this work did not cause?** Stop. Explain it and ask the user before you touch it —
+follow "Bugs this work did not cause" in `flow-rules.md`. This holds in every step below.
+
 1. **Run every task's Verify command:** `env.py verify --id <id>`. It runs each backticked command in
    its repo's worktree and records the results. A failure blocks the PR: `progress --passed "Ready to
    PR"` and `env.py pr` both refuse until every command passes **on the code as it is now** (an
@@ -16,7 +19,8 @@
 4. **Overlap check:** `spec.py impact --id <id>`, then check the design's anchors against the
    candidates it lists for file and symbol overlap. With more than a few candidates, give the
    list and the anchors to **`sdd:investigator`** and ask for each overlap with its file:line.
-5. Report what was built, what was skipped and why; no silent scope changes — as an `sdd:visual`
+5. Report what was built, what was skipped and why, and each bug this work did not cause with the
+   user's answer; no silent scope changes — as an `sdd:visual`
    **diff-review** page (`visuals/diff-review.html`) per the worktree diff against its base branch.
 6. **Stop and ask.** Implementation and the checks above are done — run the "Ready to PR" gate
    with `AskUserQuestion`: "Raise the PR" vs "Make changes". Never open a PR on the assumption

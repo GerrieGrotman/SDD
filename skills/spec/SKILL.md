@@ -26,8 +26,9 @@ full command table. This file calls them `env.py` and `spec.py`, short for
 ## Read first
 
 1. **`${CLAUDE_PLUGIN_ROOT}/skills/sdd/references/flow-rules.md`** — the rules every sdd flow
-   shares: Abandon, Decision briefs (links before every question), progress checkpoints, never
-   skipping a stage, stage guards, proof runs, resuming, and the sub-agent rules. Read it once, at
+   shares: Abandon, Decision briefs (links before every question), bugs this work did not cause
+   (explain, then ask), progress checkpoints, never skipping a stage, stage guards, proof runs,
+   resuming, and the sub-agent rules. Read it once, at
    the start, and follow it throughout.
 2. **This file** — the outline: the ground rules, the approval gates, the gates, the modes.
 3. **Each mode's own file, when the mode starts.** `env.py can --op phase` prints it (`read:`).
