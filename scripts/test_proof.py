@@ -123,7 +123,7 @@ def main():
         tasks = (f"# 5 — Tasks\n\n- [x] 1. Fix add\n      - Files: `src/Repo/calc.py`\n      - Verify: `{TEST}`\n"
                  "- [x] 2. Check the page\n      - Files: `docs/x.md`\n      - Verify: the page shows 4\n"
                  "\n## Not doing\n\n- [ ] 9. nothing\n")
-        (spec / "tasks.md").write_text(tasks)
+        (spec / "tasks.md").write_text(tasks, encoding="utf-8")
         parsed = proof.parse_tasks(tasks)
         assert [t["n"] for t in parsed] == [1, 2] and proof.verify_command(parsed[1]) is None
         assert proof.task_repo(parsed[0], {"Repo": None, "Other": None}) == "Repo"
@@ -131,7 +131,7 @@ def main():
         r = env_py(root, "verify", "--id", "5")
         assert "1 passed, 0 failed, 1 by hand" in r.stdout and "check by hand" in r.stdout, r.stdout
         assert lacks("spec", "Ready to PR") == []
-        (spec / "tasks.md").write_text(tasks.replace(TEST, f'"{PY}" -c "raise SystemExit(3)"'))
+        (spec / "tasks.md").write_text(tasks.replace(TEST, f'"{PY}" -c "raise SystemExit(3)"'), encoding="utf-8")
         r = env_py(root, "verify", "--id", "5", check=False)
         assert r.returncode == 1 and "0 passed, 1 failed" in r.stdout, r.stdout
 
