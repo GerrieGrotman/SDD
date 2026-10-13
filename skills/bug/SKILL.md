@@ -30,8 +30,9 @@ why it broke — and each one has a gate below that catches it.
 ## Read first
 
 1. **`${CLAUDE_PLUGIN_ROOT}/skills/sdd/references/flow-rules.md`** — the rules every sdd flow
-   shares: Abandon, Decision briefs (links before every question), progress checkpoints, never
-   skipping a stage, stage guards, proof runs, resuming, and the sub-agent rules. Read it once, at
+   shares: Abandon, Decision briefs (links before every question), bugs this work did not cause
+   (explain, then ask), progress checkpoints, never skipping a stage, stage guards, proof runs,
+   resuming, and the sub-agent rules. Read it once, at
    the start, and follow it throughout.
 2. **This file** — the outline: the non-negotiables, the house style, the gates, the phases.
 3. **Each phase's own file, when the phase starts.** `env.py can --op phase` prints it (`read:`).

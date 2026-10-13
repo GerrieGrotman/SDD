@@ -65,6 +65,49 @@ ask it properly. They act only while an sdd flow runs. `/sdd init` installs them
    branch gets an ADO link.
 5. Exempt: `/sdd init` install questions and `/sdd help` — they are about tools, not the spec.
 
+## Bugs this work did not cause — explain, then ask (mandatory)
+
+In the verify stage (bug Phase 9, spec Verify) you can find a bug that is not yours: a failing
+test, a wrong result, a crash. It is **not yours** when it is unrelated to this work item, or when
+this run's changes did not make it. **Never fix it silently, and never step over it silently.**
+A bug your own change made is yours: fix it as part of the work, with no question.
+
+1. **Prove it is not yours.** Show that the code at fault is not in this work's diff: in the
+   worktree, `git diff <base>...HEAD -- <file>` does not touch those lines, and `git blame` names an
+   older commit. Not sure? Say so on the page. Never guess.
+2. **Explain it on an `sdd:visual` page**, **bug** mode, at `visuals/found-bug-<slug>.html`. The
+   page answers four things, each with a real anchor:
+   - **What** — the symptom, where it is (`src/<Repo>/path/File.cs:120`), and the real output that
+     showed it.
+   - **Why it is a bug** — what should happen, what happens instead, and what says so: an
+     acceptance criterion, the test's intent, an API contract, a crash. An opinion is not a reason.
+   - **Why it is not this work's** — the evidence from step 1.
+   - **What would fix it** — what changes and where, how big it is, and its risk. Say what it adds
+     to this work: a test first, then the verify runs again.
+   Also say if it blocks a gate run of this flow (for example, a failing test in the full suite).
+3. **Ask** under Decision briefs above: a `--status waiting` checkpoint with `--gate "<the
+   question>"`, `--ref visuals/found-bug-<slug>.html` and the code range as a `--ref`. Then
+   `AskUserQuestion`, one question per bug (up to four in one call), two options, the one you
+   recommend first:
+   - **"Fix it here"** — it becomes part of this work.
+   - **"Leave it out"** — it is not touched here and goes on the out-of-scope list.
+   Recommend "Leave it out" unless the fix is small, sits in code this work already changes, or
+   blocks this work's gate runs.
+4. **"Fix it here"?** Record the answer with `--note` on the next checkpoint. Then:
+   - **Bug flow:** write its failing test first and record it as in Phase 7 (`env.py run --gate
+     "Red test" --expect fail`), fix it as in Phase 8, then run Phase 9 again from the top. The PR's
+     report names it as an extra fix the user approved.
+   - **Spec flow:** add it to `tasks.md` as a new task with its own Verify command, do it in
+     Implement, then run Verify again from step 1. The step 5 report names it.
+   Any edit voids the recorded runs, so they run again anyway.
+5. **"Leave it out"?** Record the answer with `--note` on the next checkpoint. Do not touch the
+   code. Write the bug down so it is not lost: in the bug flow under **Out of scope** (the PR's Out
+   of scope comment); in the spec flow in the step 5 report and the PR description. It needs its own
+   work item: say so, and create one only if the user asks.
+   **It blocks a gate run?** Then that run cannot pass as it is. Say so in the "Leave it out"
+   option's text: the run then leaves out only that one test, and the report and the PR name what
+   was left out. Never leave out a test the user did not agree to.
+
 ## Progress checkpoints — so another session can resume
 
 Work on one item often spans several chat sessions. The work item's `workitem.json` holds where it

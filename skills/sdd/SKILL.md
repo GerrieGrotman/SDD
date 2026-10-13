@@ -258,5 +258,5 @@ spec.
 - **Every explanation or plan gets an `sdd:visual` page** (requirements, design, tasks, bug cause
   and fix, impact, review, status recap) in `{spec folder}/visuals/`, sent with `SendUserFile`.
 - "abandon" at any point stops the flow; Abandon in `references/flow-rules.md` says how to clean up.
-- **The rest of the shared rules** (checkpoints, never skipping a stage, stage guards, proof runs,
-  resuming, sub-agents) are in `references/flow-rules.md`. Each flow skill reads it first.
+- **The rest of the shared rules** (bugs this work did not cause, checkpoints, never skipping a
+  stage, stage guards, proof runs, resuming, sub-agents) are in `references/flow-rules.md`. Each flow skill reads it first.

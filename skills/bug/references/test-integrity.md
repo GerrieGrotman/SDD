@@ -148,6 +148,8 @@ Runs unit + ArchUnit projects and skips `LoadTests/` (a console app). ArchUnit f
 layer-boundary violation in your fix — they surface at **test** time, not compile time, so a green
 build says nothing about them.
 
-Pre-existing unrelated failures: report them as pre-existing, don't fold them into your fix and
-don't claim the suite is green when it isn't. `NU190x` package-vulnerability warnings are
+Pre-existing unrelated failures: explain each one and ask the user whether to fix it here — see
+"Bugs this work did not cause" in `${CLAUDE_PLUGIN_ROOT}/skills/sdd/references/flow-rules.md`.
+Never fold one into your fix without the user's yes, and don't claim the suite is green when it
+isn't. `NU190x` package-vulnerability warnings are
 pre-existing noise and not caused by your change.

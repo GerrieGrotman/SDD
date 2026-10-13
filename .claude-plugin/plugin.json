@@ -1,6 +1,6 @@
 {
   "name": "sdd",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Spec-driven development on Azure DevOps work items: spec and bug flows, ADO spec mirror, impact analysis, visual pages and the question guard.",
   "types": "./types/index.d.ts"
 }

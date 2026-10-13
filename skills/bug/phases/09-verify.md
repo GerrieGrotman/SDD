@@ -8,6 +8,9 @@
 below **on its code as it is now**. An edit after a run voids it (a commit of the same files does
 not), and `env.py pr` checks again. So re-run them after any change.
 
+**Found a bug this fix did not cause?** Stop. Explain it and ask the user before you touch it —
+follow "Bugs this work did not cause" in `flow-rules.md`. This holds in every step below.
+
 ## Gate 3 — the test actually guards the defect
 
 1. **Green** and 2. **Revert-check** in one command:
@@ -29,8 +32,9 @@ not), and `env.py pr` checks again. So re-run them after any change.
    Any variation means it is flaky; fix it before proceeding (causes and remedies in
    `references/test-integrity.md`).
 4. **Full suite** — `env.py run --id <id> --gate Verified --expect pass --suite -- dotnet test <solution>`
-   for every affected repo. Unit + ArchUnit must pass. Pre-existing unrelated failures: report them,
-   don't silently absorb them.
+   for every affected repo. Unit + ArchUnit must pass. A failure this fix did not cause: explain it
+   and ask (see above). Never fold it into the fix without the user's yes, and never absorb it
+   silently.
 5. **Symptom re-check** — confirm the *original reported symptom* is gone, not just that the test
    is green. Where Phase 4 reproduced it end-to-end, re-run that path. **When the symptom is
    UI-visible, re-run the same real-browser check with the Claude in Chrome plugin** used in

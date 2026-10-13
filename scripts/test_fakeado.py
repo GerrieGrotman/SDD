@@ -150,7 +150,7 @@ def main():
         assert r.returncode != 0 and "--confirmed" in r.stderr, r.stderr
         run(root, "env.py", "path", "--id", "502", "--set", "short", "--confirmed", "short path please")
         r = run(root, "env.py", "can", "--id", "502", "--op", "phase", "--flow", "spec", "--phase", "Open Questions")
-        assert "allowed" in r.stdout and "modes/open-questions.md" in r.stdout, r.stdout
+        assert "allowed" in r.stdout and "modes/open-questions.md" in r.stdout.replace("\\", "/"), r.stdout
         rec = json.loads(next((root / ".claude" / "worktrees").glob("502-*/workitem.json")).read_text())
         assert rec["path"] == "short" and rec["pathChosen"]["confirmed"] == "short path please"
         rec["stages"]["Decompose"] = {"at": "t", "status": "worked"}

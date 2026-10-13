@@ -13,7 +13,7 @@ the user's view; this file is for working on the plugin itself.
 
 | Path | What |
 | --- | --- |
-| `skills/sdd/` | The `/sdd` router, `HELP.md`, and `references/flow-rules.md` — the rules both flows share (Abandon, Decision briefs, checkpoints, stage guards, proof runs, resuming, sub-agents). Change a shared rule there, once |
+| `skills/sdd/` | The `/sdd` router, `HELP.md`, and `references/flow-rules.md` — the rules both flows share (Abandon, Decision briefs, bugs this work did not cause, checkpoints, stage guards, proof runs, resuming, sub-agents). Change a shared rule there, once |
 | `skills/bug/`, `skills/spec/` | Each flow: `SKILL.md` is the outline (rules, gates, stage index); each stage's steps are in `phases/NN-*.md` / `modes/*.md` |
 | `skills/next/`, `sync/`, `impact/`, `harness/`, `visual/`, `workspace/` | The other skills. `visual/` is a fork of visual-explainer (MIT) |
 | `scripts/flows.json` | **The source of truth for the flows**: stages, gates each stage needs and passes, stops, `doc` (the stage file `env.py can` prints), `proofs`, `paths`. Scripts, hooks and the view all read it |

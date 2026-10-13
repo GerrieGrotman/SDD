@@ -28,7 +28,7 @@ def run(tp, cwd, file_path, tool="Edit", key="file_path"):
 def main():
     fails = []
     with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
+        root = Path(tmp).resolve()      # the hook resolves paths: a short (8.3) TEMP name would not match
         (root / ".claude").mkdir()
         (root / ".claude" / "sdd.json").write_text(json.dumps({"specRoot": "docs/spec", "ado": {"org": "O", "projects": ["P"]}}))
         (root / "RepoA" / ".git").mkdir(parents=True)
