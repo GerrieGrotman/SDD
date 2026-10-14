@@ -38,7 +38,7 @@ A fix reaches `team/0.0.3` by landing on `team/0.0.2` first. Each hop is its own
 - Commits are grouped by the ADO id in the message (`ADO 4471`) into fixes. The matrix lists fixes down,
   hops across. A cell is: applied, applied (same patch), missing, will conflict, or skipped.
 
-**Merge is the default.** The hop makes `backport/<x>-to-<y>` from y, merges x into it, pushes it,
+**Merge is the default.** The hop makes `sync/<x>-<y>` from y (versions only: `team/0.0.1` to `team/0.0.2` is `sync/0.0.1-0.0.2`), merges x into it, pushes it,
 and opens a PR into y (ADO). It never pushes to y. A merge that conflicts leaves the worktree in
 place and hands over to Claude: the pane fills `/repowatch resolve <hop>` for the person to send.
 
