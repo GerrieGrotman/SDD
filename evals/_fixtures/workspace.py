@@ -11,7 +11,8 @@
 
 The workspace gets: .claude/sdd.json; world.json, the offline ADO (scripts/fakeado.py) that the
 case's SDD_FAKE_ADO names; a git repo `Exporter` with the bug in it, pushed to a bare origin as
-team/1.0.0; a workspace-root git repo; and user story 502 for the spec-flow cases.
+team/1.0.0; a workspace-root git repo; user story 502 for the spec-flow cases; and AI Agent Request
+503, a hand-over that names 502 (open, its date work left) and 501.
 """
 import argparse
 import json
@@ -85,7 +86,14 @@ def main():
                                      "System.Title": "Show the invoice date on the export", "System.State": "New",
                                      "Microsoft.VSTS.Common.AcceptanceCriteria":
                                          "<div>Given an invoice, when it is exported, then its date shows as "
-                                         "yyyy-MM-dd.</div>"}}}}
+                                         "yyyy-MM-dd.</div>"}},
+        "503": {"rev": 1, "fields": {"System.WorkItemType": "AI Agent Request", "System.TeamProject": "Finance",
+                                     "System.Title": "Hand-over: invoice date on the export", "System.State": "New",
+                                     "System.Description":
+                                         "<div>I added the invoice date to the CSV export for User Story 502. "
+                                         "Bug 501 (cents) is not touched.</div><div>Work still to be done: the "
+                                         "PDF export still shows the date as MM/dd/yyyy, not yyyy-MM-dd. Tests "
+                                         "for the PDF export are not yet written.</div>"}}}}
     (root / "world.json").write_text(json.dumps(world, indent=2) + "\n")
     os.environ["SDD_FAKE_ADO"] = str(root / "world.json")
 

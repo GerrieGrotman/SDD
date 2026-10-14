@@ -1,6 +1,6 @@
 ---
 name: sdd
-description: 'Entry point for the spec-driven development workflows on Azure DevOps work items in a multi-repo workspace. `/sdd help` gives a quick tour; `/sdd init` checks and (per item, with permission) installs or configures everything the workflows need, including the workspace CLAUDE.md block. `/sdd <id>` reads the work item type and routes Bug/Issue to the bug flow and story/tech story/change request/feature/epic to the spec flow; `/sdd bug <id>`, `/sdd spec <id>`, `/sdd sync [<id>|all]`, `/sdd impact <id>` (or `/sdd impact all` for the whole spec, after a token-cost warning), `/sdd status <id>` reports where an item stands (so work started in one chat can resume in another), `/sdd harness <create|onboard|audit|maintain>` sets up and audits the Claude Code harness (CLAUDE.md, allowlists, hooks) of a repo or workspace, `/sdd done <id>` cleans up, `/sdd abandon <id>` stops an item, and `/sdd <id> feedback <stage>: <text>` (or the sdd view''s message "sdd feedback for <id>, stage <stage>: <text>") sends an item back to a stage with the user''s feedback, the view''s "sdd answer for <id>, stage <stage>: …" is the user''s answer to a gate question, and the view''s "sdd approve for <id>, stage <stage>" is the user''s go-ahead at a spec flow stop — each refuses and explains when the item''s state does not allow it. Use whenever the user types /sdd or asks to "sdd" a work item.'
+description: 'Entry point for the spec-driven development workflows on Azure DevOps work items in a multi-repo workspace. `/sdd help` gives a quick tour; `/sdd init` checks and (per item, with permission) installs or configures everything the workflows need, including the workspace CLAUDE.md block. `/sdd <id>` reads the work item type and routes Bug/Issue to the bug flow, story/tech story/change request/feature/epic to the spec flow, and an AI Agent Request (a hand-over between AI agents) to the request triage, which reports on the hand-over, asks spec or bug, and sends the work to the open item it names or to a new Tech Story or Bug; `/sdd bug <id>`, `/sdd spec <id>`, `/sdd sync [<id>|all]`, `/sdd impact <id>` (or `/sdd impact all` for the whole spec, after a token-cost warning), `/sdd status <id>` reports where an item stands (so work started in one chat can resume in another), `/sdd harness <create|onboard|audit|maintain>` sets up and audits the Claude Code harness (CLAUDE.md, allowlists, hooks) of a repo or workspace, `/sdd done <id>` cleans up, `/sdd abandon <id>` stops an item, and `/sdd <id> feedback <stage>: <text>` (or the sdd view''s message "sdd feedback for <id>, stage <stage>: <text>") sends an item back to a stage with the user''s feedback, the view''s "sdd answer for <id>, stage <stage>: …" is the user''s answer to a gate question, and the view''s "sdd approve for <id>, stage <stage>" is the user''s go-ahead at a spec flow stop — each refuses and explains when the item''s state does not allow it. Use whenever the user types /sdd or asks to "sdd" a work item.'
 ---
 
 # /sdd — one entry point for every sdd workflow
@@ -13,6 +13,7 @@ description: 'Entry point for the spec-driven development workflows on Azure Dev
 | `/sdd <id>` | decided by type, see below | |
 | `/sdd bug <id>` | `sdd:bug` | Claim, root cause, approval, failing test, fix, verify, PR |
 | `/sdd spec <id>` | `sdd:spec` | Claim, mirror the spec, impact, design, tasks, implement, verify, PR |
+| `/sdd <id>` on an AI Agent Request | `sdd:request` | Report on the hand-over, ask spec or bug, send the work to an open item it names or a new Tech Story or Bug, then run that flow |
 | `/sdd sync <id>` / `/sdd sync` / `/sdd sync all` | `sdd:sync` | Mirror specs from ADO into the spec folder and index them |
 | `/sdd impact <id>` | `sdd:impact` | Blast radius of one item over the synced specs, with gap questions |
 | `/sdd impact all [<scope id>]` | `sdd:impact` | The same over the whole synced spec, or one epic/feature — deduplicated pairs, **token-cost warning first** |
@@ -107,7 +108,7 @@ set up for sdd, and offer `/sdd init`.
 
 ## Step 2 — route
 
-`next` goes to `sdd:next` with the scope id and the version, if given. With a flow word, go straight to that skill and pass it the id. A path word (`short` or `full`, as in
+`next` goes to `sdd:next` with the scope id and the version, if given. With a flow word, go straight to that skill and pass it the id — unless `env.py type` says `flow: request`: an AI Agent Request goes to `sdd:request`, with the flow word as the user's answer to its spec-or-bug question. A path word (`short` or `full`, as in
 `/sdd 4471 short` or `/sdd spec 4471 full`) goes with it: pass it on, and the spec flow records it
 as the user's choice instead of asking. With only an id:
 
@@ -119,9 +120,11 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/env.py type --id <id>
 | --- | --- |
 | Bug, Issue | `sdd:bug` |
 | User Story, Tech Story, Change Request, Product Backlog Item, Feature, Epic | `sdd:spec` |
+| AI Agent Request (`flow: request`; the types are `agentRequest.types` in `sdd.json`) | `sdd:request` |
 | Task or anything else | Ask with `AskUserQuestion`: "Bug flow" / "Spec flow" — show the type and title first |
 
-Say in one line which flow you picked and why ("ADO 4471 is a User Story — spec flow"), then
+Say in one line which flow you picked and why ("ADO 4471 is a User Story — spec flow"; "ADO 4480 is
+an AI Agent Request — request triage first"), then
 invoke that skill with the Skill tool and follow it.
 
 ## `/sdd status <id>` — where does it stand?

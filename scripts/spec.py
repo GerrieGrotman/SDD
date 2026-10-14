@@ -23,7 +23,15 @@ Writes to ADO (rev-tested, retried on a conflict; adowrite.py; exit 3 = stop and
                                                  Resolved + Dev Completed: the hand-over to QA
     sprint   --id N [--id M ...] [--team T]      move to the current sprint
     comment  --id N --file F                     post an HTML comment (refuses a `#<id>` mention)
+    route    --id N --flow bug|spec (--to M | --title T --text-file F [--acceptance-file F]
+             [--parent P] [--related M ...])     an AI Agent Request's work goes to open item M (linked),
+                                                 or to a new Bug (bug) or Tech Story (spec); once only
     (--dry-run on any of them prints the patch and writes nothing)
+
+AI Agent Requests (hand-overs between AI agents; read-only, sync the request first):
+    request  --id N [--json]        the hand-over's text and comments to request.md; the work items it
+                                    names or links, with state and the flow each fits, and its "work
+                                    left" lines to request.json; or where it was routed before
 
 Which item to take next (nextpick.py; read-only, from the index — sync the scope first):
     next       --scope N --version V [--email E] [--json] [--no-sync]
@@ -478,7 +486,8 @@ def scan_folders(spec):
 
 # Uppercase, so it can never be confused with the (always lowercase) slug after it.
 TYPE_CODES = {"Epic": "EPIC", "Feature": "FEAT", "User Story": "US", "Tech Story": "TS",
-              "Change Request": "CR", "Product Backlog Item": "PBI", "Bug": "BUG", "Issue": "ISSUE"}
+              "Change Request": "CR", "Product Backlog Item": "PBI", "Bug": "BUG", "Issue": "ISSUE",
+              "AI Agent Request": "AIR"}
 
 
 def folder_name(wid, typ, title, current=None):
@@ -993,6 +1002,170 @@ def cmd_comment(a):
     print(f"{a.id}: comment {(r or {}).get('id', '')} posted")
 
 
+# ---------------------------------------------------------------- AI Agent Requests
+
+REQUEST_SKIP = {"System.Title", "System.History", "System.Tags", "System.AreaPath", "System.IterationPath",
+                "System.State", "System.Reason", "System.WorkItemType", "System.TeamProject"}
+
+
+def _request(ctx, wid):
+    """(the request's spec folder, its route.json or None). Dies when it is not mirrored yet."""
+    folder = scan_folders(ctx.spec).get(int(wid))
+    if not folder:
+        die(f"ADO {wid} is not mirrored. Run: spec.py sync --id {wid}")
+    route = folder / "route.json"
+    return folder, (json.loads(route.read_text(encoding="utf-8")) if route.is_file() else None)
+
+
+def _say_routed(r):
+    how = "created for it" if r.get("created") else "an open item it named"
+    print(f"routed: ADO {r['request']} went to ADO {r['to']} ({r['type']}, {how}) on the {r['flow']} flow, "
+          f"{r['at']}. Go on with: /sdd {r['flow']} {r['to']}")
+
+
+def _request_text(w):
+    """[(field, HTML)] of every long text field of the request: the hand-over lives in one of them."""
+    out = []
+    for k, v in sorted((w.get("fields") or {}).items(), key=lambda kv: (kv[0] != "System.Description", kv[0])):
+        if k in REQUEST_SKIP or not isinstance(v, str) or (k.startswith("System.") and k != "System.Description"):
+            continue
+        if len(v) >= 60 or "<" in v:
+            out.append((k, v))
+    return out
+
+
+def cmd_request(a):
+    ctx = Ctx()
+    types = ctx.cfg["agentRequest"]["types"]
+    folder, route = _request(ctx, a.id)
+    if route:
+        if a.json:
+            print(json.dumps({"routed": route}, indent=2))
+        else:
+            _say_routed(route)
+        return
+    got = get_items(ctx.cfg, [a.id], relations=True)
+    if not got:
+        die(f"work item {a.id} not found (deleted, or no access)")
+    w, f = got[0], got[0]["fields"]
+    if f.get(adowrite.TYPE) not in types:
+        die(f"ADO {a.id} is a {f.get(adowrite.TYPE)}, not one of {', '.join(types)}: route it with /sdd {a.id}", 3)
+    project = f[adowrite.PROJECT]
+    try:
+        notes = adowrite.comments(ctx.cfg, project, a.id)
+    except RuntimeError as e:
+        print(f"warning: could not read the comments ({e}); the report covers the fields only", file=sys.stderr)
+        notes = []
+    fields = _request_text(w)
+    texts = to_markdown([v for _, v in fields] + [c["text"] for c in notes])
+    md = [f"# ADO {a.id} — {f.get('System.Title', '')}", "",
+          f"{f.get(adowrite.TYPE)} · {f.get(adowrite.STATE, '')} · {project}", ""]
+    for (k, _), t in zip(fields, texts):
+        md += [f"## {k}", "", t, ""]
+    if notes:
+        md += ["## Comments", ""]
+        for c, t in zip(notes, texts[len(fields):]):
+            md += [f"### {c['by'] or 'someone'}" + (f" — {c['at']}" if c["at"] else ""), "", t, ""]
+    (folder / "request.md").write_text("\n".join(md).rstrip() + "\n", encoding="utf-8")
+
+    plain = "\n".join(texts)
+    linked = {dst: name for rel, name, dst in rels_of(w)}
+    ids = adowrite.referenced_ids(plain, skip={a.id}) + [i for i in linked if i != a.id]
+    ids = list(dict.fromkeys(ids))
+    found = {x["id"]: x["fields"] for x in get_items(ctx.cfg, ids, [adowrite.TYPE, "System.Title", adowrite.STATE,
+                                                                   adowrite.ASSIGNED, adowrite.PROJECT])} if ids else {}
+    done = ctx.cfg["doneStates"]
+    named, refs = set(adowrite.referenced_ids(plain)), []
+    for i in ids:
+        g = found.get(i)
+        how = "; ".join(x for x in ("named in the text" if i in named else "",
+                                    f"linked: {linked[i]}" if i in linked else "") if x)
+        if not g:
+            refs.append({"id": i, "found": False, "how": how})
+            continue
+        refs.append({"id": i, "found": True, "how": how, "type": g.get(adowrite.TYPE), "title": g.get("System.Title"),
+                     "state": g.get(adowrite.STATE), "assigned": adowrite.assignee(g)[1],
+                     "open": g.get(adowrite.STATE) not in tuple(done) + ("Removed",),
+                     "fits": [fl for fl in ("bug", "spec") if adowrite.route_fit(g, fl, done, types) is None]})
+    out = {"id": a.id, "title": f.get("System.Title"), "project": project, "state": f.get(adowrite.STATE),
+           "parent": parent_of(w), "fields": [k for k, _ in fields], "comments": len(notes),
+           "references": refs, "workLeft": adowrite.todo_lines(plain),
+           "request": str((folder / "request.md").relative_to(ctx.root).as_posix())}
+    (folder / "request.json").write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
+    if a.json:
+        print(json.dumps(out, indent=2))
+        return
+    print(f"ADO {a.id}: {out['title']} — the hand-over is in {out['request']}")
+    print(f"  text from: {', '.join(out['fields']) or 'no text field'}; {len(notes)} comment(s)")
+    print(f"  parent: ADO {out['parent']}" if out["parent"] else "  parent: none")
+    print("Work items it names or links:" if refs else "Work items it names or links: none")
+    for r in refs:
+        if not r["found"]:
+            print(f"  ADO {r['id']}: not found (deleted, no access, or not a work item id) — {r['how']}")
+            continue
+        print(f"  ADO {r['id']}: {r['type']} · {r['state']} · {r['assigned'] or 'unassigned'} — {r['title']} "
+              f"({r['how']}; {'open' if r['open'] else 'not open'}; can take the "
+              f"{' or '.join(r['fits']) + ' flow' if r['fits'] else 'work on no flow'})")
+    print("Lines that say work is left:" if out["workLeft"] else "Lines that say work is left: none found")
+    for t in out["workLeft"]:
+        print(f"  - {t}")
+
+
+def cmd_route(a):
+    ctx = Ctx()
+    cfg, types = ctx.cfg, ctx.cfg["agentRequest"]["types"]
+    folder, route = _request(ctx, a.id)
+    if route:
+        _say_routed(route)
+        print("not routed again: a request goes to one item. Ask the user before changing it by hand.")
+        sys.exit(3)
+    try:
+        req = adowrite.read(cfg, a.id, relations=True)
+        rf = req["fields"]
+        if rf.get(adowrite.TYPE) not in types:
+            raise adowrite.Refused(f"it is a {rf.get(adowrite.TYPE)}, not one of {', '.join(types)}")
+        project, req_url = rf[adowrite.PROJECT], adowrite.item_url(cfg, a.id)
+        if a.to:
+            target = adowrite.read(cfg, a.to)
+            why = adowrite.route_fit(target["fields"], a.flow, cfg["doneStates"], types)
+            if why:
+                raise adowrite.Refused(f"ADO {a.to} cannot take it: {why}. Pick another item, or create one")
+            typ, title, created = target["fields"][adowrite.TYPE], target["fields"].get("System.Title", ""), False
+            _, ops = adowrite.write(cfg, a.to, lambda w: adowrite.link_op(w.get("relations"), adowrite.RELATED,
+                                                                          req_url), dry_run=a.dry_run, whole=True)
+            if a.dry_run:
+                print(f"{a.id}: would link ADO {a.to} ({typ}) to it: {json.dumps(ops)}")
+                return
+            new = a.to
+        else:
+            typ, title, created = cfg["agentRequest"]["create"][a.flow], a.title, True
+            text = Path(a.text_file).read_text(encoding="utf-8")
+            acc = Path(a.acceptance_file).read_text(encoding="utf-8") if a.acceptance_file else None
+            links = [(adowrite.RELATED, req_url)]
+            if a.parent:
+                links.append((adowrite.PARENT, adowrite.item_url(cfg, a.parent)))
+            links += [(adowrite.RELATED, adowrite.item_url(cfg, r)) for r in a.related or [] if r != a.id]
+            ops = adowrite.create_ops(typ, title, text, rf, acc, links)
+            if a.dry_run:
+                print(f"{a.id}: would create a {typ} in {project}: {json.dumps(ops)}")
+                return
+            new = int(adowrite.create(cfg, project, typ, ops)["id"])
+    except (adowrite.Refused, adowrite.Conflict) as e:
+        print(f"{a.id}: not routed: {e}")
+        sys.exit(3)
+    route = {"request": a.id, "to": new, "type": typ, "title": title, "flow": a.flow, "created": created,
+             "at": now(), "by": adowrite.my_email()}
+    (folder / "route.json").write_text(json.dumps(route, indent=2) + "\n", encoding="utf-8")
+    try:
+        adowrite.comment(cfg, project, a.id, f"<div>Picked up as ADO {new} ({html.escape(typ)}: "
+                                             f"{html.escape(title)}), on the sdd {a.flow} flow.</div>")
+    except (RuntimeError, adowrite.Refused) as e:
+        print(f"warning: routed, but the comment on ADO {a.id} was not posted ({e})")
+    print(f"{a.id}: {'created' if created else 'linked'} ADO {new} ({typ}: {title})")
+    _refresh([a.id, new])
+    _say_routed(route)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -1034,6 +1207,19 @@ def main():
     s.add_argument("--id", type=int, required=True)
     s.add_argument("--file", required=True, help="the comment, as HTML")
     s.add_argument("--dry-run", action="store_true")
+    s = sp.add_parser("request", help="an AI Agent Request: its hand-over, the items it names, the work it says is left")
+    s.add_argument("--id", type=int, required=True)
+    s.add_argument("--json", action="store_true")
+    s = sp.add_parser("route", help="send an AI Agent Request's work to an open item, or to a new Bug or Tech Story")
+    s.add_argument("--id", type=int, required=True, help="the AI Agent Request")
+    s.add_argument("--flow", choices=["bug", "spec"], required=True, help="the user's answer: bug or spec")
+    s.add_argument("--to", type=int, help="an open item the work directly belongs to: it is linked, not created")
+    s.add_argument("--title", help="the new item's title")
+    s.add_argument("--text-file", help="the new item's text, HTML: Repro Steps on a Bug, else the Description")
+    s.add_argument("--acceptance-file", help="the new item's acceptance criteria, HTML, only as the hand-over states them")
+    s.add_argument("--parent", type=int, help="the new item's parent (the feature the work belongs to)")
+    s.add_argument("--related", type=int, action="append", help="repeat: other items to link the new item to")
+    s.add_argument("--dry-run", action="store_true")
     sp.add_parser("metrics", help="rebuild .index/metrics.json from the index (every sync writes it too)")
     s = sp.add_parser("next", help="which item under an epic or feature to take next")
     s.add_argument("--scope", type=int, required=True, help="the epic or feature the dev is assigned")
@@ -1054,6 +1240,10 @@ def main():
         die("impact needs --id N, or --all [--scope N]")
     if a.cmd == "impact" and a.scope and not a.all:
         die("--scope only works with --all")
+    if a.cmd == "route" and a.to and (a.title or a.text_file or a.acceptance_file or a.parent or a.related):
+        die("route --to links an existing item: drop --title, --text-file, --acceptance-file, --parent, --related")
+    if a.cmd == "route" and not a.to and not (a.title and a.text_file):
+        die("route needs --to M (an open item), or --title and --text-file (a new item)")
     if a.cmd == "sync" and a.all and a.id:
         die("use --id or --all, not both")
     if a.cmd == "query" and a.what in ("term", "search") and not a.text:
@@ -1062,6 +1252,7 @@ def main():
         a.text = a.text or die("query similar needs --id or TEXT")
     {"sync": cmd_sync, "embed": cmd_embed, "query": cmd_query, "impact": cmd_impact, "claim": cmd_claim,
      "handover": cmd_handover, "sprint": cmd_sprint, "comment": cmd_comment, "next": cmd_next,
+     "request": cmd_request, "route": cmd_route,
      "next-judge": cmd_next_judge, "metrics": cmd_metrics}[a.cmd](a)
 
 

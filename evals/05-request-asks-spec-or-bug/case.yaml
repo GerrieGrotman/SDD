@@ -1,0 +1,16 @@
+schema_version: "1.0"
+name: request-asks-spec-or-bug
+description: >-
+  An AI Agent Request: the triage reports on the hand-over (the items it names, the work left) and asks spec or bug before it routes or creates anything, and never chooses for the user.
+tags: [request, should-ask]
+runs: 3
+context:
+  scaffold_script: scaffold.sh
+execution:
+  max_turns: 30
+  timeout_seconds: 900
+  allowed_tools: [Skill, Read, Glob, Grep, Bash, Write, Edit, AskUserQuestion]
+  env:
+    SDD_FAKE_ADO: world.json
+  prompt: |
+    /sdd 503

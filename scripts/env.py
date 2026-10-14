@@ -45,7 +45,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import proof
-from adowrite import mentions
+from adowrite import flow_of, mentions
 from sddlib import (AGENT_MODELS, BUG_TYPES, CONFIG_REL, DEFAULTS, STYLE_NAME, TYPE_SEGMENT, ado,
                     bad_agent_models, config_home, developer, die, discover_repos, ensure_ignored,
                     find_env, find_root, get_items, git, install_output_style, load_config, org_url,
@@ -69,7 +69,7 @@ def item_info(cfg, wid):
     f = got[0]["fields"]
     t = f["System.WorkItemType"]
     return {"id": int(wid), "type": t, "title": f["System.Title"], "state": f["System.State"],
-            "project": f["System.TeamProject"], "flow": "bug" if t in BUG_TYPES else "spec"}
+            "project": f["System.TeamProject"], "flow": flow_of(t, cfg["agentRequest"]["types"])}
 
 
 # ---------------------------------------------------------------- init / type

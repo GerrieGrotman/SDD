@@ -250,6 +250,64 @@ def main():
         assert r.returncode != 0 and "Ready" not in r.stdout, r.stdout
         os.environ["SDD_FAKE_ADO"] = str(world)
 
+        # an AI Agent Request: the report names its items and the work left; route sends it once
+        w = json.loads(world.read_text())
+        w["items"]["700"] = {"rev": 1, "fields": {
+            "System.WorkItemType": "AI Agent Request", "System.TeamProject": "Proj", "System.State": "New",
+            "System.Title": "Hand-over: export rounding", "System.AreaPath": "Proj\\Export",
+            "System.IterationPath": "Proj\\2026\\Sprint 20",
+            "System.Description": "<div>Fixed the rounding for Bug 601. The PDF part of ADO 604 is done.</div>"
+                                  "<div>Work still to be done: the PDF export drops the cents.</div>"},
+            "comments": [{"text": "<div>Tests for 9999 are not yet written: ADO 9999.</div>",
+                          "createdBy": {"displayName": "Agent A"}}]}
+        world.write_text(json.dumps(w))
+        assert json.loads(run(root, "env.py", "type", "--id", "700").stdout)["flow"] == "request"
+        r = run(root, "spec.py", "request", "--id", "700", check=False)
+        assert r.returncode != 0 and "spec.py sync --id 700" in r.stderr, r.stderr      # mirror it first
+        run(root, "spec.py", "sync", "--id", "700", "--no-embed")
+        rep = json.loads(run(root, "spec.py", "request", "--id", "700", "--json").stdout)
+        refs = {x["id"]: x for x in rep["references"]}
+        assert list(refs) == [601, 604, 9999], refs
+        assert refs[601]["fits"] == ["bug"] and refs[601]["open"] and refs[604]["fits"] == ["spec"]
+        assert not refs[9999]["found"]
+        assert rep["workLeft"] == ["Work still to be done: the PDF export drops the cents.",
+                                   "Tests for 9999 are not yet written: ADO 9999."], rep["workLeft"]
+        md = (root / rep["request"]).read_text(encoding="utf-8")
+        assert "Fixed the rounding" in md and "Agent A" in md, md
+        r = run(root, "spec.py", "route", "--id", "700", "--flow", "spec", "--to", "601", check=False)
+        assert r.returncode == 3 and "runs the bug flow" in r.stdout, r.stdout
+        r = run(root, "spec.py", "route", "--id", "700", "--flow", "spec", "--to", "607", check=False)
+        assert r.returncode == 3 and "not open" in r.stdout, r.stdout
+        (root / "air.html").write_text("<div>The PDF export drops the cents. See #601.</div>")
+        r = run(root, "spec.py", "route", "--id", "700", "--flow", "bug", "--title", "PDF export drops the cents",
+                "--text-file", "air.html", check=False)
+        assert r.returncode == 3 and "ADO 601" in r.stdout, r.stdout                   # no mention, ever
+        (root / "air.html").write_text("<div>The PDF export drops the cents. See ADO 601.</div>")
+        run(root, "spec.py", "route", "--id", "700", "--flow", "bug", "--title", "PDF export drops the cents",
+            "--text-file", "air.html", "--parent", "600", "--related", "601")
+        w = json.loads(world.read_text())
+        new = max(int(k) for k in w["items"])
+        f = w["items"][str(new)]["fields"]
+        assert f["System.WorkItemType"] == "Bug" and "ADO 601" in f["Microsoft.VSTS.TCM.ReproSteps"], f
+        assert f["System.AreaPath"] == "Proj\\Export" and f["System.IterationPath"] == "Proj\\2026\\Sprint 20"
+        rels = {(x["rel"].split(".")[-1], x["url"].split("/")[-1]) for x in w["items"][str(new)]["relations"]}
+        assert rels == {("Related", "700"), ("Hierarchy-Reverse", "600"), ("Related", "601")}, rels
+        assert w["writes"][-1] == {"method": "COMMENT", "id": 700, "text": w["writes"][-1]["text"]}
+        assert f"ADO {new} (Bug" in w["writes"][-1]["text"]
+        r = run(root, "spec.py", "route", "--id", "700", "--flow", "bug", "--to", "601", check=False)
+        assert r.returncode == 3 and f"ADO {new}" in r.stdout, r.stdout                # once only
+        assert f"/sdd bug {new}" in run(root, "spec.py", "request", "--id", "700").stdout
+        # an open item the work belongs to: linked to the request, nothing created
+        w["items"]["710"] = dict(w["items"]["700"], rev=1, comments=[])
+        world.write_text(json.dumps(w))
+        run(root, "spec.py", "sync", "--id", "710", "--no-embed")
+        run(root, "spec.py", "route", "--id", "710", "--flow", "bug", "--to", "601")
+        w = json.loads(world.read_text())
+        assert max(int(k) for k in w["items"]) == 710 and w["items"][str(new)]["fields"]["System.WorkItemType"] == "Bug"
+        assert w["writes"][-2]["method"] == "PATCH" and w["writes"][-2]["id"] == 601
+        assert w["writes"][-2]["ops"][0]["op"] == "test"                                # rev-tested link
+        assert any(x["url"].endswith("/710") for x in w["items"]["601"]["relations"])
+
         view = json.loads(run(root, "env.py", "view", "--json", "--id", "502").stdout)
         assert {i["id"]: i.get("path") for i in view["items"]}[502] == "full", view["items"]
         assert view["flows"]["spec"]["paths"]["short"]["label"].startswith("Short")   # the view reads the paths
