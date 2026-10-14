@@ -8,6 +8,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { SddAsk, SddColors, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
 import { answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowTag, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, statusWord, when } from './view/model'
 import type { Mark } from './view/model'
+import { registerWorktrees, registerWorktreesCommand, worktreesPaneClosed } from './worktrees'
 
 const PANE = 'sdd-view'
 const snap = { plugin: 'sdd', key: 'snap' } as const
@@ -148,7 +149,9 @@ async function readDoc($: EngineInterface, item: SddItem, name: string): Promise
 }
 
 export const register: Register = on => {
+  registerWorktrees(on)
   on('session.start', async ($, e, next) => {
+    await registerWorktreesCommand($)
     await $.command.register({
       name: 'sdd-view',
       description: 'Show the sdd flow of the work item this chat works on (or the one given) in a pane',
@@ -206,6 +209,7 @@ export const register: Register = on => {
 
   on('ui.close', async ($, e, next) => {
     if (e.id === PANE) isOpen = false
+    worktreesPaneClosed(e.id)
     return next(e)
   })
 

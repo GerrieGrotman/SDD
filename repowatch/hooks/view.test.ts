@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
-import type { RwRepo, RwSummary } from '../types'
-import { ago, branchText, needsAttention, page, sortRepos, statusText, visibleRepos } from './view/model'
+import type { RwPlan, RwRepo, RwSummary, RwWorktree, WorktreeClass } from '../types'
+import { actionArgs, ago, branchText, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
 
 const repo = (name: string, flags: string[], extra: Partial<RwRepo> = {}): RwRepo => ({ name, path: `/ws/${name}`, scannedAt: 0, flags, ...extra })
 
@@ -23,9 +23,9 @@ test('the attention filter hides clean repos', () => {
 })
 
 test('the status line says what needs doing, and stays clear for no repos', () => {
-  const s: RwSummary = { repos: 40, attention: 3, behind: 2, dirty: 1, unpushed: 0, worktrees: 5, oldWorktrees: 1, errors: 0 }
-  expect(statusText(s)).toBe('repos 40 · 2 behind · 1 dirty · 1 old worktree')
-  expect(statusText({ ...s, behind: 0, dirty: 0, oldWorktrees: 0 })).toBe('repos 40 · all clear')
+  const s: RwSummary = { repos: 40, attention: 3, behind: 2, dirty: 1, unpushed: 0, worktrees: 5, removable: 2, toReview: 1, errors: 0 }
+  expect(statusText(s)).toBe('repos 40 · 2 behind · 1 dirty · 2 worktrees to remove · 1 to review')
+  expect(statusText({ ...s, behind: 0, dirty: 0, removable: 0, toReview: 0 })).toBe('repos 40 · all clear')
   expect(statusText({ ...s, repos: 0 })).toBe(undefined)
   expect(statusText(undefined)).toBe(undefined)
 })
@@ -46,4 +46,44 @@ test('paging clamps to the rows there are', () => {
   expect(page(rows, 4, 2)).toEqual({ rows: [5], from: 5, to: 5, total: 5 })
   expect(page(rows, 99, 2).rows).toEqual([5])
   expect(page([], 0, 2)).toEqual({ rows: [], from: 0, to: 0, total: 0 })
+})
+
+const wt = (cls: WorktreeClass, extra: Partial<RwWorktree> = {}): RwWorktree =>
+  ({ path: `/w/${extra.branch ?? cls}`, branch: extra.branch ?? cls, head: 'abc', detached: false, locked: false, prunable: false, missing: false, class: cls, reasons: [], ...extra })
+
+test('worktrees list the ones to act on first, and can hide those in use', () => {
+  const state = { version: 1, generated: 0, repos: {
+    b: { ...repo('b', []), worktrees: [wt('ok'), wt('safe', { branch: 'z' })] },
+    a: { ...repo('a', []), worktrees: [wt('keep'), wt('review'), wt('safe', { branch: 'y' }), wt('prune')] },
+  } }
+  expect(worktreeRows(state, false).map(r => `${r.repo}:${r.wt.class}`)).toEqual(['a:safe', 'b:safe', 'a:prune', 'a:review', 'a:keep', 'b:ok'])
+  expect(worktreeRows(state, true).some(r => r.wt.class === 'ok')).toBe(false)
+  expect(worktreeRows(null, false)).toEqual([])
+})
+
+test('a row gets a button only when there is something safe to do, and sdd keeps its own', () => {
+  expect(actionArgs({ repo: 'a', wt: wt('safe', { branch: 'f' }) })).toEqual(['remove-worktree', '--repo', 'a', '--path', '/w/f', '--delete-branch'])
+  expect(actionArgs({ repo: 'a', wt: wt('review', { branch: 'f' }) })?.[0]).toBe('remove-worktree')
+  expect(actionArgs({ repo: 'a', wt: wt('prune') })).toEqual(['prune-worktrees', '--repo', 'a'])
+  expect(actionArgs({ repo: 'a', wt: wt('keep') })).toBe(null)
+  expect(actionArgs({ repo: 'a', wt: wt('ok') })).toBe(null)
+  expect(actionArgs({ repo: 'a', wt: wt('safe', { owner: 'sdd', workItem: 77 }) })).toBe(null)
+  expect(bulkRows([{ repo: 'a', wt: wt('safe') }, { repo: 'a', wt: wt('safe', { owner: 'sdd' }) }, { repo: 'a', wt: wt('review') }]).length).toBe(1)
+  expect(dedupePrune([{ repo: 'a', wt: wt('prune', { branch: '1' }) }, { repo: 'a', wt: wt('prune', { branch: '2' }) }, { repo: 'b', wt: wt('prune') }]).length).toBe(2)
+})
+
+test('apply gets the arguments its plan was made from', () => {
+  const plan = (extra: Partial<RwPlan>): RwPlan => ({ action: 'remove-worktree', repo: 'a', path: '/w/f', branch: 'f', level: 'safe', blocked: [], reasons: [], atRisk: [], steps: [], restore: [], ...extra })
+  expect(planArgs(plan({ steps: [['git', 'worktree', 'remove', '/w/f'], ['git', 'branch', '-D', 'f']] }))).toEqual(['remove-worktree', '--repo', 'a', '--path', '/w/f', '--delete-branch'])
+  expect(planArgs(plan({ steps: [['git', 'worktree', 'remove', '/w/f']] }))).toEqual(['remove-worktree', '--repo', 'a', '--path', '/w/f'])
+  expect(planArgs(plan({ action: 'prune-worktrees' }))).toEqual(['prune-worktrees', '--repo', 'a'])
+  expect(planArgs(plan({ action: 'delete-branch' }))).toEqual(['delete-branch', '--repo', 'a', '--branch', 'f'])
+})
+
+test('the confirm panel runs what is still allowed and says what it skips', () => {
+  const p = (level: RwPlan['level']): RwPlan => ({ action: 'remove-worktree', repo: 'a', path: '/x', branch: null, level, blocked: [], reasons: [], atRisk: [], steps: [], restore: [] })
+  const g = planGist([p('safe'), p('review'), p('blocked')])
+  expect([g.run.length, g.skipped.length, g.review]).toEqual([2, 1, 1])
+  expect(stepText(['git', 'worktree', 'remove', '/a b/c'])).toBe('git worktree remove "/a b/c"')
+  expect(sddRemoveText(77)).toContain('env.py remove --id 77')
 })

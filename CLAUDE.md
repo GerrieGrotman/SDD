@@ -23,10 +23,10 @@ the user's view; this file is for working on the plugin itself.
 | `scripts/sddlib.py` | Shared helpers, `DEFAULTS` for `.claude/sdd.json`, config upgrade, the output style install |
 | `scripts/adowrite.py`, `proof.py`, `nextpick.py`, `metrics.py` | ADO writes; recorded test runs; next-item rules; metrics.json — logic as plain functions, tested without ADO |
 | `scripts/fakeado.py` | Offline ADO for tests and evals: on when `SDD_FAKE_ADO` names a JSON world file |
-| `hooks/` | `question_guard.py`, `agent_guard.py`, `edit_guard.py`, and `register.tsx` + `view/model.ts` (the sdd view, a mod) |
+| `hooks/` | `question_guard.py`, `agent_guard.py`, `edit_guard.py`, and `register.tsx` + `view/model.ts` (the sdd view, a mod), `worktrees.tsx` + `view/worktrees.ts` (the `/sdd-worktrees` page, hung off `register.tsx` because a plugin names one hooks module) |
 | `agents/` | `investigator` and `skeptic`, the read-only sub-agents |
 | `evals/` | `claude plugin eval` cases; `_fixtures/workspace.py` builds each case's workspace |
-| `repowatch/` | A second, standalone plugin (sdd depends on it, same marketplace): tracks many git repos and worktrees. `scripts/repowatch.py` does the git mechanics and writes `.claude/repowatch/state.json`; `hooks/register.tsx` draws the pane and status line from it. Has its own `plugin.json` and version |
+| `repowatch/` | A second, standalone plugin (sdd depends on it, same marketplace): tracks many git repos and worktrees. `scripts/repowatch.py` does the git mechanics and writes `.claude/repowatch/state.json`; `hooks/register.tsx` draws the pane and status line from it, and runs a clean-up only after `plan`, a confirm and `apply` (which re-checks). Has its own `plugin.json` and version |
 | `assets/output-styles/ELI5.md` | The output style installed globally (kept outside `output-styles/` on purpose) |
 
 ## Checks to run

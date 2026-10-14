@@ -4,6 +4,7 @@
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -45,6 +46,21 @@ def run_cli(ws, *args):
     r = subprocess.run([PY, str(HERE / "repowatch.py")] + list(args), cwd=str(ws), capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
     return r.stdout
+
+
+def cli(ws, *args):
+    """(returncode, parsed json of stdout)."""
+    r = subprocess.run([PY, str(HERE / "repowatch.py")] + list(args), cwd=str(ws), capture_output=True, text=True)
+    assert r.stdout.strip(), r.stderr
+    return r.returncode, json.loads(r.stdout)
+
+
+def add_worktree(repo, wt, branch, push=False, commit_file=None):
+    sh(["git", "worktree", "add", "-q", "-b", branch, str(wt)], repo)
+    if commit_file:
+        commit(wt, commit_file)
+    if push:
+        sh(["git", "push", "-q", "-u", "origin", branch], wt)
 
 
 def test_parsers():
@@ -130,7 +146,6 @@ def test_scan():
         assert set(json.loads(run_cli(ws, "status", "--json"))["repos"]) == {"clean", "dirty", "gone", "late"}
 
         # a repo that disappears is forgotten by a full scan
-        import shutil
         shutil.rmtree(str(ws / "gone"))
         run_cli(ws, "scan")
         assert "gone" not in json.loads(run_cli(ws, "status", "--json"))["repos"]
@@ -143,9 +158,123 @@ def test_scan():
         assert json.loads(run_cli(ws, "status", "--json"))["repos"]["broken"]["flags"] == ["error"]
 
 
+def test_worktrees():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        gitcfg = tmp / "gitconfig"
+        gitcfg.write_text("[user]\n\tname = Dev\n\temail = dev@x.co\n[init]\n\tdefaultBranch = main\n")
+        os.environ["GIT_CONFIG_GLOBAL"] = str(gitcfg)
+        ws, origins, wts = tmp / "ws", tmp / "origins", tmp / "wts"
+        for d in (ws, origins, wts, ws / ".claude"):
+            d.mkdir()
+        (ws / ".claude" / "sdd.json").write_text(json.dumps({"worktreeRoot": ".claude/worktrees"}))
+        app = make_repo(ws, origins, "app")
+
+        # merged into main, and pushed: safe
+        add_worktree(app, wts / "merged", "feat/merged", push=True, commit_file="m.txt")
+        add_worktree(app, wts / "merged2", "feat/merged2", push=True, commit_file="m2.txt")
+        sh(["git", "merge", "-q", "feat/merged", "feat/merged2"], app)
+        sh(["git", "push", "-q", "origin", "main"], app)
+        # just created, nothing on it
+        sh(["git", "worktree", "add", "-q", "-b", "feat/new", str(wts / "new")], app)
+        # commits only here, uncommitted files, pushed but not merged
+        add_worktree(app, wts / "unique", "feat/unique", commit_file="u.txt")
+        add_worktree(app, wts / "dirty", "feat/dirty", push=True, commit_file="d.txt")
+        (wts / "dirty" / "d.txt").write_text("wip\n")
+        add_worktree(app, wts / "pushed", "feat/pushed", push=True, commit_file="p.txt")
+        # upstream deleted after a squash merge: the commit is on no remote
+        add_worktree(app, wts / "squash", "feat/squash", push=True, commit_file="s.txt")
+        sh(["git", "push", "-q", "origin", "--delete", "feat/squash"], app)
+        # the folder is gone
+        add_worktree(app, wts / "lost", "feat/lost", push=True, commit_file="l.txt")
+        shutil.rmtree(str(wts / "lost"))
+        # an sdd work item's worktree, merged
+        sdd = ws / ".claude" / "worktrees" / "77-thing" / "src" / "app"
+        sdd.parent.mkdir(parents=True)
+        add_worktree(app, sdd, "feat/77", push=True, commit_file="x.txt")
+        sh(["git", "merge", "-q", "feat/77"], app)
+        sh(["git", "push", "-q", "origin", "main"], app)
+        # a branch with no worktree, merged
+        sh(["git", "branch", "old/done"], app)
+
+        run_cli(ws, "scan", "--fetch", "--fetch-batch", "10")
+        state = json.loads(run_cli(ws, "status", "--json"))
+        by = {Path(w["path"]).name: w for w in state["repos"]["app"]["worktrees"]}
+        got = {k: v["class"] for k, v in by.items()}
+        assert got == {"merged": "safe", "merged2": "safe", "new": "ok", "unique": "keep", "dirty": "keep",
+                       "pushed": "ok", "squash": "review", "lost": "prune", "app": "safe"}, got
+        assert by["app"]["owner"] == "sdd" and by["app"]["workItem"] == 77, by["app"]
+        assert by["merged"]["reasons"] == ["merged into main"], by["merged"]
+        assert "squash merge" in by["squash"]["reasons"][0] and len(by["squash"]["atRisk"]) == 1
+        flags = state["repos"]["app"]["flags"]
+        assert "removable-worktree" in flags and "old-worktree" in flags and "broken-worktree" in flags, flags
+        assert state["summary"]["removable"] == 4 and state["summary"]["toReview"] == 1, state["summary"]
+
+        # a plan changes nothing
+        rc, plan = cli(ws, "plan", "remove-worktree", "--repo", "app", "--path", str(wts / "merged"), "--delete-branch")
+        assert rc == 0 and plan["level"] == "safe" and len(plan["steps"]) == 2, plan
+        assert plan["restore"][0].startswith("git branch feat/merged "), plan
+        assert (wts / "merged").is_dir()
+
+        # apply removes the worktree and the branch, and journals it
+        rc, res = cli(ws, "apply", "remove-worktree", "--repo", "app", "--path", str(wts / "merged"), "--delete-branch")
+        assert rc == 0 and res["ok"] and len(res["done"]) == 2, res
+        assert not (wts / "merged").exists()
+        assert git_out(app, "branch", "--list", "feat/merged") == ""
+        lines = [json.loads(x) for x in (ws / ".claude" / "repowatch" / "journal.jsonl").read_text().splitlines()]
+        assert [x["status"] for x in lines] == ["started", "done"] and lines[0]["restore"], lines
+        state = json.loads(run_cli(ws, "status", "--json"))
+        assert "merged" not in [Path(w["path"]).name for w in state["repos"]["app"]["worktrees"]]
+
+        # a worktree that became dirty after the plan is refused when applied
+        rc, plan = cli(ws, "plan", "remove-worktree", "--repo", "app", "--path", str(wts / "merged2"))
+        assert plan["level"] == "safe"
+        (wts / "merged2" / "m2.txt").write_text("changed\n")
+        rc, res = cli(ws, "apply", "remove-worktree", "--repo", "app", "--path", str(wts / "merged2"))
+        assert rc == 2 and not res["ok"] and "uncommitted" in res["error"] and (wts / "merged2").is_dir(), res
+
+        # work that exists only here is never removed, not even with --allow-review
+        rc, res = cli(ws, "apply", "remove-worktree", "--repo", "app", "--path", str(wts / "unique"), "--allow-review")
+        assert rc == 2 and (wts / "unique").is_dir() and "only here" in res["error"], res
+
+        # review level needs the go-ahead, then it goes
+        rc, res = cli(ws, "apply", "remove-worktree", "--repo", "app", "--path", str(wts / "squash"), "--delete-branch")
+        assert rc == 2 and "--allow-review" in res["error"] and (wts / "squash").is_dir(), res
+        rc, res = cli(ws, "apply", "remove-worktree", "--repo", "app", "--path", str(wts / "squash"), "--delete-branch", "--allow-review")
+        assert rc == 0 and not (wts / "squash").exists(), res
+
+        # sdd's worktrees are removed by sdd
+        rc, plan = cli(ws, "plan", "remove-worktree", "--repo", "app", "--path", str(sdd))
+        assert plan["level"] == "blocked" and plan["owner"] == "sdd" and plan["workItem"] == 77 and "env.py remove" in plan["blocked"][0], plan
+
+        # a path that is not a worktree, and the main checkout
+        assert cli(ws, "plan", "remove-worktree", "--repo", "app", "--path", str(wts / "nope"))[1]["level"] == "blocked"
+        assert cli(ws, "plan", "remove-worktree", "--repo", "app", "--path", str(app))[1]["level"] == "blocked"
+
+        # prune the lost folder
+        rc, res = cli(ws, "apply", "prune-worktrees", "--repo", "app")
+        assert rc == 0 and res["ok"], res
+        assert cli(ws, "plan", "prune-worktrees", "--repo", "app")[1]["level"] == "blocked"
+
+        # branches: merged is safe, checked out or unmerged work is not
+        rc, plan = cli(ws, "plan", "delete-branch", "--repo", "app", "--branch", "old/done")
+        assert plan["level"] == "safe", plan
+        assert cli(ws, "plan", "delete-branch", "--repo", "app", "--branch", "feat/unique")[1]["level"] == "blocked"
+        assert cli(ws, "plan", "delete-branch", "--repo", "app", "--branch", "main")[1]["level"] == "blocked"
+        assert cli(ws, "plan", "delete-branch", "--repo", "app", "--branch", "feat/pushed")[1]["level"] == "blocked"
+        rc, res = cli(ws, "apply", "delete-branch", "--repo", "app", "--branch", "old/done")
+        assert rc == 0 and git_out(app, "branch", "--list", "old/done") == "", res
+        assert cli(ws, "apply", "delete-branch", "--repo", "nope", "--branch", "x")[0] == 2
+
+
+def git_out(repo, *args):
+    return sh(["git"] + list(args), repo).stdout.strip()
+
+
 def main():
     test_parsers()
     test_scan()
+    test_worktrees()
     print("ok")
 
 

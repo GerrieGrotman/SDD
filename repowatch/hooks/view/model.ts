@@ -1,5 +1,5 @@
 // Pure helpers for the repowatch pane: sorting, wording, paging. No engine calls, so view.test.ts can run them.
-import type { RwRepo, RwState, RwSummary } from '../../types'
+import type { RwPlan, RwRepo, RwState, RwSummary, RwWorktree, WorktreeClass } from '../../types'
 
 /** What each flag means, in the order a person should care about it. */
 export const FLAGS: Array<{ flag: string; label: string; urgent: boolean }> = [
@@ -13,7 +13,8 @@ export const FLAGS: Array<{ flag: string; label: string; urgent: boolean }> = [
   { flag: 'no-upstream', label: 'no upstream', urgent: false },
   { flag: 'gone-branches', label: 'branches to prune', urgent: false },
   { flag: 'broken-worktree', label: 'broken worktree', urgent: true },
-  { flag: 'old-worktree', label: 'old worktree', urgent: false },
+  { flag: 'removable-worktree', label: 'worktrees to remove', urgent: false },
+  { flag: 'old-worktree', label: 'worktrees to review', urgent: false },
   { flag: 'fetch-failed', label: 'fetch failed', urgent: false },
   { flag: 'stale-fetch', label: 'not fetched lately', urgent: false },
 ]
@@ -55,7 +56,8 @@ export function statusText(s: RwSummary | undefined): string | undefined {
   if (s.behind) parts.push(`${s.behind} behind`)
   if (s.dirty) parts.push(`${s.dirty} dirty`)
   if (s.unpushed) parts.push(`${s.unpushed} unpushed`)
-  if (s.oldWorktrees) parts.push(`${s.oldWorktrees} old worktree${s.oldWorktrees === 1 ? '' : 's'}`)
+  if (s.removable) parts.push(`${s.removable} worktree${s.removable === 1 ? '' : 's'} to remove`)
+  if (s.toReview) parts.push(`${s.toReview} to review`)
   return parts.length ? `repos ${s.repos} · ${parts.join(' · ')}` : `repos ${s.repos} · all clear`
 }
 
@@ -79,4 +81,73 @@ export function page<T>(rows: T[], offset: number, size: number): { rows: T[]; f
   const from = Math.min(Math.max(0, offset), Math.max(0, total - 1))
   const slice = rows.slice(from, from + Math.max(1, size))
   return { rows: slice, from: total ? from + 1 : 0, to: from + slice.length, total }
+}
+
+// ---- worktrees
+
+export type WtRow = { repo: string; wt: RwWorktree }
+
+const CLASS_ORDER: WorktreeClass[] = ['safe', 'prune', 'review', 'keep', 'ok']
+const CLASS_LABEL: Record<WorktreeClass, string> = { safe: 'safe to remove', prune: 'broken', review: 'review', keep: 'keep', ok: 'in use' }
+
+export function classLabel(c: WorktreeClass): string {
+  return CLASS_LABEL[c]
+}
+
+/** Every worktree of every repo, the ones to act on first. */
+export function worktreeRows(state: RwState | null, hideInUse: boolean): WtRow[] {
+  const rows: WtRow[] = []
+  for (const r of Object.values(state?.repos ?? {})) for (const wt of r.worktrees ?? []) rows.push({ repo: r.name, wt })
+  return rows
+    .filter(x => !hideInUse || x.wt.class !== 'ok')
+    .sort((a, b) => CLASS_ORDER.indexOf(a.wt.class) - CLASS_ORDER.indexOf(b.wt.class)
+      || a.repo.localeCompare(b.repo) || (a.wt.branch ?? '').localeCompare(b.wt.branch ?? ''))
+}
+
+/** The rows a bulk clean-up may take: safe, and not an sdd work item's (sdd removes those). */
+export function bulkRows(rows: WtRow[]): WtRow[] {
+  return rows.filter(x => x.wt.class === 'safe' && x.wt.owner !== 'sdd')
+}
+
+/** The arguments of `repowatch.py plan|apply` for a row's button. Null = no button. */
+export function actionArgs(row: WtRow): string[] | null {
+  const { wt } = row
+  if (wt.owner === 'sdd') return null
+  if (wt.class === 'prune') return ['prune-worktrees', '--repo', row.repo]
+  if (wt.class === 'safe' || wt.class === 'review') {
+    return ['remove-worktree', '--repo', row.repo, '--path', wt.path, ...(wt.branch ? ['--delete-branch'] : [])]
+  }
+  return null
+}
+
+/** The same arguments from a plan, for `apply`. */
+export function planArgs(plan: RwPlan): string[] {
+  if (plan.action === 'prune-worktrees') return ['prune-worktrees', '--repo', plan.repo]
+  if (plan.action === 'delete-branch') return ['delete-branch', '--repo', plan.repo, '--branch', plan.branch ?? '']
+  return ['remove-worktree', '--repo', plan.repo, '--path', plan.path ?? '', ...(plan.steps.some(s => s[1] === 'branch') ? ['--delete-branch'] : [])]
+}
+
+/** One prune per repo, however many broken rows it has. */
+export function dedupePrune(rows: WtRow[]): WtRow[] {
+  const seen = new Set<string>()
+  return rows.filter(x => {
+    if (x.wt.class !== 'prune') return true
+    if (seen.has(x.repo)) return false
+    seen.add(x.repo)
+    return true
+  })
+}
+
+/** What the confirm panel says to do with a set of plans. */
+export function planGist(plans: RwPlan[]): { run: RwPlan[]; skipped: RwPlan[]; review: number } {
+  const run = plans.filter(p => p.level !== 'blocked')
+  return { run, skipped: plans.filter(p => p.level === 'blocked'), review: run.filter(p => p.level === 'review').length }
+}
+
+export function stepText(step: string[]): string {
+  return step.map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ')
+}
+
+export function sddRemoveText(id: number | null | undefined): string {
+  return `Remove the sdd environment for work item ${id ?? '?'}: run env.py remove --id ${id ?? '?'} and show me the dry run first.`
 }

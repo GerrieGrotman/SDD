@@ -12,7 +12,38 @@ export type RwWorktree = {
   upstream?: string | null
   /** Epoch seconds of the newest commit. */
   lastCommit?: number
+  /** safe: nothing is lost by removing it. review: probably done. keep: work only here. ok: in use. prune: folder gone. */
+  class: WorktreeClass
+  reasons: string[]
+  /** Commits on no remote branch, and the newest few subjects. */
+  unique?: number
+  atRisk?: string[]
+  merged?: boolean
+  gone?: boolean
+  /** 'sdd' when it is a work item's worktree (sdd removes those). */
+  owner?: 'sdd'
+  workItem?: number | null
 }
+
+export type WorktreeClass = 'safe' | 'review' | 'keep' | 'ok' | 'prune'
+
+/** What an action would do, built from the live repo by `repowatch.py plan`. */
+export type RwPlan = {
+  action: 'remove-worktree' | 'prune-worktrees' | 'delete-branch'
+  repo: string
+  path: string | null
+  branch: string | null
+  level: 'safe' | 'review' | 'blocked'
+  blocked: string[]
+  reasons: string[]
+  atRisk: string[]
+  steps: string[][]
+  restore: string[]
+  owner?: 'sdd'
+  workItem?: number | null
+}
+
+export type RwResult = { ok: boolean; error?: string; done: string[][]; plan: RwPlan }
 
 export type RwRepo = {
   name: string
@@ -48,7 +79,10 @@ export type RwSummary = {
   dirty: number
   unpushed: number
   worktrees: number
-  oldWorktrees: number
+  /** Worktrees classed safe or prune. */
+  removable: number
+  /** Worktrees classed review. */
+  toReview: number
   errors: number
 }
 
@@ -71,8 +105,12 @@ declare module 'claude-code' {
       offset: number
       /** The repo whose details are open, or null. */
       open: string | null
-      /** A scan or fetch is running. */
+      /** A scan, fetch or clean-up is running. */
       busy: string | null
+      /** What the pane lists: the repos, or every worktree. */
+      view: 'repos' | 'worktrees'
+      /** Plans waiting for the person's confirm; null = none. */
+      plans: RwPlan[] | null
     }
   }
 }

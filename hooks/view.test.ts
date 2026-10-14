@@ -2,6 +2,8 @@ import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
 import { flowTag, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import type { SddLiveState } from '../types'
+import { agoText, cleanupNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
 const SPEC = {
   label: 'Spec flow',
@@ -234,4 +236,48 @@ test('Open Questions: skipped when nothing was asked, badged while questions sta
   // an item started before the stages existed: Requirements agreed is passed, so Requirements is not "missed"
   const legacy = { ...base, gates: { Claimed: 'x', 'Requirements agreed': 'y' } }
   expect(stageRows(SPEC, { ...legacy, progress: { ...legacy.progress!, phase: 'Design' } }).find(r => r.stage.key === 'Requirements')!.mark).toBe('done')
+})
+
+
+// ---- the Worktrees page
+
+const wtItem = (id: number, folder: string | null, extra: Partial<SddItem> = {}): SddItem => ({
+  ...ITEM, id, folder, repos: { Repo: { base: 'team/0.0.1', branch: `dev/x/${id}`, path: 'src/Repo', pr: id === 1 ? { id: 55, url: 'u' } : undefined } },
+  progress: { ...ITEM.progress!, status: 'active' },
+  ...extra,
+})
+const LIVE: SddLiveState = { generated: 1000, repos: { Repo: { worktrees: [
+  { path: 'C:/ws/.claude/worktrees/1-a/src/Repo', branch: 'dev/x/1', class: 'safe', reasons: ['merged into main'], dirty: 0, lastCommit: 1000 - 86400 * 4 },
+  { path: 'C:/ws/.claude/worktrees/2-b/src/Repo', branch: 'dev/x/2', class: 'ok', reasons: [], dirty: 3, ahead: 1, behind: 2, lastCommit: 1000 - 7200 },
+] } } }
+
+test('a path key ignores slashes and the case of a drive path', () => {
+  expect(pathKey('C:\\ws\\a\\')).toBe('c:/ws/a')
+  expect(pathKey('/home/Me/a/')).toBe('/home/Me/a')
+})
+
+test('each work item repo is joined to its live worktree by path', () => {
+  const lines = joinWorktrees([wtItem(1, 'c:\\ws\\.claude\\worktrees\\1-a'), wtItem(2, 'C:/ws/.claude/worktrees/2-b'), wtItem(3, 'C:/ws/.claude/worktrees/3-c'),
+    wtItem(4, null), wtItem(5, 'C:/ws/x', { removed: '2026-10-01' })], LIVE)
+  expect(lines.map(l => [l.item.id, l.live?.class ?? null])).toEqual([[1, 'safe'], [2, 'ok'], [3, null]])
+  expect(joinWorktrees([wtItem(1, 'C:/ws/.claude/worktrees/1-a')], null)[0].live).toBe(null)
+})
+
+test('lines to clean up come first, then work waiting on the person', () => {
+  const waiting = wtItem(3, 'C:/ws/.claude/worktrees/3-c', { progress: { ...ITEM.progress!, status: 'waiting' } })
+  const lines = sortLines(joinWorktrees([wtItem(2, 'C:/ws/.claude/worktrees/2-b'), waiting, wtItem(1, 'C:/ws/.claude/worktrees/1-a')], LIVE))
+  expect(lines.map(l => l.item.id)).toEqual([1, 3, 2])
+  expect(groupByItem([...lines, ...lines]).map(b => [b.item.id, b.lines.length])).toEqual([[1, 2], [3, 2], [2, 2]])
+})
+
+test('a line says where it came from and how the worktree is', () => {
+  const [one, two, three] = joinWorktrees([wtItem(1, 'C:/ws/.claude/worktrees/1-a'), wtItem(2, 'C:/ws/.claude/worktrees/2-b'), wtItem(3, 'C:/ws/.claude/worktrees/3-c')], LIVE)
+  expect(lineFacts(one, 1000)).toEqual(['from team/0.0.1', 'PR 55', 'clean', 'last commit 4d ago'])
+  expect(lineFacts(two, 1000)).toEqual(['from team/0.0.1', '3 uncommitted', '+1/-2 upstream', 'last commit 2h ago'])
+  expect(lineFacts(three, 1000)).toEqual(['from team/0.0.1', 'repowatch has not seen it'])
+  expect(cleanupNote(one)).toBe('can be removed: merged into main')
+  expect(cleanupNote(two)).toBe('')
+  expect(cleanupNote(three)).toBe('')
+  expect(counts([one, two, three])).toEqual({ items: 3, worktrees: 3, cleanup: 1, dirty: 1 })
+  expect(agoText(undefined, 5)).toBe('no commits')
 })
