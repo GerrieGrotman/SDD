@@ -1,7 +1,7 @@
 schema_version: "1.0"
 name: request-asks-spec-or-bug
 description: >-
-  An AI Agent Request: the triage reports on the hand-over (the items it names, the work left) and asks spec or bug before it routes or creates anything, and never chooses for the user.
+  An Ai Agent Request: the triage reports on the hand-over (the items it names, the work left) and asks spec or bug before it routes or creates anything, and never chooses for the user.
 tags: [request, should-ask]
 runs: 3
 context:

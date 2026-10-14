@@ -10,7 +10,7 @@ technical work exists that the product-level items do not already imply:
 - work that would otherwise have no work item at all — release preparation, dependency bumps,
   build and pipeline fixes (raised directly by a developer, not by this gate)
 
-One other path creates a tech story: the work left in an AI Agent Request, when the user picks the
+One other path creates a tech story: the work left in an Ai Agent Request, when the user picks the
 spec flow and no open item takes it (`sdd:request`, `spec.py route`). It is not this gate.
 
 This runs at the **end of Design, not during Specify**. What a change creates that didn't exist

@@ -250,10 +250,10 @@ def main():
         assert r.returncode != 0 and "Ready" not in r.stdout, r.stdout
         os.environ["SDD_FAKE_ADO"] = str(world)
 
-        # an AI Agent Request: the report names its items and the work left; route sends it once
+        # an Ai Agent Request: the report names its items and the work left; route sends it once
         w = json.loads(world.read_text())
         w["items"]["700"] = {"rev": 1, "fields": {
-            "System.WorkItemType": "AI Agent Request", "System.TeamProject": "Proj", "System.State": "New",
+            "System.WorkItemType": "Ai Agent Request", "System.TeamProject": "Proj", "System.State": "New",
             "System.Title": "Hand-over: export rounding", "System.AreaPath": "Proj\\Export",
             "System.IterationPath": "Proj\\2026\\Sprint 20",
             "System.Description": "<div>Fixed the rounding for Bug 601. The PDF part of ADO 604 is done.</div>"

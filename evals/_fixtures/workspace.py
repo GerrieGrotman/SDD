@@ -11,7 +11,7 @@
 
 The workspace gets: .claude/sdd.json; world.json, the offline ADO (scripts/fakeado.py) that the
 case's SDD_FAKE_ADO names; a git repo `Exporter` with the bug in it, pushed to a bare origin as
-team/1.0.0; a workspace-root git repo; user story 502 for the spec-flow cases; and AI Agent Request
+team/1.0.0; a workspace-root git repo; user story 502 for the spec-flow cases; and Ai Agent Request
 503, a hand-over that names 502 (open, its date work left) and 501.
 """
 import argparse
@@ -87,7 +87,7 @@ def main():
                                      "Microsoft.VSTS.Common.AcceptanceCriteria":
                                          "<div>Given an invoice, when it is exported, then its date shows as "
                                          "yyyy-MM-dd.</div>"}},
-        "503": {"rev": 1, "fields": {"System.WorkItemType": "AI Agent Request", "System.TeamProject": "Finance",
+        "503": {"rev": 1, "fields": {"System.WorkItemType": "Ai Agent Request", "System.TeamProject": "Finance",
                                      "System.Title": "Hand-over: invoice date on the export", "System.State": "New",
                                      "System.Description":
                                          "<div>I added the invoice date to the CSV export for User Story 502. "

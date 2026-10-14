@@ -1,5 +1,5 @@
 """Rev-tested writes to Azure DevOps work items: the claim, the QA hand-over, the sprint move, a comment,
-and the route of an AI Agent Request to the item that takes its work (a link, or a new item).
+and the route of an Ai Agent Request to the item that takes its work (a link, or a new item).
 
 Every patch starts with a JSON Patch `test /rev` op, so a write never overwrites a change someone
 else made since the read. On HTTP 412 it reads the item again, decides again from what is there
@@ -126,7 +126,7 @@ def handover_ops(fields, tag=None, root_cause_details=None, resolution=None, roo
     return ops
 
 
-# ---------------------------------------------------------------- AI Agent Request: read and route
+# ---------------------------------------------------------------- Ai Agent Request: read and route
 
 # How a handover names a work item: ADO 4471, ADO-4471, AB#4471, #4471, work item 4471, Bug 4471,
 # User Story 4471, a _workitems/edit/4471 link. A bare number is never a reference (versions, counts).
@@ -161,18 +161,23 @@ def todo_lines(text):
     return out
 
 
-def flow_of(typ, request_types=("AI Agent Request",)):
-    """The sdd flow a work item type runs: bug, spec, or request (an AI Agent Request, routed first)."""
-    if typ in request_types:
+def is_request(typ, request_types=("Ai Agent Request",)):
+    """The type is an Ai Agent Request. Case-insensitive: process templates differ in how they write it."""
+    return (typ or "").strip().lower() in {t.strip().lower() for t in request_types}
+
+
+def flow_of(typ, request_types=("Ai Agent Request",)):
+    """The sdd flow a work item type runs: bug, spec, or request (an Ai Agent Request, routed first)."""
+    if is_request(typ, request_types):
         return "request"
     return "bug" if typ in ("Bug", "Issue") else "spec"
 
 
-def route_fit(fields, flow, done_states=DONE_STATES, request_types=("AI Agent Request",)):
+def route_fit(fields, flow, done_states=DONE_STATES, request_types=("Ai Agent Request",)):
     """None when an existing item can take the request's work on `flow`; else why not. It must be open,
     and its type must run that flow: the bug flow takes only a Bug or Issue, the spec flow the rest."""
     typ, state = fields.get(TYPE, ""), fields.get(STATE, "")
-    if typ in request_types:
+    if is_request(typ, request_types):
         return f"it is an {typ} itself, not the item that does the work"
     if state in tuple(done_states) + ("Removed",):
         return f"it is {state}: not open"
