@@ -26,6 +26,7 @@ the user's view; this file is for working on the plugin itself.
 | `hooks/` | `question_guard.py`, `agent_guard.py`, `edit_guard.py`, and `register.tsx` + `view/model.ts` (the sdd view, a mod) |
 | `agents/` | `investigator` and `skeptic`, the read-only sub-agents |
 | `evals/` | `claude plugin eval` cases; `_fixtures/workspace.py` builds each case's workspace |
+| `repowatch/` | A second, standalone plugin (sdd depends on it, same marketplace): tracks many git repos and worktrees. `scripts/repowatch.py` does the git mechanics and writes `.claude/repowatch/state.json`; `hooks/register.tsx` draws the pane and status line from it. Has its own `plugin.json` and version |
 | `assets/output-styles/ELI5.md` | The output style installed globally (kept outside `output-styles/` on purpose) |
 
 ## Checks to run
@@ -38,6 +39,9 @@ python scripts/check_evals.py        # needs PyYAML; checks the eval cases, runs
 python hooks/test_question_guard.py
 python hooks/test_agent_guard.py
 python hooks/test_edit_guard.py
+python repowatch/scripts/test_repowatch.py   # needs git; real repos in temp folders
+claude plugin test repowatch
+claude plugin validate repowatch
 claude plugin test .                 # the view (hooks/view.test.ts)
 claude plugin validate .             # the author warning is expected
 ```
