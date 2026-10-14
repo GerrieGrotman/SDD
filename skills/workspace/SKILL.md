@@ -30,7 +30,7 @@ ADO access uses the `az` login (`az account get-access-token`), never a PAT. If 
 <workspace>/{specRoot}/**/{id}-{TYPE}-{slug}/  ADO mirror, see sdd:sync (TYPE: EPIC, FEAT, US, TS, CR, PBI, BUG, ISSUE, AIR)
     requirements.md  written by the sync, never by hand
     design.md, tasks.md, questions.md, impact.json, impact.md   yours; the sync never touches them
-    request.md, request.json, route.json   an AI Agent Request's hand-over and where it was routed
+    request.md, request.json, route.json   an Ai Agent Request's hand-over and where it was routed
 <workspace>/{specRoot}/.index/spec.db          the spec index
 ```
 
@@ -51,7 +51,7 @@ reads the ADO org and projects from each `origin` remote. Show the user the file
 ask them to remove any ADO project that holds no specs (a tooling repo's project, for example).
 Other keys: `worktreeRoot` (default `.claude/worktrees`), `repoDirs` (explicit repo list,
 overrides discovery), `specTypes`, `branchTemplate`, `embeddings`, `agents`, `agentRequest`
-(the AI Agent Request types, and the type created per flow: `{"bug": "Bug", "spec": "Tech Story"}`).
+(the Ai Agent Request types, and the type created per flow: `{"bug": "Bug", "spec": "Tech Story"}`).
 
 `agents.models` sets the model each sdd sub-agent runs on — `sonnet`, `opus` or `haiku`:
 
@@ -73,7 +73,7 @@ take.
 | `run --id N --gate G --expect pass\|fail [--repo R] [--repeat N] [--suite] -- CMD` | Runs a test command in the worktree and records the exit code, output and a fingerprint of the code | The proof `Red test` and `Verified` need (flows.json `proofs`) |
 | `revert-check --id N --fix F [--fix F] -- CMD` | Puts the fix files back to the base branch: the test must fail; restores them: it must pass | Restores the files byte for byte in every case |
 | `verify --id N` | Runs every backticked Verify command in `tasks.md`, in its repo | The proof `Ready to PR` needs; a failure blocks the PR |
-| `type --id N` | Prints type, title, state, project and `flow` (`bug` for Bug/Issue, `request` for an AI Agent Request, else `spec`) | Read-only |
+| `type --id N` | Prints type, title, state, project and `flow` (`bug` for Bug/Issue, `request` for an Ai Agent Request, else `spec`) | Read-only |
 | `new --id N --repos A,B --version 1.1.0` | Creates the folder, fetches each repo, adds `src/{Repo}` on a new branch from `origin/team/{version}`, writes `workitem.json` and `CLAUDE.md`, builds the graph | Run it again with another `--repos` to **add** a repo later — existing repos are skipped |
 | `new ... --base Repo=main` | Per-repo base branch, repeatable. Overrides `--version` for that repo | For repos without `team/*` branches |
 | `new ... --branch <name>` | Overrides the branch name | Default is `branchTemplate`: `dev/{developer}/{version}/{type}/{id}-{slug}` |

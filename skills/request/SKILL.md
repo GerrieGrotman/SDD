@@ -1,8 +1,8 @@
 ---
 name: request
 description: >-
-  AI Agent Request triage of the /sdd workflow — invoked by the `sdd` skill for `/sdd <id>` on an
-  `AI Agent Request` (a hand-over from one AI agent to the next). Mirrors the request, reads its
+  Ai Agent Request triage of the /sdd workflow — invoked by the `sdd` skill for `/sdd <id>` on an
+  `Ai Agent Request` (a hand-over from one AI agent to the next). Mirrors the request, reads its
   hand-over with `spec.py request` (the text and comments, every work item it names by id, by name or
   by link, and every "work still to be done" line), judges whether the work left belongs directly to
   an open item it names, and gives the user a report page. Then it asks whether the work is handled
@@ -11,9 +11,9 @@ description: >-
   takes over, claim first. Only via /sdd.
 ---
 
-# sdd:request — AI Agent Request triage
+# sdd:request — Ai Agent Request triage
 
-An `AI Agent Request` is a hand-over: one AI agent stopped and wrote down what it did and what is
+An `Ai Agent Request` is a hand-over: one AI agent stopped and wrote down what it did and what is
 left. It is not the work itself. This skill decides **where the work goes** — an open item the
 hand-over names, or a new Bug or Tech Story — and then hands over to the bug or spec flow. It
 writes code nowhere.

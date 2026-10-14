@@ -38,9 +38,9 @@ DEFAULTS = {
         "line": "#5c6670",       # borders
         "hoverText": "#ffffff",  # the text of the line under the pointer (its icon turns a lighter shade)
     }},
-    # AI Agent Requests (hand-overs between AI agents): the types routed by /sdd's request skill, and
+    # Ai Agent Requests (hand-overs between AI agents): the types routed by /sdd's request skill, and
     # the type it creates for the work when no open item takes it, per flow the user picks
-    "agentRequest": {"types": ["AI Agent Request"], "create": {"bug": "Bug", "spec": "Tech Story"}},
+    "agentRequest": {"types": ["Ai Agent Request"], "create": {"bug": "Bug", "spec": "Tech Story"}},
     # the model each sdd sub-agent runs on: passed as the Agent tool's `model` when a flow starts one
     "agents": {"models": {"investigator": "sonnet", "skeptic": "opus"}},
     # /sdd next: which item under an epic or feature to take next (scripts/nextpick.py)

@@ -24,11 +24,11 @@ Writes to ADO (rev-tested, retried on a conflict; adowrite.py; exit 3 = stop and
     sprint   --id N [--id M ...] [--team T]      move to the current sprint
     comment  --id N --file F                     post an HTML comment (refuses a `#<id>` mention)
     route    --id N --flow bug|spec (--to M | --title T --text-file F [--acceptance-file F]
-             [--parent P] [--related M ...])     an AI Agent Request's work goes to open item M (linked),
+             [--parent P] [--related M ...])     an Ai Agent Request's work goes to open item M (linked),
                                                  or to a new Bug (bug) or Tech Story (spec); once only
     (--dry-run on any of them prints the patch and writes nothing)
 
-AI Agent Requests (hand-overs between AI agents; read-only, sync the request first):
+Ai Agent Requests (hand-overs between AI agents; read-only, sync the request first):
     request  --id N [--json]        the hand-over's text and comments to request.md; the work items it
                                     names or links, with state and the flow each fits, and its "work
                                     left" lines to request.json; or where it was routed before
@@ -487,13 +487,14 @@ def scan_folders(spec):
 # Uppercase, so it can never be confused with the (always lowercase) slug after it.
 TYPE_CODES = {"Epic": "EPIC", "Feature": "FEAT", "User Story": "US", "Tech Story": "TS",
               "Change Request": "CR", "Product Backlog Item": "PBI", "Bug": "BUG", "Issue": "ISSUE",
-              "AI Agent Request": "AIR"}
+              "Ai Agent Request": "AIR"}
 
 
 def folder_name(wid, typ, title, current=None):
     """{id}-{TYPE}-{slug}. An existing folder keeps its slug (cosmetic, survives a retitle) but always
     carries the current type code, so a retype or an old {id}-{slug} folder is renamed in place."""
-    code = TYPE_CODES.get(typ) or re.sub(r"[^A-Z0-9]", "", (typ or "ITEM").upper()) or "ITEM"
+    code = TYPE_CODES.get(typ) or ("AIR" if adowrite.is_request(typ) else "") \
+        or re.sub(r"[^A-Z0-9]", "", (typ or "ITEM").upper()) or "ITEM"
     rest = current.split("-", 1)[1] if current and "-" in current else slug(title)
     rest = re.sub(r"^[A-Z][A-Z0-9]*-", "", rest)  # drop an old type code; slugs are lowercase so this is safe
     return f"{wid}-{code}-{rest or 'untitled'}"
@@ -1002,7 +1003,7 @@ def cmd_comment(a):
     print(f"{a.id}: comment {(r or {}).get('id', '')} posted")
 
 
-# ---------------------------------------------------------------- AI Agent Requests
+# ---------------------------------------------------------------- Ai Agent Requests
 
 REQUEST_SKIP = {"System.Title", "System.History", "System.Tags", "System.AreaPath", "System.IterationPath",
                 "System.State", "System.Reason", "System.WorkItemType", "System.TeamProject"}
@@ -1048,7 +1049,7 @@ def cmd_request(a):
     if not got:
         die(f"work item {a.id} not found (deleted, or no access)")
     w, f = got[0], got[0]["fields"]
-    if f.get(adowrite.TYPE) not in types:
+    if not adowrite.is_request(f.get(adowrite.TYPE), types):
         die(f"ADO {a.id} is a {f.get(adowrite.TYPE)}, not one of {', '.join(types)}: route it with /sdd {a.id}", 3)
     project = f[adowrite.PROJECT]
     try:
@@ -1122,7 +1123,7 @@ def cmd_route(a):
     try:
         req = adowrite.read(cfg, a.id, relations=True)
         rf = req["fields"]
-        if rf.get(adowrite.TYPE) not in types:
+        if not adowrite.is_request(rf.get(adowrite.TYPE), types):
             raise adowrite.Refused(f"it is a {rf.get(adowrite.TYPE)}, not one of {', '.join(types)}")
         project, req_url = rf[adowrite.PROJECT], adowrite.item_url(cfg, a.id)
         if a.to:
@@ -1207,11 +1208,11 @@ def main():
     s.add_argument("--id", type=int, required=True)
     s.add_argument("--file", required=True, help="the comment, as HTML")
     s.add_argument("--dry-run", action="store_true")
-    s = sp.add_parser("request", help="an AI Agent Request: its hand-over, the items it names, the work it says is left")
+    s = sp.add_parser("request", help="an Ai Agent Request: its hand-over, the items it names, the work it says is left")
     s.add_argument("--id", type=int, required=True)
     s.add_argument("--json", action="store_true")
-    s = sp.add_parser("route", help="send an AI Agent Request's work to an open item, or to a new Bug or Tech Story")
-    s.add_argument("--id", type=int, required=True, help="the AI Agent Request")
+    s = sp.add_parser("route", help="send an Ai Agent Request's work to an open item, or to a new Bug or Tech Story")
+    s.add_argument("--id", type=int, required=True, help="the Ai Agent Request")
     s.add_argument("--flow", choices=["bug", "spec"], required=True, help="the user's answer: bug or spec")
     s.add_argument("--to", type=int, help="an open item the work directly belongs to: it is linked, not created")
     s.add_argument("--title", help="the new item's title")
