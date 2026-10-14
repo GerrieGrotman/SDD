@@ -392,6 +392,37 @@ def ado_writes():
     except adowrite.Refused as e:
         assert "ADO 80459" in str(e)
     assert adowrite.mentions("AB#80459 &#8217; url/#123 ADO 80459") == [] and adowrite.mentions("(#80459)") == ["#80459"]
+    # an AI Agent Request: the items a hand-over names, the work it says is left, where the work may go
+    assert adowrite.referenced_ids("Bug 4474 and ADO 4471, ADO-4471, AB#4472, (#4473), user story 4475, work item "
+                                   "4476, .../_workitems/edit/4477, version 1.2.300, 12345 rows, &#8217;, ADO 99",
+                                   skip={4476}) == [4474, 4471, 4472, 4473, 4475, 4477]
+    assert adowrite.todo_lines("API done. Work still to be done: the UI. Tests are not yet written.\n- TODO: docs\n"
+                               "All good.") == ["Work still to be done: the UI.", "Tests are not yet written.", "TODO: docs"]
+    fit = lambda typ, flow, state="Active": adowrite.route_fit({"System.WorkItemType": typ, "System.State": state}, flow)
+    assert fit("Bug", "bug") is None and fit("Issue", "bug") is None and fit("Tech Story", "spec") is None
+    assert "bug flow" in fit("Bug", "spec") and "spec flow" in fit("User Story", "bug")
+    assert "not open" in fit("Bug", "bug", "Closed") and "not open" in fit("User Story", "spec", "Removed")
+    assert "itself" in fit("AI Agent Request", "spec")
+    assert [adowrite.flow_of(t) for t in ("Bug", "Issue", "Tech Story", "AI Agent Request")] == ["bug", "bug", "spec",
+                                                                                                "request"]
+    url = "https://dev.azure.com/O/_apis/wit/workItems/700"
+    assert adowrite.link_op([{"rel": adowrite.RELATED, "url": "https://x/_apis/wit/workItems/700"}], adowrite.RELATED, url) == []
+    assert adowrite.link_op([], adowrite.RELATED, url)[0]["value"] == {"rel": adowrite.RELATED, "url": url}
+    req = {"System.AreaPath": "P\\Area", "System.IterationPath": "P\\Sprint 2"}
+    got = adowrite.create_ops("Bug", "Totals", "<div>drops cents</div>", req, links=[(adowrite.RELATED, url)])
+    assert ops([o for o in got if o["path"].startswith("/fields/")]) == {
+        "System.Title": "Totals", "Microsoft.VSTS.TCM.ReproSteps": "<div>drops cents</div>",
+        "System.AreaPath": "P\\Area", "System.IterationPath": "P\\Sprint 2"}
+    assert got[-1] == {"op": "add", "path": "/relations/-", "value": {"rel": adowrite.RELATED, "url": url}}
+    got = ops(adowrite.create_ops("Tech Story", "T", "<div>x</div>", {}, acceptance="<div>ac</div>"))
+    assert got == {"System.Title": "T", "System.Description": "<div>x</div>",
+                   "Microsoft.VSTS.Common.AcceptanceCriteria": "<div>ac</div>"}
+    for bad in (("", "<div>x</div>"), ("T", " "), ("T", "<div>see #4471</div>")):
+        try:
+            adowrite.create_ops("Bug", bad[0], bad[1], {})
+            raise AssertionError(f"create_ops took {bad}")
+        except adowrite.Refused:
+            pass
     # the sprint: the iteration whose dates hold today, the shortest range, path without "Iteration"
     from datetime import date
     tree = {"path": "\\P\\Iteration", "children": [
@@ -517,6 +548,10 @@ def config_upgrade():
         assert sddlib.load_config(root)["agents"]["models"]["skeptic"] == "opus"
         path.write_text(json.dumps({**before, "agents": {"models": {"investigator": "gpt-4"}}}))
         assert sddlib.bad_agent_models(sddlib.load_config(root)) == ["investigator=gpt-4"]
+        assert sddlib.load_config(root)["agentRequest"] == sddlib.DEFAULTS["agentRequest"]
+        path.write_text(json.dumps({**before, "agentRequest": {"create": {"spec": "User Story"}}}))
+        assert sddlib.load_config(root)["agentRequest"] == {"types": ["AI Agent Request"],
+                                                            "create": {"bug": "Bug", "spec": "User Story"}}
 
 
 if __name__ == "__main__":

@@ -38,6 +38,9 @@ DEFAULTS = {
         "line": "#5c6670",       # borders
         "hoverText": "#ffffff",  # the text of the line under the pointer (its icon turns a lighter shade)
     }},
+    # AI Agent Requests (hand-overs between AI agents): the types routed by /sdd's request skill, and
+    # the type it creates for the work when no open item takes it, per flow the user picks
+    "agentRequest": {"types": ["AI Agent Request"], "create": {"bug": "Bug", "spec": "Tech Story"}},
     # the model each sdd sub-agent runs on: passed as the Agent tool's `model` when a flow starts one
     "agents": {"models": {"investigator": "sonnet", "skeptic": "opus"}},
     # /sdd next: which item under an epic or feature to take next (scripts/nextpick.py)
@@ -98,6 +101,9 @@ def load_config(root):
     merged["embeddings"] = {**DEFAULTS["embeddings"], **cfg.get("embeddings", {})}
     view = cfg.get("view", {})
     merged["view"] = {**DEFAULTS["view"], **view, "colors": {**DEFAULTS["view"]["colors"], **view.get("colors", {})}}
+    req = cfg.get("agentRequest") if isinstance(cfg.get("agentRequest"), dict) else {}
+    merged["agentRequest"] = {**DEFAULTS["agentRequest"], **req,
+                              "create": {**DEFAULTS["agentRequest"]["create"], **(req.get("create") or {})}}
     agents = cfg.get("agents") if isinstance(cfg.get("agents"), dict) else {}
     models = agents.get("models") if isinstance(agents.get("models"), dict) else {}
     merged["agents"] = {**DEFAULTS["agents"], **agents, "models": {**DEFAULTS["agents"]["models"], **models}}

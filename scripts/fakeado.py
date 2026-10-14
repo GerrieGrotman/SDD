@@ -11,8 +11,11 @@ so a new call cannot slip through unnoticed.
                                        "url": ".../_apis/wit/workItems/500"}]}},
       "currentIteration": "Proj\\2026\\Sprint 20",        (optional: the team's current sprint)
       "iterations": {...classification node tree...},     (optional: the fallback)
-      "writes": []                                        (filled in: every PATCH, comment and PR)
+      "writes": []                                        (filled in: every PATCH, create, comment and PR)
     }
+
+An item may hold "comments": [{"text": "<div>…</div>", "createdBy": {"displayName": "…"}}], read back
+with the ones the flow posts.
 """
 import json
 import os
@@ -66,6 +69,15 @@ def _children(items, wid):
     return sorted(kids)
 
 
+def _apply(w, ops):
+    """JSON Patch ops on a fake item: field adds and replaces, and relation adds."""
+    for o in ops:
+        if o["op"] in ("add", "replace") and o["path"].startswith("/fields/"):
+            w.setdefault("fields", {})[o["path"][len("/fields/"):]] = o["value"]
+        elif o["op"] == "add" and o["path"] == "/relations/-":
+            w.setdefault("relations", []).append(o["value"])
+
+
 def request(method, url, body=None):
     p, world = _load()
     items = world.setdefault("items", {})
@@ -114,19 +126,33 @@ def request(method, url, body=None):
         test = next((o for o in body if o["op"] == "test" and o["path"] == "/rev"), None)
         if test and test["value"] != w.get("rev", 1):
             raise RuntimeError(f"ADO PATCH {url} -> HTTP 412: rev {test['value']} is not {w.get('rev', 1)}")
-        for o in body:
-            if o["op"] in ("add", "replace") and o["path"].startswith("/fields/"):
-                w.setdefault("fields", {})[o["path"][len("/fields/"):]] = o["value"]
+        _apply(w, body)
         w["rev"] = w.get("rev", 1) + 1
         writes.append({"method": "PATCH", "id": int(wid), "ops": body})
         _save(p, world)
         return {"id": int(wid), "rev": w["rev"]}
+
+    m = re.search(r"/([^/]+)/_apis/wit/workitems/\$([^/]+)$", path, re.I)
+    if method == "POST" and m:
+        wid = max([int(k) for k in items] + [0]) + 1
+        w = {"rev": 1, "fields": {"System.WorkItemType": urllib.parse.unquote(m.group(2)),
+                                  "System.TeamProject": urllib.parse.unquote(m.group(1)), "System.State": "New"}}
+        _apply(w, body)
+        items[str(wid)] = w
+        writes.append({"method": "CREATE", "id": wid, "ops": body})
+        _save(p, world)
+        return {"id": wid, "rev": 1, "fields": w["fields"]}
 
     m = re.search(r"/_apis/wit/workItems/(\d+)/comments$", path, re.I)
     if method == "POST" and m:
         writes.append({"method": "COMMENT", "id": int(m.group(1)), "text": body["text"]})
         _save(p, world)
         return {"id": len(writes)}
+    if method == "GET" and m:
+        wid = int(m.group(1))
+        posted = [{"text": x["text"], "createdBy": {"displayName": "sdd"}} for x in writes
+                  if x.get("method") == "COMMENT" and x.get("id") == wid]
+        return {"comments": list((items.get(str(wid)) or {}).get("comments") or []) + posted}
 
     if path.endswith("/teamsettings/iterations"):
         cur = world.get("currentIteration")

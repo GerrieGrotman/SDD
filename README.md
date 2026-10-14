@@ -35,6 +35,7 @@ pandoc, Ollama (meaning search).
 | --- | --- |
 | `/sdd next <epic or feature id> [version]` | Syncs the epic or feature from ADO, then ranks what to take next under it: items with your version that nobody is working on, blocked ones judged from the requirements, bugs and issues first, then a dev priority from priority, severity and complexity |
 | `/sdd <id>` | Starts or resumes the work item, in the bug or spec flow by its type |
+| `/sdd <id>` on an AI Agent Request | Reports on the hand-over (what is done, what is left, the items it names) and asks spec or bug. The work goes to the open item it belongs to, or to a new Tech Story or Bug linked to the request; then that flow runs |
 | `/sdd <id> short` / `full` | A spec item on the short path (one stop approves design and tasks together) or the full one; without it, the flow asks |
 | `/sdd help` | A short tour |
 | `/sdd status <id>` | Where the item stands |
@@ -65,6 +66,13 @@ The sdd view opens by itself the first time a chat takes up a work item. In it:
 "agents": { "models": { "investigator": "sonnet", "skeptic": "opus" } }
 ```
 
+```json
+"agentRequest": { "types": ["AI Agent Request"], "create": { "bug": "Bug", "spec": "Tech Story" } }
+```
+
+`agentRequest` names the hand-over type(s) `/sdd <id>` triages, and the type it creates for the work
+on each flow when no open item takes it.
+
 `agents.models` picks the model of each sub-agent (`sonnet`, `opus` or `haiku`). A workspace without
 it gets these defaults written into its `sdd.json` at the first session after the plugin updates;
 values already set are kept. `skills/workspace/SKILL.md` lists every key.
@@ -73,9 +81,9 @@ values already set are kept. `skills/workspace/SKILL.md` lists every key.
 
 | Path | What |
 | --- | --- |
-| `skills/` | `sdd` (entry; `references/flow-rules.md` holds the rules both flows share), `spec` (outline + `modes/`), `bug` (outline + `phases/`), `next` (what to take next), `sync`, `impact`, `harness`, `visual`, `workspace` |
+| `skills/` | `sdd` (entry; `references/flow-rules.md` holds the rules both flows share), `spec` (outline + `modes/`), `bug` (outline + `phases/`), `next` (what to take next), `request` (AI Agent Request triage), `sync`, `impact`, `harness`, `visual`, `workspace` |
 | `agents/` | `investigator` (read-only code search) and `skeptic` (independent review of a root cause, a test or a design), used by the bug and spec flows; models from `agents.models` |
-| `scripts/` | `env.py` (work item folders, state guards, progress, config upgrades), `spec.py` (ADO mirror, impact, rev-tested writes: claim, handover, sprint, comment), `adowrite.py` (those writes), `proof.py` (recorded test runs that gates need), `nextpick.py` (the next-item rules), `metrics.py` (`.index/metrics.json`: every item's decision facts and what the last sync changed), `flows.json` (the stages of each flow) |
+| `scripts/` | `env.py` (work item folders, state guards, progress, config upgrades), `spec.py` (ADO mirror, impact, rev-tested writes: claim, handover, sprint, comment, route; an AI Agent Request's report), `adowrite.py` (those writes), `proof.py` (recorded test runs that gates need), `nextpick.py` (the next-item rules), `metrics.py` (`.index/metrics.json`: every item's decision facts and what the last sync changed), `flows.json` (the stages of each flow) |
 | `hooks/` | `hooks.json`, `question_guard.py` (links before every question), `agent_guard.py` (keeps the sdd agents read-only: no git writes, no `env.py` / `spec.py` runs), `edit_guard.py` (no edits in the main checkout during a flow), `register.tsx` + `view/` (the sdd view) |
 | `assets/output-styles/` | `ELI5.md`, the output style the plugin installs globally |
 | `types/` | The view's state contract |
