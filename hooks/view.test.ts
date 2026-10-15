@@ -426,6 +426,7 @@ test('a rail slice marks a conditional or skipped stage with a dashed node, and 
 
 test('the rail stops short of an open stage\'s bar, and the bar takes the stage\'s own colour', () => {
   // the open stage (waiting, yellow): its slice draws a solid line down to short of the bottom
+  expect([RAIL.gap, RAIL.h - RAIL.gap]).toEqual([6, 40])                                  // a gap of 6 px, however it is spelt below
   const open = slice(3, { open: true }).source
   expect(open).toContain(`y1="${RAIL.mid}" x2="${RAIL.x}" y2="${RAIL.h - RAIL.gap}" stroke="#c98a12" stroke-width="3"/>`)
   expect(open).not.toContain('stroke-dasharray="4 4"')
