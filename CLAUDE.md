@@ -42,7 +42,7 @@ python hooks/test_edit_guard.py
 python repowatch/scripts/test_repowatch.py   # needs git; real repos in temp folders
 claude plugin test repowatch         # also mounts and presses the pane (hooks/pane.test.ts)
 claude plugin validate repowatch
-claude plugin test .                 # the view and the Worktrees page; it also finds repowatch's tests, whose pane tests stand down (the plugin under test is sdd)
+claude plugin test .                 # the view (model tests and hooks/pane.test.ts, which mounts the pane) and the Worktrees page; it also finds repowatch's tests, whose pane tests stand down (the plugin under test is sdd)
 claude plugin validate .             # the author warning is expected
 ```
 

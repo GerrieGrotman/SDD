@@ -465,3 +465,38 @@ export function flowMap(flow: SddFlow, item: SddItem, rows: StageRow[], derived:
   const alt = `${flow.label}, ${n} stages: ` + rows.map(r => `${r.stage.label}${MARK_WORD[r.mark] ? ` (${MARK_WORD[r.mark]})` : ''}`).join(', ') + '.'
   return { source, alt, width, height }
 }
+
+
+// ---------------------------------------------------------------- the agents
+
+/** What `$.agent.list()` returns for one agent loop of the session: a subagent or a teammate. */
+export type AgentInfoLike = { id: string; description: string; type: string; status: string; parentId?: string }
+
+export type AgentTone = 'working' | 'waiting' | 'done' | 'failed' | 'quiet'
+
+export type AgentRow = { id: string; name: string; text: string; word: string; tone: AgentTone; isLive: boolean }
+
+const AGENT_TONE: Record<string, { word: string; tone: AgentTone }> = {
+  running: { word: 'working', tone: 'working' },
+  waiting: { word: 'waiting', tone: 'waiting' },
+  idle: { word: 'idle', tone: 'quiet' },
+  pending: { word: 'starting', tone: 'quiet' },
+  completed: { word: 'done', tone: 'done' },
+  failed: { word: 'failed', tone: 'failed' },
+  killed: { word: 'stopped', tone: 'failed' },
+}
+
+/** The agents as rows: the ones working or waiting first, then the newest of the rest, at most `max`.
+ *  `sdd:investigator` shows as `investigator`; a status the view does not know shows as it is. */
+export function agentRows(list: AgentInfoLike[], max = 6): AgentRow[] {
+  const rows = list.map((a, i): AgentRow & { i: number } => {
+    const t = AGENT_TONE[a.status] ?? { word: a.status, tone: 'quiet' as AgentTone }
+    const text = (a.description || '').replace(/\s+/g, ' ').trim()
+    return { i, id: a.id, name: a.type.replace(/^.*:/, ''), text: text.length > 80 ? `${text.slice(0, 79)}…` : text, word: t.word, tone: t.tone,
+      isLive: t.tone === 'working' || t.tone === 'waiting' }
+  })
+  // the list is oldest first: among the finished, the newest stay
+  const live = rows.filter(r => r.isLive)
+  const rest = rows.filter(r => !r.isLive).reverse().slice(0, Math.max(max - live.length, 0))
+  return [...live, ...rest].slice(0, Math.max(max, live.length)).map(({ i: _i, ...r }) => r)
+}

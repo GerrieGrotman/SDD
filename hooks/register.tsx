@@ -6,8 +6,8 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
-import type { Mark } from './view/model'
+import { GLYPH, agentRows, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import type { AgentInfoLike, AgentTone, Mark } from './view/model'
 import { registerWorktrees, registerWorktreesCommand, worktreesPaneClosed } from './worktrees'
 
 const PANE = 'sdd-view'
@@ -58,6 +58,7 @@ function stageName(st: SddStage): string {
 let python = 'python'  // module state: lost on reload, which is fine
 let isOpen = false
 let isWorkspace = false
+let agentsBusy = false  // an agent works: the pane redraws on a timer so its row keeps up
 let notified = ''  // the wait the person was last notified of; lost on reload, which at worst tells them once more
 // An open AskUserQuestion call's way to take an answer from the view, by tool_use_id. Lost on a
 // reload; the view then says to answer in the chat.
@@ -148,6 +149,28 @@ async function readDoc($: EngineInterface, item: SddItem, name: string): Promise
   }
 }
 
+/** The session's subagents and teammates; none when the list cannot be read. */
+async function listAgents($: EngineInterface): Promise<AgentInfoLike[]> {
+  try {
+    return await $.agent.list()
+  } catch {
+    return []
+  }
+}
+
+/** Shows an agent's transcript in the main view, or with no id the main conversation again. It works
+ *  only from something the person pressed, which is how it is called. */
+async function watchAgent($: EngineInterface, agentId?: string): Promise<void> {
+  try {
+    const r = await $.ui.view(agentId ? { agentId } : {})
+    if ('deny' in r && r.deny) $.ui.toast(`Could not show it: ${String(r.deny)}`)
+  } catch (err) {
+    $.ui.toast(`Could not show it: ${String(err).slice(0, 160)}`)
+  }
+}
+
+const AGENT_GLYPH: Record<AgentTone, string> = { working: '●', waiting: '●', done: '✓', failed: '✕', quiet: '○' }
+
 export const register: Register = on => {
   registerWorktrees(on)
   on('session.start', async ($, e, next) => {
@@ -166,6 +189,10 @@ export const register: Register = on => {
     void sync()
     $.clock.every(30_000, () => {
       if (isOpen || isWorkspace) void sync()
+    })
+    // an agent that works changes without any prop changing: redraw the open pane every few seconds
+    $.clock.every(3_000, () => {
+      if (isOpen && agentsBusy) $.ui.invalidate('ui.render')
     })
     return next(e)
   })
@@ -260,6 +287,12 @@ export const register: Register = on => {
       answering.delete(ask.toolUseId)
       await $.state.set(asked, isAsked ? { ...ask, isOpen: false } : before)
     }
+  })
+
+  // a subagent's turn starts: the pane's agent rows may have a new one
+  on('turn.start', async ($, e, next) => {
+    if (isOpen) $.ui.invalidate('ui.render')
+    return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -397,6 +430,8 @@ export const register: Register = on => {
     // the flow map is a drawing: only an app that has Svg shows it; the stage rows below say the same in text
     const Svg = 'Svg' in t ? t.Svg : undefined
     const rows = flow ? stageRows(flow, item) : []
+    const agents = agentRows(await listAgents($))
+    agentsBusy = agents.some(a => a.isLive)
     const links = [item.url ? `[ADO ${item.id}](${item.url})` : `ADO ${item.id}`,
       ...Object.values(item.repos ?? {}).filter(r => r.pr).map(r => `[PR ${r.pr!.id}](${r.pr!.url})`)].join('  |  ')
     const toggle = (key: string) => void (async () => {
@@ -487,6 +522,28 @@ export const register: Register = on => {
             <Text color={C.revoked} wrap="wrap">{`Never worked and not skipped by you: ${missed.join(', ')}.`}</Text>
           )
         })()}
+
+        {agents.length > 0 && (
+          <Box flexDirection="column">
+            <Box flexDirection="row" gap={1}>
+              <Box flexGrow={1}><Text bold>Agents</Text></Box>
+              <Button key="agent-main" plain dimColor label="Main chat" onPress={() => void watchAgent($)} />
+            </Box>
+            {agents.map(a => {
+              const color = { working: C.work, waiting: C.now, done: C.done, failed: C.revoked, quiet: C.dim }[a.tone]
+              return (
+                <Box key={`agent-row-${a.id}`} flexDirection="row" gap={1} width="100%">
+                  <Text color={color}>{AGENT_GLYPH[a.tone]}</Text>
+                  <Box flexGrow={1} flexShrink={1}>
+                    <Text wrap="truncate-end">{a.text ? `${a.name} · ${a.text}` : a.name}</Text>
+                  </Box>
+                  <Text color={color}>{a.word}</Text>
+                  <Button key={`agent-${a.id}`} label="Watch" onPress={() => void watchAgent($, a.id)} />
+                </Box>
+              )
+            })}
+          </Box>
+        )}
 
         {flow && Svg && (() => {
           const map = flowMap(flow, item, rows, s.derived, C, pend)

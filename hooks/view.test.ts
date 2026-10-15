@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { agentRows, flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -358,4 +358,18 @@ test('your turn: told once per wait, and not while the item works', () => {
   expect(yourTurn(SPEC, { ...ITEM, progress: { ...ITEM.progress!, status: 'active' } })).toBe(null)
   expect(yourTurn(SPEC, { ...ITEM, progress: { ...ITEM.progress!, gate: '' } })?.text).toBe('92012 Verify: your turn. a decision')
   expect(yourTurn(SPEC, { ...ITEM, progress: { ...ITEM.progress!, gate: 'x'.repeat(400) } })!.text.length).toBe(200)
+})
+
+test('agent rows: the live ones first, then the newest of the rest, and the plugin prefix dropped', () => {
+  const a = (id: string, type: string, status: string, description = id) => ({ id, type, status, description })
+  const list = [a('1', 'sdd:investigator', 'completed'), a('2', 'sdd:skeptic', 'running', 'Check\n  the design'), a('3', 'Explore', 'failed'),
+    a('4', 'teammate', 'waiting'), a('5', 'general-purpose', 'completed'), a('6', 'Explore', 'idle'), a('7', 'Explore', 'killed'), a('8', 'Explore', 'weird')]
+  const rows = agentRows(list)
+  expect(rows.map(r => r.id)).toEqual(['2', '4', '8', '7', '6', '5'])               // live (2, 4), then newest first, six in all
+  expect(rows[0]).toEqual({ id: '2', name: 'skeptic', text: 'Check the design', word: 'working', tone: 'working', isLive: true })
+  expect(rows.find(r => r.id === '8')).toMatchObject({ word: 'weird', tone: 'quiet', isLive: false })   // a status the view does not know
+  expect(rows.find(r => r.id === '7')).toMatchObject({ word: 'stopped', tone: 'failed' })
+  expect(agentRows(list, 2).map(r => r.id)).toEqual(['2', '4'])                       // live ones are never cut for room
+  expect(agentRows([])).toEqual([])
+  expect(agentRows([a('9', 'Explore', 'running', 'x'.repeat(200))])[0].text.length).toBe(80)
 })
