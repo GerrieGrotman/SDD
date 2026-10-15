@@ -7,7 +7,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, costBar, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, costBar, clipboardArgv, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
 
@@ -150,6 +150,17 @@ async function openIn($: EngineInterface, app: 'files' | 'code', path: string): 
     if (r.exitCode > 1) $.ui.toast(`Could not open ${path}: ${(r.stderr || r.stdout).trim().slice(0, 160) || `exit ${r.exitCode}`}`)  // explorer exits 1 even when it opened
   } catch (err) {
     $.ui.toast(`Could not open ${app === 'code' ? 'VS Code' : 'the folder'}: ${String(err)}`)
+  }
+}
+
+/** Copies a path to the clipboard (the mod kit has no clipboard call, so the computer's own tool does it) and says so. */
+async function copyPath($: EngineInterface, path: string): Promise<void> {
+  try {
+    const r = await $.process.run(clipboardArgv(path), { timeoutMs: 10000 })
+    if (r.exitCode === 0) $.ui.toast('Path copied')
+    else $.ui.toast(`Could not copy the path: ${(r.stderr || r.stdout).trim().slice(0, 160) || `exit ${r.exitCode}`}`)
+  } catch (err) {
+    $.ui.toast(`Could not copy the path: ${String(err).slice(0, 160)}`)
   }
 }
 
@@ -979,8 +990,9 @@ export const register: Register = on => {
                     <Box key={`stagewrap-${key}`} flexDirection="row" alignItems="stretch">
                       {/* the rail runs on beside the detail: a bar of colour as tall as the detail, where the slices' line would be (a picture cannot stretch) */}
                       <Box key={`stagerail-${key}`} width={6} flexShrink={0} flexDirection="row">
-                        <Box width={2} flexShrink={0} />
-                        <Box key={`stagebar-${key}`} width={1} flexShrink={0} backgroundColor={r.mark === 'done' || r.mark === 'skipped' ? C.done : C.line} />
+                        {/* 3 px wide (6% of the 48 px rail column, a whole percentage: the engine refuses others), centred on the slices' rail (20 px in): a text column is 8 px, so these are percentages (the engine refuses px). A try: if Desktop ignores them the bar is gone again, and the 1-column bar comes back */}
+                        <Box width="38%" flexShrink={0} />
+                        <Box key={`stagebar-${key}`} width="6%" flexShrink={0} backgroundColor={r.mark === 'done' || r.mark === 'skipped' ? C.done : C.line} />
                       </Box>
                       {/* no border: a frame would run over the rail */}
                       <Box key={`stagedetail-${key}`} flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} marginBottom={1}>
@@ -1001,11 +1013,11 @@ export const register: Register = on => {
               <Box flexDirection="row" gap={1} alignItems="center" borderStyle="round" borderColor={C.line} paddingX={1}>
                 <Box flexDirection="column" flexGrow={1} flexShrink={1}>
                   <Text bold wrap="wrap">{`Worktree ${name}`}</Text>
-                  <Text dimColor wrap="wrap">{`${r.branch} from ${r.base}`}</Text>
                 </Box>
                 {canOpen && (
                   <Box flexDirection="row" gap={1} flexShrink={0}>
-                    {/* icon buttons: 📁 the file manager, </> VS Code, 🔧 repowatch on this worktree */}
+                    {/* icon buttons: 📋 copies the path, 📁 the file manager, </> VS Code, 🔧 repowatch on this worktree */}
+                    <Button key={`open-${name}-copy`} label="📋" onPress={() => void copyPath($, `${item.folder}/${r.path}`)} />
                     <Button key={`open-${name}-files`} label="📁" onPress={() => void openIn($, 'files', `${item.folder}/${r.path}`)} />
                     <Button key={`open-${name}-code`} label="</>" onPress={() => void openIn($, 'code', `${item.folder}/${r.path}`)} />
                     <Button key={`open-${name}-repowatch`} label="🔧" onPress={() => void showWorktree($, `${item.folder}/${r.path}`)} />

@@ -406,6 +406,16 @@ export function railSlice(input: { mark: Mark; prevMark: Mark | null; hasNext: b
     alt: MARK_WORD[mark] || 'not reached yet', width: RAIL.w, height: RAIL.h }
 }
 
+/** The command that puts `path` on the computer's clipboard: PowerShell on Windows, pbcopy (or wl-copy, xclip) elsewhere.
+ *  A path in single quotes, each quote of its own escaped, so a folder with a quote or a space copies as it is. */
+export function clipboardArgv(path: string): string[] {
+  if (/^[A-Za-z]:[\\/]/.test(path)) {
+    const native = path.replace(/\//g, '\\')
+    return ['powershell', '-NoProfile', '-Command', `Set-Clipboard -Value '${native.replace(/'/g, "''")}'`]
+  }
+  return ['sh', '-c', `printf %s '${path.replace(/'/g, "'\\''")}' | (pbcopy 2>/dev/null || wl-copy 2>/dev/null || xclip -selection clipboard)`]
+}
+
 /** The small bar that shows what a stage cost against the dearest stage. */
 export function costBar(input: { usd: number; max: number; mark: Mark; colors: SddColors }): FlowPicture {
   const { usd, max, mark, colors } = input

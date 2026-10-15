@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, railSlice, costBar, stageWord, flowAlt, RAIL, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, railSlice, costBar, stageWord, flowAlt, RAIL, clipboardArgv, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -422,6 +422,13 @@ test('a rail slice marks a conditional or skipped stage with a dashed node, and 
   const at = rows.findIndex(r => r.mark === 'active')
   expect(at).toBeGreaterThan(0)
   expect(railSlice({ mark: 'active', prevMark: rows[at - 1].mark, hasNext: true, colors: PIC_COLORS }).source).toContain('stroke="#4a7fc4"')
+})
+
+test('the clipboard command quotes the path for the shell it runs in', () => {
+  expect(clipboardArgv('C:/Work/My Repo/wt/x')).toEqual(['powershell', '-NoProfile', '-Command', "Set-Clipboard -Value 'C:\\Work\\My Repo\\wt\\x'"])
+  expect(clipboardArgv("C:\\Users\\o'brien\\wt")[3]).toBe("Set-Clipboard -Value 'C:\\Users\\o''brien\\wt'")
+  expect(clipboardArgv('/home/me/my repo/wt')[2]).toContain("printf %s '/home/me/my repo/wt' |")
+  expect(clipboardArgv("/home/o'brien/wt")[2]).toContain("printf %s '/home/o'\\''brien/wt' |")
 })
 
 test('the cost bar is as long as the stage cost is of the dearest stage, and never empty', () => {
