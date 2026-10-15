@@ -39,12 +39,13 @@ const AGENTS = [
 type Cost = { id: number; stage: string; usd: number; session: string; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 type Row = { usd: number; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 type Fake = { registered: string[]; usd: number | null; costs: Cost[]; costFails: boolean; toasts: string[]
-  ran: string[]; finishFirst?: boolean; surfaces: string[]; sid: string; spend: Record<string, Row>; spendOther: Record<string, Row> }
+  ran: string[]; runs: string[][]; finishFirst?: boolean; surfaces: string[]; sid: string; spend: Record<string, Row>; spendOther: Record<string, Row> }
 
 function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents = AGENTS): Fake {
-  const f: Fake = { registered: [], usd: 1, costs: [], costFails: false, toasts: [], ran: [], sid: 's1', surfaces: ['desktop'], spend: {}, spendOther: {} }
+  const f: Fake = { registered: [], usd: 1, costs: [], costFails: false, toasts: [], ran: [], runs: [], sid: 's1', surfaces: ['desktop'], spend: {}, spendOther: {} }
   // env.py: `cost` records a turn (and the totals the next `view` reports); anything else is the view
   on('process.run', ((_$: unknown, e: { argv: string[] }) => {
+    f.runs.push(e.argv)
     const done = (exitCode: number, stdout: string, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
     if (e.argv.includes('cost')) {
       if (f.costFails) return done(2, '', 'error: no work item folder')
@@ -219,6 +220,22 @@ for (const [cols, most] of [[40, 30], [60, 36], [100, 76]] as const) {
     }
   })
 }
+
+test('desktop: the worktree box has a copy-path button left of the others, and no branch line', async ($: any, on: any) => {
+  const f = fake(on, [])
+  const ui = await mountPane($, f, 'desktop')
+  if (!ui) return
+  expect((await ui.find({ key: 'open-Repo-copy' })).props.label).toBe('📋')
+  const keys = (await ui.findAll({ type: 'Button' })).map((b: any) => b.key).filter((k: string) => k?.startsWith('open-Repo-'))
+  expect(keys).toEqual(['open-Repo-copy', 'open-Repo-files', 'open-Repo-code', 'open-Repo-repowatch'])   // the copy button comes first
+  expect(await texts(ui)).toContain('Worktree Repo')
+  expect(await texts(ui)).not.toContain('dev/x/92012-author')                          // the branch line is gone
+  await ui.press({ key: 'open-Repo-copy' })
+  await until(async () => f.toasts.some(t => t.includes('Path copied')))
+  const run = f.runs.find(a => a[0] === 'sh')
+  expect(run?.[2]).toContain('/ws/docs/spec/92012-author/wt/Repo')                      // the folder's path goes to the clipboard
+  expect(f.toasts.some(t => t.includes('Path copied'))).toBe(true)
+})
 
 test('desktop: the spanner on a worktree asks repowatch to show that one worktree', async ($: any, on: any) => {
   const f = fake(on, [])
