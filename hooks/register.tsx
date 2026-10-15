@@ -932,7 +932,9 @@ export const register: Register = on => {
           const labelOf = (k: string | null) => rows.find(r => r.stage.key === k)?.stage.label ?? ''
           return (
             <Box flexDirection="column" gap={1}>
-              <Svg source={pic.source} alt={pic.alt} isInteractive />
+              <Svg source={pic.source} alt={pic.alt} width={pic.width} height={pic.height} isInteractive />
+              {/* TEMPORARY: what the pane reports, to size the picture against the real Desktop pane */}
+              <Text dimColor>{`picture ${pic.width}x${pic.height} px · pane ${e.props.bodyColumns} columns`}</Text>
               <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
                 <Button key="stage-prev" hotkey="p" plain dimColor={prevKey === shownKey} label={`◀ ${labelOf(prevKey)}`} onPress={() => pickStage(prevKey)} />
                 {Select && (
