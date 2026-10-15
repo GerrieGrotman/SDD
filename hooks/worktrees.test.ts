@@ -36,6 +36,7 @@ function engine(on: any, liveFile = true) {
     return ok(JSON.stringify(LIVE))
   }) as never)
   on('session.cwd', (() => ok('/ws')) as never)
+  on('session.surfaces' as never, (() => ok(['desktop'])) as never)   // the page is for the Desktop app
   on('session.start', ((_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd })) as never)
   on('command.register', (() => ok({ isRegistered: true })) as never)
   on('clock.every', (() => ok({ id: 'tick' })) as never)
@@ -49,7 +50,7 @@ function engine(on: any, liveFile = true) {
 const texts = async (ui: { findAll: (q: { type: string }) => Promise<Array<{ text?: string }>> }) =>
   (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').join('\n')
 
-for (const surface of ['terminal', 'desktop'] as const) {
+for (const surface of ['desktop'] as const) {
   const mountPage = async ($: any) => {
     await $.session.start({ cwd: '/ws', surface: 'terminal', isInteractive: true })
     const ui = await $.ui.mount({ plugin: 'sdd', surface, component: 'Pane', props: PROPS, requestId: 'sdd-worktrees', viewport: { columns: 110, rows: 40 } })

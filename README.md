@@ -53,8 +53,11 @@ The sdd view opens by itself the first time a chat takes up a work item. In it:
   is in progress, and turns amber when it waits on you;
 - the review stage (spec: Review, bug: Phase 15) has **Approved**, **Merged** and **Rejected**;
 - a worktree opens in File Explorer or VS Code from its box.
-- in the Desktop app the pane draws the flow as a map: a box per stage, coloured by state, a diamond on
-  a stage that holds a gate, and a dashed arrow back for a rejected review;
+- the pane draws the flow as one vertical picture: a node per stage on a rail, with its state, cost bar,
+  last activity, latest note and gates on its row. It is laid out for the width the pane has, so it follows a
+  resize. Under it a **stage picker** (◀ a dropdown ▶, keys `p` and `n`) chooses the stage whose detail shows
+  below: cost split, Stage log, each gate's story, documents, Approve and feedback. One stage's detail shows at a time;
+- the view is for the Claude Desktop app. In a terminal, the VS Code extension or a phone it does nothing;
 - a **Work item** dropdown switches the pane to another open item, and after `/sdd ` the prompt box
   offers your open items by id or a word of the title;
 - an **Agents** section lists the session's sub-agents and what each one is doing;

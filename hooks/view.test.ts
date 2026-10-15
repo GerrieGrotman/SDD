@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, flowPicture, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -238,107 +238,6 @@ test('Open Questions: skipped when nothing was asked, badged while questions sta
   expect(stageRows(SPEC, { ...legacy, progress: { ...legacy.progress!, phase: 'Design' } }).find(r => r.stage.key === 'Requirements')!.mark).toBe('done')
 })
 
-const COLORS = { done: '#3f9a63', now: '#c98a12', work: '#4a7fc4', revoked: '#c0503f', gate: '#8a73c9', dim: '#7b8794', line: '#5c6670', hoverText: '#ffffff' }
-const SPEC_REWORK = { ...SPEC, stages: [...SPEC.stages, { key: 'Review', label: 'Review', needs: ['PR raised'], passes: ['PR approved'], stop: true, reworkTo: 'Implement' }] }
-
-test('the flow map draws one box per stage, in a snake of four, with the way back for a rejected review', () => {
-  const item: SddItem = { ...ITEM, progress: { ...ITEM.progress!, phase: 'Design', status: 'waiting' }, gates: { Claimed: '2026-10-01T08:50:08Z', 'Requirements agreed': '2026-10-01T12:41:15Z' } }
-  const rows = stageRows(SPEC_REWORK, item)
-  const pend = pendingGate(SPEC_REWORK, item, SNAP.derived)
-  const m = flowMap(SPEC_REWORK, item, rows, SNAP.derived, COLORS, pend)
-  expect(m.source.startsWith('<svg xmlns="http://www.w3.org/2000/svg"')).toBe(true)
-  expect(m.source.endsWith('</svg>')).toBe(true)
-  expect(m.source.length).toBeLessThan(131072)                              // the Svg element's limit
-  expect(m.source.match(/<rect /g)?.length).toBe(8 + 1)                      // a box each, and the ring round the stage the item is at
-  expect(m.source).toContain('stroke-dasharray="5 4"')                       // Review goes back to Implement
-  expect(m.source).toContain('rework → Implement')
-  expect(m.alt).toBe('Spec flow, 8 stages: Specify (done), Open Questions (done), Requirements (done), Design (waiting on you), Decompose (next), Implement, Verify, Review.')
-  // the second row runs right to left: Decompose (stage 5) sits under Design (stage 4)
-  const xs = [...m.source.matchAll(/<rect x="(\d+)" y="(\d+)" width="126"/g)].map(x => [Number(x[1]), Number(x[2])])
-  expect(xs[3][0]).toBe(xs[4][0])
-  expect(xs[4][1]).toBeGreaterThan(xs[3][1])
-  expect(xs[7][0]).toBe(xs[0][0])                                            // Review ends under Specify
-})
-
-test('the flow map: a flow of phases, no way back drawn when the target is not behind, and text is escaped', () => {
-  const bug = { ...BUG, stages: [...BUG.stages.slice(0, 3), { key: 'Phase 15', label: 'PR <review> & "more"', needs: [], passes: [], stop: true, reworkTo: 'Phase 99' }] }
-  const item: SddItem = { ...ITEM, flow: 'bug', progress: { ...ITEM.progress!, phase: 'Phase 6', status: 'active' } }
-  const m = flowMap(bug, item, stageRows(bug, item), [], COLORS, null)
-  expect(m.source).not.toContain('stroke-dasharray="5 4"')                  // reworkTo names no stage: nothing drawn
-  expect(m.source).toContain('Phase 15')
-  expect(m.source).toContain('PR &lt;review&gt; &amp; &quot;more&quot;')
-  expect(m.source).not.toContain('<review>')
-})
-
-// ---- the Worktrees page
-
-const wtItem = (id: number, folder: string | null, extra: Partial<SddItem> = {}): SddItem => ({
-  ...ITEM, id, folder, repos: { Repo: { base: 'team/0.0.1', branch: `dev/x/${id}`, path: 'src/Repo', pr: id === 1 ? { id: 55, url: 'u' } : undefined } },
-  progress: { ...ITEM.progress!, status: 'active' },
-  ...extra,
-})
-const LIVE: SddLiveState = { generated: 1000, repos: { Repo: { worktrees: [
-  { path: 'C:/ws/.claude/worktrees/1-a/src/Repo', branch: 'dev/x/1', class: 'safe', reasons: ['merged into main'], dirty: 0, lastCommit: 1000 - 86400 * 4 },
-  { path: 'C:/ws/.claude/worktrees/2-b/src/Repo', branch: 'dev/x/2', class: 'ok', reasons: [], dirty: 3, ahead: 1, behind: 2, lastCommit: 1000 - 7200 },
-] } } }
-
-test('a path key ignores slashes and the case of a drive path', () => {
-  expect(pathKey('C:\\ws\\a\\')).toBe('c:/ws/a')
-  expect(pathKey('/home/Me/a/')).toBe('/home/Me/a')
-})
-
-test('each work item repo is joined to its live worktree by path', () => {
-  const lines = joinWorktrees([wtItem(1, 'c:\\ws\\.claude\\worktrees\\1-a'), wtItem(2, 'C:/ws/.claude/worktrees/2-b'), wtItem(3, 'C:/ws/.claude/worktrees/3-c'),
-    wtItem(4, null), wtItem(5, 'C:/ws/x', { removed: '2026-10-01' })], LIVE)
-  expect(lines.map(l => [l.item.id, l.live?.class ?? null])).toEqual([[1, 'safe'], [2, 'ok'], [3, null]])
-  expect(joinWorktrees([wtItem(1, 'C:/ws/.claude/worktrees/1-a')], null)[0].live).toBe(null)
-})
-
-test('lines to clean up come first, then work waiting on the person', () => {
-  const waiting = wtItem(3, 'C:/ws/.claude/worktrees/3-c', { progress: { ...ITEM.progress!, status: 'waiting' } })
-  const lines = sortLines(joinWorktrees([wtItem(2, 'C:/ws/.claude/worktrees/2-b'), waiting, wtItem(1, 'C:/ws/.claude/worktrees/1-a')], LIVE))
-  expect(lines.map(l => l.item.id)).toEqual([1, 3, 2])
-  expect(groupByItem([...lines, ...lines]).map(b => [b.item.id, b.lines.length])).toEqual([[1, 2], [3, 2], [2, 2]])
-})
-
-test('a line says where it came from and how the worktree is', () => {
-  const [one, two, three] = joinWorktrees([wtItem(1, 'C:/ws/.claude/worktrees/1-a'), wtItem(2, 'C:/ws/.claude/worktrees/2-b'), wtItem(3, 'C:/ws/.claude/worktrees/3-c')], LIVE)
-  expect(lineFacts(one, 1000)).toEqual(['from team/0.0.1', 'PR 55', 'clean', 'last commit 4d ago'])
-  expect(lineFacts(two, 1000)).toEqual(['from team/0.0.1', '3 uncommitted', '+1/-2 upstream', 'last commit 2h ago'])
-  expect(lineFacts(three, 1000)).toEqual(['from team/0.0.1', 'repowatch has not seen it'])
-  expect(cleanupNote(one)).toBe('can be removed: merged into main')
-  expect(cleanupNote(two)).toBe('')
-  expect(cleanupNote(three)).toBe('')
-  expect(counts([one, two, three])).toEqual({ items: 3, worktrees: 3, cleanup: 1, dirty: 1, conflicts: 0 })
-  expect(agoText(undefined, 5)).toBe('no commits')
-})
-
-test('the Worktrees page shows how far behind the base a branch is and what would conflict', () => {
-  const live: SddLiveState = { generated: 1000, repos: { Repo: { worktrees: [
-    { path: 'C:/ws/.claude/worktrees/1-a/src/Repo', branch: 'dev/x/1', class: 'ok', reasons: [], dirty: 0, lastCommit: 1000 - 7200,
-      baseRef: 'origin/team/0.0.1', behindBase: 4, aheadBase: 2, forecast: { state: 'conflict', base: 'origin/team/0.0.1', files: ['a.cs', 'b.cs'] } },
-  ] } } }
-  const [line] = joinWorktrees([wtItem(1, 'C:/ws/.claude/worktrees/1-a')], live)
-  expect(lineFacts(line, 1000)).toContain('4 behind origin/team/0.0.1')
-  expect(conflictNote(line)).toBe('merging origin/team/0.0.1 in would conflict in a.cs, b.cs')
-  expect(counts([line]).conflicts).toBe(1)
-  expect(sortLines(joinWorktrees([wtItem(2, 'C:/ws/.claude/worktrees/2-b'), wtItem(1, 'C:/ws/.claude/worktrees/1-a')], live))[0].item.id).toBe(1)
-})
-
-test('the Worktrees page asks repowatch for a line\'s history: its branch against the recorded base', () => {
-  const live: SddLiveState = { generated: 1, repos: { 'my app': { worktrees: [
-    { path: 'C:/ws/.claude/worktrees/1-a/src/Repo', branch: 'dev/x/1', class: 'ok', reasons: [], baseRef: 'origin/team/0.0.1' }] } } }
-  const [seen] = joinWorktrees([wtItem(1, 'C:/ws/.claude/worktrees/1-a')], live)
-  expect(seen.repoName).toBe('my app') // repowatch's name for the repo, which may differ from the work item's
-  expect(historyRefs(seen)).toEqual(['dev/x/1', 'origin/team/0.0.1'])
-  expect(JSON.parse(historyArgs(seen).slice('history '.length))).toEqual(
-    { repo: 'my app', refs: ['dev/x/1', 'origin/team/0.0.1'], title: '1 · my app · dev/x/1 against origin/team/0.0.1' })
-  // not seen by repowatch yet: the work item's own names and its recorded base
-  const [unseen] = joinWorktrees([wtItem(2, 'C:/ws/.claude/worktrees/2-b')], null)
-  expect(unseen.repoName).toBe('Repo')
-  expect(historyRefs(unseen)).toEqual(['dev/x/2', 'origin/team/0.0.1'])
-})
-
 test('the spinner note names the item, its stage and the next gate or the task count', () => {
   const at = (phase: string, status: 'active' | 'waiting' | 'done', gates: Record<string, string> = {}, spec = ITEM.spec): SddItem =>
     ({ ...ITEM, gates, spec, progress: { ...ITEM.progress!, phase, status } })
@@ -448,4 +347,131 @@ test('the stage line: dollars and turns, then the tokens; tokens alone still say
   expect(spendLine(spend, 'Old')).toBe('$0.50 over 1 turn')
   expect(spendLine(spend, 'None')).toBe(null)
   expect(spendLine(spend, 'Missing')).toBe(null)
+})
+
+test('gate chips: passed with when, the one the item waits on, a revoked one, and one still open', () => {
+  const stage = { key: 'Design', label: 'Design', needs: [], passes: ['Worktree', 'Design agreed', 'Plan agreed', 'Cost agreed'], stop: true }
+  const item: SddItem = { ...ITEM, gates: { 'Design agreed': '2026-10-01T12:41:15Z' },
+    history: [{ at: '2026-10-01T13:00:00Z', flow: 'spec', phase: 'Design', status: 'active', note: 'plan changed', gates: { passed: [], revoked: ['Plan agreed'] } }] }
+  // Worktree is derived (the script records it): not a chip
+  expect(gateChips(item, stage, SNAP.derived, { gate: 'Cost agreed', key: 'Design' })).toEqual([
+    { gate: 'Design agreed', state: 'passed', at: '2026-10-01T12:41:15Z' },
+    { gate: 'Plan agreed', state: 'revoked' },
+    { gate: 'Cost agreed', state: 'pending' }])
+  expect(gateChips(item, stage, SNAP.derived, null).map(c => c.state)).toEqual(['passed', 'revoked', 'open'])
+  expect(gateChips(item, stage, SNAP.derived, { gate: 'Cost agreed', key: 'Verify' }).map(c => c.state)).toEqual(['passed', 'revoked', 'open'])   // waiting at another stage
+  expect(gateChips(item, { ...stage, passes: ['Worktree'] }, SNAP.derived, null)).toEqual([])
+})
+
+test('mark words: one for every mark, none for a stage not reached', () => {
+  expect(MARK_WORD.waiting).toBe('waiting on you')
+  expect(MARK_WORD.later).toBe('')
+  expect(Object.keys(MARK_WORD).sort()).toEqual(['abandoned', 'active', 'blocked', 'done', 'later', 'missed', 'next', 'skipped', 'waiting'])
+})
+
+test('the dropdown holds the item the pane shows even when it is finished, last', () => {
+  const gone: SddItem = { ...ITEM, id: 92048, title: 'Abandoned one', progress: { ...ITEM.progress!, phase: 'Design', status: 'abandoned' } }
+  const o = itemOptions(MANY, gone)
+  expect(o.map(x => x.value)).toEqual(['92100', '92200', '92012', '92048'])
+  expect(o[3].label).toBe('92048 Abandoned one · Design · abandoned')
+  expect(itemOptions(MANY, OTHER).map(x => x.value)).toEqual(['92100', '92200', '92012'])       // an open one is not listed twice
+})
+
+const PIC_COLORS = { done: '#3f9a63', now: '#c98a12', work: '#4a7fc4', revoked: '#c0503f', gate: '#8a73c9', dim: '#7b8794', line: '#5c6670', hoverText: '#ffffff' }
+const PIC_ITEM: SddItem = { ...ITEM, gates: { Claimed: '2026-10-01T08:50:08Z', 'Requirements agreed': '2026-10-01T12:41:15Z' },
+  progress: { ...ITEM.progress!, phase: 'Design', status: 'waiting', gate: 'Design agreed?' },
+  stages: { Specify: { at: '2026-10-01T08:50:08Z', status: 'done' }, 'Open Questions': { at: '2026-10-01T10:41:54Z', status: 'done' }, Requirements: { at: '2026-10-01T12:41:15Z', status: 'done' } },
+  history: [
+    { at: '2026-10-01T12:41:15Z', flow: 'spec', phase: 'Requirements', status: 'done', note: 'approved with two caveats and a very long note that has to be cut to fit the room it has', gates: { passed: ['Requirements agreed'], revoked: [] } },
+    { at: '2026-10-01T13:40:00Z', flow: 'spec', phase: 'Design', status: 'waiting', note: 'design.md ready' }] }
+const PIC_SPEND = { Requirements: { usd: 1.05, turns: 4 }, Design: { usd: 1.84, turns: 5, input: 12000, output: 3400, cacheRead: 1_200_000, cacheWrite: 80_000 } }
+const picOf = (width: number, over: Partial<Parameters<typeof flowPicture>[0]> = {}) => {
+  const rows = stageRows(SPEC, PIC_ITEM)
+  return flowPicture({ flow: SPEC, item: PIC_ITEM, rows, derived: SNAP.derived, colors: PIC_COLORS, pending: pendingGate(SPEC, PIC_ITEM, SNAP.derived),
+    spend: PIC_SPEND, selected: 'Design', width, ...over })
+}
+
+test('the flow picture: one node per stage on a rail, the picked stage outlined, the gates and the state words on the rows', () => {
+  const p = picOf(560)
+  expect(p.source.startsWith('<svg xmlns="http://www.w3.org/2000/svg" width="560"')).toBe(true)
+  expect(p.source).toContain(`viewBox="0 0 560 ${p.height}"`)
+  expect(p.source.match(/<circle [^>]*r="10"/g)).toHaveLength(7)                     // a node per stage
+  expect(p.source.match(/fill-opacity="0.13"/g)).toHaveLength(1)                       // one outline: the picked stage
+  expect(p.source).toContain('>waiting on you</text>')
+  expect(p.source).toContain('>your turn</text>')                                      // the gate the item waits on
+  expect(p.source).toContain('>Requirements agreed</text>')
+  expect(p.source).toContain('$1.84')
+  expect(p.source).toContain('stroke-dasharray="4 4"')                                 // the rail ahead of the item is dashed
+  expect(p.alt).toBe('Spec flow, 7 stages, top to bottom: Specify (done), Open Questions (done), Requirements (done), Design (waiting on you), Decompose (next), Implement, Verify.')
+  expect(p.source.length).toBeLessThan(131072)                                         // the Svg element's limit
+  expect(picOf(560, { selected: null }).source).not.toContain('fill-opacity="0.13"')    // nothing picked: no outline
+})
+
+test('the flow picture is laid out for the width it has: bars and times when wide, the essentials when narrow', () => {
+  const wide = picOf(900).source
+  const mid = picOf(420).source
+  const narrow = picOf(320).source
+  expect(wide).toContain('opacity="0.25"')                                             // the cost bar track
+  expect(wide).toMatch(/>\d\d\/\d\d \d\d:\d\d<\/text>/)                                // the last activity time
+  expect(mid).not.toContain('opacity="0.25"')                                          // no bars from here down
+  expect(mid).not.toMatch(/>\d\d\/\d\d \d\d:\d\d<\/text>/)                          // and no times
+  expect(narrow).not.toContain('opacity="0.25"')
+  expect(narrow).toContain('$1.84')                                                    // but the cost stays, in the middle size and the narrow one
+  expect(mid).toContain('$1.84')
+  expect(picOf(100).width).toBe(300)                                                   // held between a floor and a ceiling
+  expect(picOf(5000).width).toBe(960)
+  expect(picOf(Number.NaN).width).toBe(300)
+  // each width has its own height: text wraps to more lines where there is less room
+  expect(picOf(320).height).toBeGreaterThanOrEqual(picOf(900).height)
+})
+
+test('the flow picture keeps everything inside itself, cuts long text with an ellipsis, wraps gates, and escapes text', () => {
+  const long: SddItem = { ...PIC_ITEM, history: [{ at: '2026-10-01T13:40:00Z', flow: 'spec', phase: 'Design', status: 'waiting', note: 'a <very> long & "quoted" note ' + 'that goes on and on '.repeat(30) }] }
+  const flow = { ...SPEC, stages: SPEC.stages.map(st => st.key === 'Design' ? { ...st, passes: ['Gate number one is long', 'Gate number two is long', 'Gate number three is long', 'Gate four'] } : st) }
+  for (const width of [300, 340, 420, 560, 900, 960]) {
+    const p = flowPicture({ flow, item: long, rows: stageRows(flow, long), derived: [], colors: PIC_COLORS, pending: null, spend: PIC_SPEND, selected: 'Design', width })
+    for (const m of p.source.matchAll(/<text x="(\d+)"[^>]*>/g)) expect(Number(m[1])).toBeLessThanOrEqual(width)     // every text starts inside
+    expect(p.source).toContain('…')
+    expect(p.source).toContain('&lt;very&gt;')
+    expect(p.source).toContain('&amp;')
+    expect(p.source).not.toContain('<very>')
+  }
+  const narrowH = flowPicture({ flow, item: long, rows: stageRows(flow, long), derived: [], colors: PIC_COLORS, pending: null, spend: {}, selected: null, width: 320 }).height
+  const wideH = flowPicture({ flow, item: long, rows: stageRows(flow, long), derived: [], colors: PIC_COLORS, pending: null, spend: {}, selected: null, width: 960 }).height
+  expect(narrowH).toBeGreaterThan(wideH)                                               // four gates take more rows where they cannot sit side by side
+})
+
+test('the flow picture shows the open-question count on its stage, and works for a flow of phases', () => {
+  const asked: SddItem = { ...PIC_ITEM, spec: { ...PIC_ITEM.spec!, questions_open: 3, questions_total: 5 } }
+  const hasOpen = flowPicture({ flow: SPEC, item: asked, rows: stageRows(SPEC, asked), derived: SNAP.derived, colors: PIC_COLORS, pending: null, spend: {}, selected: null, width: 640 })
+  expect(hasOpen.source).toContain('3 open')
+  const bug: SddItem = { ...ITEM, flow: 'bug', progress: { ...ITEM.progress!, phase: 'Phase 6', status: 'active' } }
+  const p = flowPicture({ flow: BUG, item: bug, rows: stageRows(BUG, bug), derived: [], colors: PIC_COLORS, pending: null, spend: {}, selected: 'Phase 6', width: 420 })
+  expect(p.source.match(/<circle [^>]*r="10"/g)).toHaveLength(6)
+  expect(p.source).toContain('>6  step 6</text>')
+})
+
+test('the stage the pane opens on, and the stage before and after', () => {
+  const at = (phase: string, status: 'active' | 'waiting' | 'done' | 'blocked') => stageRows(SPEC, { ...ITEM, gates: {}, progress: { ...ITEM.progress!, phase, status } })
+  expect(defaultStage(at('Design', 'waiting'))).toBe('Design')
+  expect(defaultStage(at('Implement (task 2/7)', 'active'))).toBe('Implement')
+  expect(defaultStage(at('Verify', 'blocked'))).toBe('Verify')
+  expect(defaultStage(stageRows(SPEC, { ...ITEM, progress: null }))).toBe('Specify')   // not started: the first
+  expect(defaultStage([])).toBe(null)
+  const rows = stageRows(SPEC, ITEM)
+  expect(stepStage(rows, 'Design', -1)).toBe('Requirements')
+  expect(stepStage(rows, 'Design', 1)).toBe('Decompose')
+  expect(stepStage(rows, 'Specify', -1)).toBe('Specify')                               // held at the first
+  expect(stepStage(rows, 'Verify', 1)).toBe('Verify')                                  // and at the last
+  expect(stepStage(rows, 'Nowhere', 1)).toBe('Open Questions')                         // an unknown stage counts as the first
+  expect(stepStage(rows, null, -1)).toBe('Specify')
+  expect(stepStage([], 'Design', 1)).toBe(null)
+})
+
+test('short stamp: month/day hour:minute in this computer\'s time zone', () => {
+  const d = new Date('2026-10-01T12:41:15Z')
+  const two = (n: number) => String(n).padStart(2, '0')
+  expect(shortStamp('2026-10-01T12:41:15Z')).toBe(`${two(d.getMonth() + 1)}/${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`)
+  expect(shortStamp(undefined)).toBe('')
+  expect(shortStamp('not a date')).toBe('')
 })

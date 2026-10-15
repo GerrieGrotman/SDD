@@ -7,8 +7,8 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
-import type { AgentInfoLike, AgentTone, Mark } from './view/model'
+import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, flowPicture, flowTag, MARK_WORD, stepStage, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
 
 const PANE = 'sdd-view'
@@ -61,6 +61,7 @@ let python = 'python'  // module state: lost on reload, which is fine
 let isOpen = false
 let isWorkspace = false
 // Cost and context, from session.measure. The cost is charged to the stage the item was in when the turn began.
+let desktopReady = false  // a Desktop app is attached: until then the mod does nothing
 let sessionId = ''
 let costFailed = false
 let staleBaseline = false  // /clear, /resume or /branch ran: read the session id and cost total again at the next turn
@@ -173,6 +174,9 @@ async function listAgents($: EngineInterface): Promise<AgentInfoLike[]> {
   }
 }
 
+// The picture is laid out for the pane's width in pixels. The app tells the pane its width in columns; a column is about
+// this many pixels. If the guess is high the picture is scaled down to fit the pane, if low it leaves a margin.
+const PX_PER_COLUMN = 8
 const WT_PANE = 'sdd-worktrees'
 const WT_COLORS = { urgent: '#c0503f', warn: '#c98a12', ok: '#3f9a63', dim: '#7b8794', work: '#4a7fc4' }
 const WT_REFRESH_MS = 30_000
@@ -249,6 +253,48 @@ async function baseline($: EngineInterface): Promise<void> {
   }
 }
 
+/** The sdd view is for the Claude Desktop app. This sets it up once a Desktop app is attached to the session (at the start,
+ *  or when it attaches; never from a draw, which may not write state): the commands, the first read of the work items, the cost baseline and the
+ *  timers. Anywhere else (a terminal, the VS Code extension, a phone, `claude -p`) it does nothing, and every hook passes
+ *  through. A mod cannot refuse to load, so this is how it stays out of the way. */
+async function setupDesktop($: EngineInterface, isAttach = false): Promise<boolean> {
+  if (desktopReady) return true
+  let surfaces: readonly string[] = []
+  try {
+    surfaces = await $.session.surfaces()
+  } catch {
+    surfaces = []
+  }
+  if (!isAttach && !surfaces.includes('desktop')) return false
+  desktopReady = true
+  await $.command.register({
+    name: 'sdd-worktrees',
+    description: 'Show every sdd work item that still has worktrees, with the live state of each (from repowatch)',
+  })
+  await $.command.register({
+    name: 'sdd-view',
+    description: 'Show the sdd flow of the work item this chat works on (or the one given) in a pane',
+    argumentHint: '[work item id] [workspace folder]',
+  })
+  const sync = async () => {
+    const v = await loadView($, (await $.state.get(selected)).value ?? (await $.state.get(mine)).value ?? null,
+      (await $.state.get(snap)).value ?? null, (await $.state.get(place)).value ?? null)
+    await $.state.set(snap, v.out)
+    await $.state.set(error, v.why)
+  }
+  // background reads: if the session ends under one, there is nobody to tell
+  void sync().catch(() => undefined)
+  await baseline($)
+  $.clock.every(30_000, () => {
+    if (isOpen || isWorkspace) void sync().catch(() => undefined)
+  })
+  // an agent that works changes without any prop changing: redraw the open pane every few seconds
+  $.clock.every(3_000, () => {
+    if (isOpen && agentsBusy) $.ui.invalidate('ui.render')
+  })
+  return true
+}
+
 const AGENT_GLYPH: Record<AgentTone, string> = { working: '●', waiting: '●', done: '✓', failed: '✕', quiet: '○' }
 
 export const register: Register = on => {
@@ -256,6 +302,7 @@ export const register: Register = on => {
   // It lives in this file: older engines follow `$` into a function of the same file only.
 
   on('command.run', { command: 'sdd-worktrees' }, async ($, e) => {
+    if (!desktopReady) return { text: 'The sdd worktrees page works in the Claude Desktop app only.' }
     wtOpen = true
     if (!wtTimer) {
       wtTimer = true
@@ -278,7 +325,8 @@ export const register: Register = on => {
     return { text: 'sdd worktrees opened.' }
   })
 
-  on('ui.render', { component: 'Pane', requestId: WT_PANE }, async ($, e) => {
+  on('ui.render', { component: 'Pane', requestId: WT_PANE }, async ($, e, next) => {
+    if (e.surface !== 'desktop') return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     const s: SddSnapshot | null = (await $.state.get(snap)).value ?? null
     const liveState = (await $.state.get(live)).value ?? null
@@ -384,30 +432,13 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({
-      name: 'sdd-worktrees',
-      description: 'Show every sdd work item that still has worktrees, with the live state of each (from repowatch)',
-    })
-    await $.command.register({
-      name: 'sdd-view',
-      description: 'Show the sdd flow of the work item this chat works on (or the one given) in a pane',
-      argumentHint: '[work item id] [workspace folder]',
-    })
-    const sync = async () => {
-      const v = await loadView($, (await $.state.get(selected)).value ?? (await $.state.get(mine)).value ?? null,
-        (await $.state.get(snap)).value ?? null, (await $.state.get(place)).value ?? null)
-      await $.state.set(snap, v.out)
-      await $.state.set(error, v.why)
-    }
-    void sync()
-    await baseline($)
-    $.clock.every(30_000, () => {
-      if (isOpen || isWorkspace) void sync()
-    })
-    // an agent that works changes without any prop changing: redraw the open pane every few seconds
-    $.clock.every(3_000, () => {
-      if (isOpen && agentsBusy) $.ui.invalidate('ui.render')
-    })
+    await setupDesktop($)
+    return next(e)
+  })
+
+  // the Desktop app can attach after the session started
+  on('session.attach', async ($, e, next) => {
+    if (e.surface === 'desktop') await setupDesktop($, true)
     return next(e)
   })
 
@@ -415,6 +446,7 @@ export const register: Register = on => {
   // first time the chat takes one up (once per session; "view.autoOpen": false in sdd.json turns it off).
   for (const command of ['sdd', 'sdd:sdd'] as const) {
     on('command.run', { command }, async ($, e, next) => {
+      if (!desktopReady) return next(e)
       const id = idFromArgs(e.args)
       if (id != null) {
         await $.state.set(mine, id)
@@ -433,6 +465,7 @@ export const register: Register = on => {
   }
 
   on('command.run', { command: 'sdd-view' }, async ($, e) => {
+    if (!desktopReady) return { text: 'The sdd view works in the Claude Desktop app only.' }
     const [, num, rest] = /^(\d+)?\s*(.*)$/s.exec(e.args.trim()) ?? []
     const folder = (rest ?? '').trim().replace(/^["']|["']$/g, '')
     if (folder) await $.state.set(place, folder)
@@ -450,6 +483,7 @@ export const register: Register = on => {
   })
 
   on('ui.close', async ($, e, next) => {
+    if (!desktopReady) return next(e)
     if (e.id === PANE) isOpen = false
     if (e.id === WT_PANE) wtOpen = false
     return next(e)
@@ -457,6 +491,7 @@ export const register: Register = on => {
 
   for (const tool of ['Bash', 'PowerShell'] as const) {
     on('tool.call', { tool }, async ($, e, next) => {
+      if (!desktopReady) return next(e)
       const ran = await next(e)
       const cmd = String((e as { command?: unknown }).command ?? '')
       if (SCRIPT_RUN.test(cmd)) {
@@ -483,6 +518,7 @@ export const register: Register = on => {
   // chat's dialog does. While that dialog is open, an answer from the view settles this call first:
   // the chat's dialog is dropped and Claude reads the answer as the tool's own result.
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    if (!desktopReady) return next(e)
     const own = (await $.state.get(mine)).value ?? null
     const questions = (e as { questions?: unknown }).questions
     if (own == null || !e.tool_use_id || !Array.isArray(questions)) return next(e)
@@ -508,6 +544,7 @@ export const register: Register = on => {
 
   // a subagent's turn starts: the pane's agent rows may have a new one
   on('turn.start', async ($, e, next) => {
+    if (!desktopReady) return next(e)
     if (!e.agentId) {
       if (staleBaseline) {
         staleBaseline = false
@@ -530,6 +567,7 @@ export const register: Register = on => {
 
   // after each turn: what the session spent over it goes to the stage the turn began in; the context fill is kept for the pane and band
   on('session.measure', async ($, e, next) => {
+    if (!desktopReady) return next(e)
     if (e.context.percent != null) ctx = { percent: e.context.percent, window: e.context.window }
     const usd = e.cost?.usd
     if (usd != null) {
@@ -550,6 +588,7 @@ export const register: Register = on => {
   // /clear, /resume and /branch end the session this mod measured: the session id and the cost total are another
   // session's from here. The new baseline is read as the next turn begins (session.end fires before the change).
   on('session.end', async ($, e, next) => {
+    if (!desktopReady) return next(e)
     if (e.reason === 'clear' || e.reason === 'resume') {
       staleBaseline = true
       turnOf = null
@@ -560,6 +599,7 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    if (!desktopReady) return next(e)
     // what the turn's responses used, for every loop: a sub-agent's tokens are part of what the item cost too
     const u = e.usage
     if (u) {
@@ -594,6 +634,7 @@ export const register: Register = on => {
 
   // after `/sdd ` the prompt box offers this workspace's open work items by id or by a word of the title
   on('prompt.autocomplete', async ($, e, next) => {
+    if (!desktopReady) return next(e)
     const s = (await $.state.get(snap)).value ?? null
     const start = e.start ?? e.cursor - e.token.length
     const suggestions = s ? itemSuggestions(s, e.text.slice(0, start), e.token) : []
@@ -604,6 +645,7 @@ export const register: Register = on => {
 
   // while Claude works: this chat's item, its stage, and what it works toward, after the spinner's word
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    if (e.surface !== 'desktop') return next(e)
     const s = (await $.state.get(snap)).value ?? null
     const own = (await $.state.get(mine)).value ?? null
     const item = s?.items.find(i => i.id === own)
@@ -615,6 +657,7 @@ export const register: Register = on => {
   // ---------------------------------------------------------------- band above the prompt
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.surface !== 'desktop') return next(e)
     const s = (await $.state.get(snap)).value ?? null
     paint(s?.colors)
     const own = (await $.state.get(mine)).value ?? null
@@ -652,7 +695,8 @@ export const register: Register = on => {
 
   // ---------------------------------------------------------------- the pane
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    if (e.surface !== 'desktop') return next(e)
     const t = $.ui.resolve(e)
     const { Box, Text, Button, Markdown } = t
     const cols = e.props.bodyColumns
@@ -682,7 +726,8 @@ export const register: Register = on => {
     const item = id != null ? (s.items.find(i => i.id === id) ?? s.done.find(i => i.id === id)) : undefined
     // a dropdown of the workspace's open work items: picking one makes the pane follow it (the chat's own item is not changed)
     const Select = 'Select' in t ? t.Select : undefined
-    const options = itemOptions(s)
+    const { Svg } = t
+    const options = itemOptions(s, item)
     const pick = (value: string) => void (async () => {
       const to = Number(value)
       if (!Number.isInteger(to)) return
@@ -731,14 +776,23 @@ export const register: Register = on => {
     const canOpen = e.surface !== 'mobile' && !!item.folder && !item.removed
     const hasInput = 'Input' in t
     const Input = hasInput ? t.Input : undefined
-    // the flow map is a drawing: only an app that has Svg shows it; the stage rows below say the same in text
-    const Svg = 'Svg' in t ? t.Svg : undefined
     const rows = flow ? stageRows(flow, item) : []
+    // the stage the picture shows in detail: the one picked, else the one the item is at
+    const pickedKey = open?.startsWith('stage:') ? open.slice('stage:'.length) : null
+    const shownKey = rows.some(r => r.stage.key === pickedKey) ? pickedKey : defaultStage(rows)
     const agents = agentRows(await listAgents($))
     const spend = item.spend ?? {}
     agentsBusy = agents.some(a => a.isLive)
     const links = [item.url ? `[ADO ${item.id}](${item.url})` : `ADO ${item.id}`,
       ...Object.values(item.repos ?? {}).filter(r => r.pr).map(r => `[PR ${r.pr!.id}](${r.pr!.url})`)].join('  |  ')
+    // the picture's stage picker: show that stage's detail, with nothing of the last one left open
+    const pickStage = (key: string | null) => void (async () => {
+      if (!key) return
+      await $.state.set(stage, `stage:${key}`)
+      await $.state.set(gate, null)
+      await $.state.set(doc, null)
+      await $.state.set(feedback, null)
+    })()
     const toggle = (key: string) => void (async () => {
       await $.state.set(stage, open === key ? null : key)
       await $.state.set(gate, null)
@@ -856,85 +910,39 @@ export const register: Register = on => {
           </Box>
         )}
 
-        {flow && Svg && (() => {
-          const map = flowMap(flow, item, rows, s.derived, C, pend)
-          return <Svg source={map.source} alt={map.alt} isInteractive />
-        })()}
-
-        {flow && (
-          <Box flexDirection="column" gap={1}>
-            {rows.map(r => {
-              const key = `stage:${r.stage.key}`
-              const sum = stageSummary(flow, item, r.stage.key)
-              const gates = decidedGates(r.stage, s.derived)
-              const badge = questionBadge(flow, item, r.stage.key)
-              return (
+        {flow && (() => {
+          // the picture is the stage list; the picker under it chooses the stage whose detail shows below, one at a time
+          const pic = flowPicture({ flow, item, rows, derived: s.derived, colors: C, pending: pend, spend, selected: shownKey,
+            width: Math.round((e.props.bodyColumns ?? 100) * PX_PER_COLUMN) })
+          const row = rows.find(r => r.stage.key === shownKey)
+          const prevKey = stepStage(rows, shownKey, -1)
+          const nextKey = stepStage(rows, shownKey, 1)
+          const labelOf = (k: string | null) => rows.find(r => r.stage.key === k)?.stage.label ?? ''
+          return (
+            <Box flexDirection="column" gap={1}>
+              <Svg source={pic.source} alt={pic.alt} isInteractive />
+              <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
+                <Button key="stage-prev" hotkey="p" plain dimColor={prevKey === shownKey} label={`◀ ${labelOf(prevKey)}`} onPress={() => pickStage(prevKey)} />
+                {Select && (
+                  <Select key="pick-stage" label="Stage" value={shownKey ?? undefined} onSelect={pickStage}
+                    options={rows.map(r => ({ value: r.stage.key, label: `${stageName(r.stage)}${MARK_WORD[r.mark] ? ` · ${MARK_WORD[r.mark]}` : ''}` }))} />
+                )}
+                <Button key="stage-next" hotkey="n" plain dimColor={nextKey === shownKey} label={`${labelOf(nextKey)} ▶`} onPress={() => pickStage(nextKey)} />
+              </Box>
+              {row && (
                 <Box flexDirection="column">
-                  <Box key={`row-${key}`} flexDirection="row" gap={1} width="100%">
-                    <Text hover={{ color: lighten(markColor(r.mark)) ?? C.hoverText }} color={markColor(r.mark)} dimColor={r.mark === 'later'}>{GLYPH[r.mark]}</Text>
-                    <Box flexGrow={1} flexShrink={1}>
-                      <Button hover={{ color: C.hoverText, dimColor: false }} key={key} plain dimColor label={stageName(r.stage)}
-                        onPress={() => toggle(key)} />
-                    </Box>
-                    {spendLine(spend, r.stage.key) && <Text dimColor>{spend[r.stage.key].usd > 0 ? moneyText(spend[r.stage.key].usd) : 'tokens'}</Text>}
-                    {badge && <Text color={badge.warn ? C.now : C.dim}>{badge.text}</Text>}
-                    {stamp(sum.lastAt) && (
-                      <Button hover={{ color: C.hoverText, dimColor: false }} key={`${key}-at`} plain dimColor label={stamp(sum.lastAt)} onPress={() => toggle(key)} />
-                    )}
+                  <Box flexDirection="row" gap={1} width="100%">
+                    <Text color={markColor(row.mark)}>{GLYPH[row.mark]}</Text>
+                    <Text bold wrap="truncate-end">{stageName(row.stage)}</Text>
+                    {MARK_WORD[row.mark] && <Text color={markColor(row.mark)}>{MARK_WORD[row.mark]}</Text>}
                   </Box>
-                  {open === key && spendLine(spend, r.stage.key) && (
-                    <Box marginLeft={2}><Text dimColor wrap="wrap">{`Spent ${spendLine(spend, r.stage.key)}`}</Text></Box>
-                  )}
-                  {open === key && (() => {
-                    const lkey = `log:${r.stage.key}`
-                    return (
-                      <Box flexDirection="column" marginLeft={2}>
-                        <Box key={`row-${lkey}`} flexDirection="row" gap={1} width="100%">
-                          <Text hover={{ color: lighten(C.work) }} color={C.work}>≡</Text>
-                          {/* the whole line is the button: name and count in one label */}
-                          <Box flexGrow={1} flexShrink={1}>
-                            <Button hover={{ color: C.hoverText, dimColor: false }} key={lkey} plain dimColor
-                              label="Stage log"
-                              onPress={() => void $.state.set(gate, openGate === lkey ? null : lkey)} />
-                          </Box>
-                        </Box>
-                        {openGate === lkey && drawLog(r.stage.key, r.mark)}
-                      </Box>
-                    )
-                  })()}
-                  {open === key && gates.map(g => {
-                    const gkey = `gate:${g}`
-                    const isPending = pend?.gate === g && pend.key === r.stage.key
-                    const story = gateStory(item, g, isPending ? { flow, key: r.stage.key } : undefined)
-                    const at = item.gates?.[g]
-                    // the row shows the last recorded status only; earlier rounds are in the story
-                    const last = at ? 'passed' : story.length ? story[story.length - 1].kind : 'open'
-                    const lastAt = at ?? story[story.length - 1]?.at
-                    const tone = last === 'passed' ? C.done : last === 'revoked' ? C.revoked : last === 'asked' ? C.now : undefined
-                    return (
-                      <Box flexDirection="column" marginLeft={2}>
-                        <Box key={`row-${gkey}`} flexDirection="row" gap={1} width="100%">
-                          <Text hover={{ color: lighten(tone ?? C.dim) }} color={tone ?? C.dim}>{at ? '◆' : '◇'}</Text>
-                          {/* name left, time right: two buttons that do the same, so the whole line opens the gate */}
-                          <Box flexGrow={1} flexShrink={1}>
-                            <Button hover={{ color: C.hoverText, dimColor: false }} key={gkey} plain dimColor label={g}
-                              onPress={() => void $.state.set(gate, openGate === gkey ? null : gkey)} />
-                          </Box>
-                          {stamp(lastAt) && (
-                            <Button hover={{ color: C.hoverText, dimColor: false }} key={`${gkey}-at`} plain dimColor label={stamp(lastAt)}
-                              onPress={() => void $.state.set(gate, openGate === gkey ? null : gkey)} />
-                          )}
-                        </Box>
-                        {openGate === gkey && drawGate(story, isPending ? r.stage.key : null)}
-                      </Box>
-                    )
-                  })}
-                  {open === key && drawTools(r.stage.key)}
+                  {stageSummary(flow, item, row.stage.key).note && <Text dimColor wrap="wrap">{stageSummary(flow, item, row.stage.key).note}</Text>}
+                  {drawStageDetail(row)}
                 </Box>
-              )
-            })}
-          </Box>
-        )}
+              )}
+            </Box>
+          )
+        })()}
 
         {Object.keys(item.repos ?? {}).length > 0 && (
           <Box flexDirection="column">
@@ -972,6 +980,60 @@ export const register: Register = on => {
     }
 
     // pendKey: the stage of a gate that waits on the person now; it also lists what to read first
+    /** What a stage holds when it is opened: its cost, its log, each gate with its story, and the actions of the stage.
+     *  The picture's detail panel shows it for the picked stage; a card shows it in place. */
+    function drawStageDetail(r: StageRow) {
+      const gates = decidedGates(r.stage, s!.derived)
+      const lkey = `log:${r.stage.key}`
+      return (
+        <Box flexDirection="column">
+          {spendLine(spend, r.stage.key) && (
+            <Box marginLeft={2}><Text dimColor wrap="wrap">{`Spent ${spendLine(spend, r.stage.key)}`}</Text></Box>
+          )}
+          <Box flexDirection="column" marginLeft={2}>
+            <Box key={`row-${lkey}`} flexDirection="row" gap={1} width="100%">
+              <Text hover={{ color: lighten(C.work) }} color={C.work}>≡</Text>
+              {/* the whole line is the button: name and count in one label */}
+              <Box flexGrow={1} flexShrink={1}>
+                <Button hover={{ color: C.hoverText, dimColor: false }} key={lkey} plain dimColor
+                  label="Stage log"
+                  onPress={() => void $.state.set(gate, openGate === lkey ? null : lkey)} />
+              </Box>
+            </Box>
+            {openGate === lkey && drawLog(r.stage.key, r.mark)}
+          </Box>
+          {gates.map(g => {
+            const gkey = `gate:${g}`
+            const isPending = pend?.gate === g && pend.key === r.stage.key
+            const story = gateStory(item!, g, isPending ? { flow: flow!, key: r.stage.key } : undefined)
+            const at = item!.gates?.[g]
+            // the row shows the last recorded status only; earlier rounds are in the story
+            const last = at ? 'passed' : story.length ? story[story.length - 1].kind : 'open'
+            const lastAt = at ?? story[story.length - 1]?.at
+            const tone = last === 'passed' ? C.done : last === 'revoked' ? C.revoked : last === 'asked' ? C.now : undefined
+            return (
+              <Box flexDirection="column" marginLeft={2}>
+                <Box key={`row-${gkey}`} flexDirection="row" gap={1} width="100%">
+                  <Text hover={{ color: lighten(tone ?? C.dim) }} color={tone ?? C.dim}>{at ? '◆' : '◇'}</Text>
+                  {/* name left, time right: two buttons that do the same, so the whole line opens the gate */}
+                  <Box flexGrow={1} flexShrink={1}>
+                    <Button hover={{ color: C.hoverText, dimColor: false }} key={gkey} plain dimColor label={g}
+                      onPress={() => void $.state.set(gate, openGate === gkey ? null : gkey)} />
+                  </Box>
+                  {stamp(lastAt) && (
+                    <Button hover={{ color: C.hoverText, dimColor: false }} key={`${gkey}-at`} plain dimColor label={stamp(lastAt)}
+                      onPress={() => void $.state.set(gate, openGate === gkey ? null : gkey)} />
+                  )}
+                </Box>
+                {openGate === gkey && drawGate(story, isPending ? r.stage.key : null)}
+              </Box>
+            )
+          })}
+          {drawTools(r.stage.key)}
+        </Box>
+      )
+    }
+
     function drawGate(story: ReturnType<typeof gateStory>, pendKey: string | null) {
       if (!story.length && !pendKey) return <Box marginLeft={3}><Text dimColor>Not asked yet.</Text></Box>
       const review = pendKey ? reviewLinks(item!, pendKey) : []
