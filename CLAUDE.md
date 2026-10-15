@@ -23,7 +23,7 @@ the user's view; this file is for working on the plugin itself.
 | `scripts/sddlib.py` | Shared helpers, `DEFAULTS` for `.claude/sdd.json`, config upgrade, the output style install |
 | `scripts/adowrite.py`, `proof.py`, `nextpick.py`, `metrics.py` | ADO writes; recorded test runs; next-item rules; metrics.json — logic as plain functions, tested without ADO |
 | `scripts/fakeado.py` | Offline ADO for tests and evals: on when `SDD_FAKE_ADO` names a JSON world file |
-| `hooks/` | `question_guard.py`, `agent_guard.py`, `edit_guard.py`, and `register.tsx` + `view/model.ts` (the sdd view, a mod), `worktrees.tsx` + `view/worktrees.ts` (the `/sdd-worktrees` page, hung off `register.tsx` because a plugin names one hooks module) |
+| `hooks/` | `question_guard.py`, `agent_guard.py`, `edit_guard.py`, and `register.tsx` + `view/model.ts` (the sdd view, a mod), `view/worktrees.ts` (pure helpers of the `/sdd-worktrees` page, whose hooks live in `register.tsx`) |
 | `agents/` | `investigator` and `skeptic`, the read-only sub-agents |
 | `evals/` | `claude plugin eval` cases; `_fixtures/workspace.py` builds each case's workspace |
 | `repowatch/` | A second, standalone plugin (sdd depends on it, same marketplace): tracks many git repos and worktrees. `scripts/repowatch.py` does the git mechanics and writes `.claude/repowatch/state.json`; `hooks/register.tsx` draws the pane and status line from it, and runs a clean-up only after `plan`, a confirm and `apply` (which re-checks). Has its own `plugin.json` and version |
@@ -70,6 +70,11 @@ to trust the plugin directory, and each case is a paid agent run. A full TypeScr
 - **repowatch deletes nothing on a remote except a stale `sync/<x>-<y>` branch.** `remote_delete_refusal` in
   `repowatch/scripts/repowatch.py` refuses every other deleting `git push` (and `--mirror`, `--prune`), and
   `test_remote_deletes` pins it. A new action must not route around `git()` for pushes.
+- **The view must load on the engine the Desktop app ships, not only the newest.** The Desktop app runs its own, older
+  Claude Code (2.1.295 when this was written). On it, a mod that passes `$` or `on` into a function from another file, or
+  calls a mods API method the engine lacks (`$.ui.view` is 2.1.300+), is refused whole, and nothing of it shows. Keep `$`
+  and `on` in `register.tsx`; put pure code in `view/`. Before a PR, run `claude plugin validate .` and `claude plugin test .`
+  on that engine too: `npm i @anthropic-ai/claude-code@<version>` in a temp folder and run its `claude`.
 - **The view writes one thing**: what each turn cost, in dollars and tokens, through `env.py cost` (one appended
   line in the item's `cost.jsonl`; `view` reports the totals). Otherwise `register.tsx` reads `env.py view` and posts the user's
   messages. It never passes a gate or runs another state-changing command.

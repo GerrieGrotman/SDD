@@ -57,7 +57,7 @@ The sdd view opens by itself the first time a chat takes up a work item. In it:
   a stage that holds a gate, and a dashed arrow back for a rejected review;
 - a **Work item** dropdown switches the pane to another open item, and after `/sdd ` the prompt box
   offers your open items by id or a word of the title;
-- an **Agents** section lists the session's sub-agents, each with a **Watch** button;
+- an **Agents** section lists the session's sub-agents and what each one is doing;
 - while Claude works, the spinner names the item, its stage and what it works toward, and a system
   notification tells you once when the item waits on you;
 - **cost and context**: each turn's cost is recorded against the work item and the stage the turn began in,

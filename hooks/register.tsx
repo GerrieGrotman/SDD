@@ -6,10 +6,10 @@
 import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { SddAsk, SddColors, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
+import type { SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
 import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark } from './view/model'
-import { registerWorktrees, registerWorktreesCommand, worktreesPaneClosed } from './worktrees'
+import { agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
 
 const PANE = 'sdd-view'
 const snap = { plugin: 'sdd', key: 'snap' } as const
@@ -173,14 +173,25 @@ async function listAgents($: EngineInterface): Promise<AgentInfoLike[]> {
   }
 }
 
-/** Shows an agent's transcript in the main view, or with no id the main conversation again. It works
- *  only from something the person pressed, which is how it is called. */
-async function watchAgent($: EngineInterface, agentId?: string): Promise<void> {
+const WT_PANE = 'sdd-worktrees'
+const WT_COLORS = { urgent: '#c0503f', warn: '#c98a12', ok: '#3f9a63', dim: '#7b8794', work: '#4a7fc4' }
+const WT_REFRESH_MS = 30_000
+const live = { plugin: 'sdd', key: 'wtLive' } as const
+const liveError = { plugin: 'sdd', key: 'wtError' } as const
+const offset = { plugin: 'sdd', key: 'wtOffset' } as const
+let wtOpen = false
+let wtTimer = false
+
+type Live = { state: SddLiveState | null; why: string | null }
+
+/** Reads repowatch's state file in the workspace. Missing = repowatch has not scanned yet. */
+async function wtReadLive($: EngineInterface, root: string | null): Promise<Live> {
+  if (!root) return { state: null, why: 'No sdd workspace found from this folder.' }
   try {
-    const r = await $.ui.view(agentId ? { agentId } : {})
-    if ('deny' in r && r.deny) $.ui.toast(`Could not show it: ${String(r.deny)}`)
-  } catch (err) {
-    $.ui.toast(`Could not show it: ${String(err).slice(0, 160)}`)
+    const parsed = JSON.parse(await $.fs.read(`${root}/.claude/repowatch/state.json`)) as SddLiveState
+    return { state: parsed, why: null }
+  } catch {
+    return { state: null, why: 'repowatch has not scanned this workspace yet. It scans by itself once a minute; /repowatch scan does it now.' }
   }
 }
 
@@ -241,9 +252,142 @@ async function baseline($: EngineInterface): Promise<void> {
 const AGENT_GLYPH: Record<AgentTone, string> = { working: '●', waiting: '●', done: '✓', failed: '✕', quiet: '○' }
 
 export const register: Register = on => {
-  registerWorktrees(on)
+  // ---------------------------------------------------------------- the Worktrees page (/sdd-worktrees)
+  // It lives in this file: older engines follow `$` into a function of the same file only.
+
+  on('command.run', { command: 'sdd-worktrees' }, async ($, e) => {
+    wtOpen = true
+    if (!wtTimer) {
+      wtTimer = true
+      $.clock.every(WT_REFRESH_MS, () => {
+        if (!wtOpen) return
+        void (async () => {
+          const s = (await $.state.get(snap)).value ?? null
+          const r = await wtReadLive($, s?.root ?? null)
+          await $.state.set(live, r.state)
+          await $.state.set(liveError, r.why)
+        })()
+      })
+    }
+    await $.ui.open({ id: WT_PANE, title: 'sdd worktrees', closeOnEscape: true, columns: 110 })
+    const s = (await $.state.get(snap)).value ?? null
+    const r = await wtReadLive($, s?.root ?? null)
+    await $.state.set(live, r.state)
+    await $.state.set(liveError, r.why)
+    await $.state.set(offset, 0)
+    return { text: 'sdd worktrees opened.' }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: WT_PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const s: SddSnapshot | null = (await $.state.get(snap)).value ?? null
+    const liveState = (await $.state.get(live)).value ?? null
+    const why = (await $.state.get(liveError)).value ?? null
+    const from = (await $.state.get(offset)).value ?? 0
+    const now = Math.floor(Date.now() / 1000)
+
+    const reload = async () => {
+      const r = await wtReadLive($, s?.root ?? null)
+      await $.state.set(live, r.state)
+      await $.state.set(liveError, r.why)
+    }
+    // the history is repowatch's to draw: ask its command, which opens its own pane on that branch
+    const showHistory = (args: string) => async () => {
+      try {
+        const res = await $.command.run({ command: 'repowatch', args })
+        if (/^Usage:|no such|not found/i.test(res.text ?? '')) $.ui.toast(res.text ?? 'repowatch could not show that history')
+      } catch (err) {
+        $.ui.toast(`repowatch could not show that history (is the repowatch plugin enabled?): ${String(err).slice(0, 120)}`)
+      }
+    }
+    const openItem = (id: number) => async () => {
+      await $.state.set(selected, id)
+      await $.state.set(stage, null)
+      await $.state.set(doc, null)
+      await $.ui.open({ id: 'sdd-view', title: `sdd ${id}`, closeOnEscape: true, columns: 100 })
+    }
+
+    const header = (
+      <Box flexDirection="column">
+        <Box>
+          <Text bold>sdd worktrees  </Text>
+          <Button key="reload" label="↻" onPress={reload} />
+          <Text> </Text>
+          <Button key="rw" label="Clean up in repowatch" onPress={() => $.prompt.fill({ text: '/repowatch worktrees' })} />
+        </Box>
+        {why && <Text color={WT_COLORS.warn}>{why}</Text>}
+      </Box>
+    )
+
+    if (!s) {
+      return (
+        <Box flexDirection="column">
+          {header}
+          <Text dimColor>The work items have not been read yet. Open /sdd-view first.</Text>
+        </Box>
+      )
+    }
+
+    const lines = sortLines(joinWorktrees(s.items, liveState))
+    const blocks = groupByItem(lines)
+    const size = Math.max(2, Math.floor(((e.viewport?.rows ?? 30) - 8) / 3))
+    const shown = blocks.slice(from, from + size)
+    const c = counts(lines)
+
+    return (
+      <Box flexDirection="column">
+        {header}
+        <Text dimColor>
+          {c.items} work items · {c.worktrees} worktrees · {c.cleanup} to clean up · {c.conflicts} will conflict · {c.dirty} with uncommitted files
+          {liveState ? ` · scanned ${agoText(liveState.generated, now).replace('last commit ', '')}` : ''}
+        </Text>
+        {blocks.length === 0 && <Text dimColor>No work item has a worktree folder.</Text>}
+        {shown.map(b => {
+          const flow = s.flows[b.item.flow]
+          return (
+            <Box key={`item-${b.item.id}`} flexDirection="column">
+              <Box>
+                <Button key={`open-${b.item.id}`} label={`${b.item.id}`} onPress={openItem(b.item.id)} />
+                <Text>  {b.item.title.slice(0, 60)}  </Text>
+                <Text color={b.item.progress?.status === 'waiting' ? WT_COLORS.warn : WT_COLORS.dim}>
+                  {phaseLabel(flow, b.item) || 'not started'} · {statusWord(b.item)}
+                </Text>
+              </Box>
+              {b.lines.map(l => {
+                const note = cleanupNote(l)
+                const clash = conflictNote(l)
+                return (
+                  <Box key={`${l.item.id}-${l.repo}`} flexDirection="column" marginLeft={4}>
+                    <Box>
+                      <Text>{l.repo} · {l.branch}  </Text>
+                      <Button key={`hist-${l.item.id}-${l.repo}`} label="History" onPress={showHistory(historyArgs(l))} />
+                    </Box>
+                    <Text dimColor>  {lineFacts(l, now).join(' · ')}</Text>
+                    {note && <Text color={WT_COLORS.warn}>  {note}</Text>}
+                    {clash && <Text color={WT_COLORS.urgent}>  {clash}</Text>}
+                  </Box>
+                )
+              })}
+            </Box>
+          )
+        })}
+        {blocks.length > size && (
+          <Box>
+            <Text dimColor>{from + 1}-{Math.min(blocks.length, from + size)} of {blocks.length}  </Text>
+            {from > 0 && <Button key="prev" label="Prev" onPress={() => $.state.set(offset, Math.max(0, from - size))} />}
+            <Text> </Text>
+            {from + size < blocks.length && <Button key="next" label="Next" onPress={() => $.state.set(offset, from + size)} />}
+          </Box>
+        )}
+      </Box>
+    )
+  })
+
   on('session.start', async ($, e, next) => {
-    await registerWorktreesCommand($)
+    await $.command.register({
+      name: 'sdd-worktrees',
+      description: 'Show every sdd work item that still has worktrees, with the live state of each (from repowatch)',
+    })
     await $.command.register({
       name: 'sdd-view',
       description: 'Show the sdd flow of the work item this chat works on (or the one given) in a pane',
@@ -307,7 +451,7 @@ export const register: Register = on => {
 
   on('ui.close', async ($, e, next) => {
     if (e.id === PANE) isOpen = false
-    worktreesPaneClosed(e.id)
+    if (e.id === WT_PANE) wtOpen = false
     return next(e)
   })
 
@@ -696,10 +840,7 @@ export const register: Register = on => {
 
         {agents.length > 0 && (
           <Box flexDirection="column">
-            <Box flexDirection="row" gap={1}>
-              <Box flexGrow={1}><Text bold>Agents</Text></Box>
-              <Button key="agent-main" plain dimColor label="Main chat" onPress={() => void watchAgent($)} />
-            </Box>
+            <Text bold>Agents</Text>
             {agents.map(a => {
               const color = { working: C.work, waiting: C.now, done: C.done, failed: C.revoked, quiet: C.dim }[a.tone]
               return (
@@ -709,7 +850,6 @@ export const register: Register = on => {
                     <Text wrap="truncate-end">{a.text ? `${a.name} · ${a.text}` : a.name}</Text>
                   </Box>
                   <Text color={color}>{a.word}</Text>
-                  <Button key={`agent-${a.id}`} label="Watch" onPress={() => void watchAgent($, a.id)} />
                 </Box>
               )
             })}
