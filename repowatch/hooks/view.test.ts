@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
-import type { RwPlan, RwRepo, RwSummary, RwSyncFix, RwSyncState, RwWorktree, WorktreeClass } from '../types'
-import { actionArgs, ago, baseText, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
+import type { RwPlan, RwRepo, RwResult, RwSummary, RwSyncFix, RwSyncState, RwWorktree, WorktreeClass } from '../types'
+import { actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
 
 const repo = (name: string, flags: string[], extra: Partial<RwRepo> = {}): RwRepo => ({ name, path: `/ws/${name}`, scannedAt: 0, flags, ...extra })
 
@@ -144,4 +144,25 @@ test('a hop and a fix say what is still open', () => {
   const two = fix('k', 'partial', { commits: [{ sha: 'a', time: 0, author: 'x', subject: 's', state: 'missing', workItems: [] }, { sha: 'b', time: 0, author: 'x', subject: 's', state: 'applied', workItems: [] }] })
   expect(fixLine(two)).toContain('(1 of 2 commits open)')
   expect(statusText({ repos: 4, attention: 0, behind: 0, dirty: 0, unpushed: 0, worktrees: 0, removable: 0, toReview: 0, conflicts: 0, errors: 0 }, SYNC.summary)).toBe('repos 4 · 2 to sync')
+})
+
+test('sync buttons ask for the right plan, and a plan applies with the same arguments', () => {
+  const hop = { from: 'team/0.0.1', to: 'team/0.0.2' }
+  expect(syncArgs('sync-hop', 'app', hop)).toEqual(['sync-hop', '--repo', 'app', '--hop', 'team/0.0.1:team/0.0.2'])
+  expect(syncArgs('sync-skip', 'app', hop, 'abc')).toEqual(['sync-skip', '--repo', 'app', '--hop', 'team/0.0.1:team/0.0.2', '--sha', 'abc'])
+  const plan = (extra: Partial<RwPlan>): RwPlan => ({ action: 'sync-hop', repo: 'app', path: null, branch: null, level: 'safe', blocked: [], reasons: [], atRisk: [], steps: [], restore: [], hop: ['team/0.0.1', 'team/0.0.2'], ...extra })
+  expect(planArgs(plan({}))).toEqual(['sync-hop', '--repo', 'app', '--hop', 'team/0.0.1:team/0.0.2'])
+  expect(planArgs(plan({ action: 'sync-skip', decision: { sha: 'abc', subject: 's', reason: 'only for 0.0.1' } })))
+    .toEqual(['sync-skip', '--repo', 'app', '--hop', 'team/0.0.1:team/0.0.2', '--sha', 'abc', '--reason', 'only for 0.0.1'])
+})
+
+test('what a sync did is told in one line, and a conflict says where to go', () => {
+  const r = (extra: Partial<RwResult>): RwResult => ({ ok: true, done: [], plan: {} as RwPlan, ...extra })
+  expect(resultLine(r({ state: 'pr', pr: { id: 7, url: 'u' }, branch: 'sync/1-2' }))).toBe('PR 7 opened for sync/1-2')
+  expect(resultLine(r({ state: 'conflict', files: ['a', 'b'], worktree: '/w' }))).toBe('Conflicts in a, b: resolve them in /w')
+  expect(resultLine(r({ ok: false, error: 'push failed' }))).toBe('push failed')
+  const row = { repo: 'app', hop: { from: 'team/1', to: 'team/2', inProgress: { path: '/w', branch: 'sync/1-2', state: 'conflict' as const }, forecast: { state: 'conflict' as const, base: 'x', files: ['a.cs'] } } }
+  expect(resolveAskText(row)).toContain('sync of team/1 into team/2 stopped on conflicts in a.cs')
+  expect(resolveAskText(row)).toContain('Do not push')
+  expect(actionArgs({ repo: 'a', wt: wt('safe', { owner: 'sync' }) })).toBe(null)
 })

@@ -25,8 +25,8 @@ export type RwWorktree = {
   behindBase?: number
   aheadBase?: number
   forecast?: RwForecast
-  /** 'sdd' when it is a work item's worktree (sdd removes those). */
-  owner?: 'sdd'
+  /** 'sdd' when it is a work item's worktree (sdd removes those); 'sync' when a branch sync made it. */
+  owner?: 'sdd' | 'sync'
   workItem?: number | null
 }
 
@@ -73,6 +73,10 @@ export type RwSyncHop = {
   mode?: 'merge' | 'cherry-pick'
   /** Would merging `from` into `to` conflict? */
   forecast?: RwForecast
+  /** A sync of this hop waits in a worktree: 'conflict' until the merge is resolved and committed, then 'ready'. */
+  inProgress?: { path: string; branch: string; state: 'conflict' | 'ready' }
+  /** The sync branch is on origin (its pull request is the next step). */
+  pushed?: string
   error?: string
 }
 
@@ -89,7 +93,7 @@ export type WorktreeClass = 'safe' | 'review' | 'keep' | 'ok' | 'prune'
 
 /** What an action would do, built from the live repo by `repowatch.py plan`. */
 export type RwPlan = {
-  action: 'remove-worktree' | 'prune-worktrees' | 'delete-branch' | 'undo'
+  action: 'remove-worktree' | 'prune-worktrees' | 'delete-branch' | 'undo' | SyncAction
   repo: string
   path: string | null
   branch: string | null
@@ -101,11 +105,28 @@ export type RwPlan = {
   restore: string[]
   /** With undo: the journal id it puts back. */
   undoId?: string
-  owner?: 'sdd'
+  /** With a sync action: the two branches, the commit a skip is about, and how the hop is done. */
+  hop?: [string, string]
+  decision?: { sha: string; subject: string; reason: string }
+  mode?: 'merge' | 'cherry-pick'
+  owner?: 'sdd' | 'sync'
   workItem?: number | null
 }
 
-export type RwResult = { ok: boolean; error?: string; done: string[][]; plan: RwPlan }
+export type SyncAction = 'sync-hop' | 'sync-finish' | 'sync-abort' | 'sync-skip' | 'sync-unskip'
+
+export type RwResult = {
+  ok: boolean
+  error?: string
+  done: string[][]
+  plan: RwPlan
+  /** With a sync action: pr = pull request opened, conflict = left for someone to resolve, pushed = pushed without a PR, ready. */
+  state?: 'pr' | 'conflict' | 'pushed' | 'ready'
+  pr?: { id: number; url: string }
+  branch?: string
+  worktree?: string
+  files?: string[]
+}
 
 export type RwRepo = {
   name: string

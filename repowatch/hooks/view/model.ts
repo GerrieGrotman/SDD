@@ -1,5 +1,5 @@
 // Pure helpers for the repowatch pane: sorting, wording, paging. No engine calls, so view.test.ts can run them.
-import type { RwForecast, RwPlan, RwRepo, RwState, RwSummary, RwSyncFix, RwSyncHop, RwSyncState, RwUndo, RwWorktree, WorktreeClass } from '../../types'
+import type { RwForecast, RwPlan, RwRepo, RwResult, RwState, RwSummary, RwSyncFix, RwSyncHop, RwSyncState, RwUndo, RwWorktree, WorktreeClass } from '../../types'
 
 /** What each flag means, in the order a person should care about it. */
 export const FLAGS: Array<{ flag: string; label: string; urgent: boolean }> = [
@@ -109,13 +109,13 @@ export function worktreeRows(state: RwState | null, hideInUse: boolean): WtRow[]
 
 /** The rows a bulk clean-up may take: safe, and not an sdd work item's (sdd removes those). */
 export function bulkRows(rows: WtRow[]): WtRow[] {
-  return rows.filter(x => x.wt.class === 'safe' && x.wt.owner !== 'sdd')
+  return rows.filter(x => x.wt.class === 'safe' && !x.wt.owner)
 }
 
 /** The arguments of `repowatch.py plan|apply` for a row's button. Null = no button. */
 export function actionArgs(row: WtRow): string[] | null {
   const { wt } = row
-  if (wt.owner === 'sdd') return null
+  if (wt.owner) return null
   if (wt.class === 'prune') return ['prune-worktrees', '--repo', row.repo]
   if (wt.class === 'safe' || wt.class === 'review') {
     return ['remove-worktree', '--repo', row.repo, '--path', wt.path, ...(wt.branch ? ['--delete-branch'] : [])]
@@ -125,6 +125,10 @@ export function actionArgs(row: WtRow): string[] | null {
 
 /** The same arguments from a plan, for `apply`. */
 export function planArgs(plan: RwPlan): string[] {
+  if (plan.action.startsWith('sync-') && plan.hop) {
+    const base = [plan.action, '--repo', plan.repo, '--hop', `${plan.hop[0]}:${plan.hop[1]}`]
+    return plan.decision ? [...base, '--sha', plan.decision.sha, '--reason', plan.decision.reason] : base
+  }
   if (plan.action === 'undo') return ['undo', '--repo', plan.repo, '--id', plan.undoId ?? '']
   if (plan.action === 'prune-worktrees') return ['prune-worktrees', '--repo', plan.repo]
   if (plan.action === 'delete-branch') return ['delete-branch', '--repo', plan.repo, '--branch', plan.branch ?? '']
@@ -247,4 +251,24 @@ export function fixLine(f: RwSyncFix): string {
   const open = f.commits.filter(c => c.state === 'missing').length
   const ids = f.workItems.length ? `ADO ${f.workItems.join(', ')}` : f.key
   return `${ids}  ${f.title.slice(0, 70)}${f.commits.length > 1 ? `  (${open} of ${f.commits.length} commits open)` : ''}`
+}
+
+/** The arguments of `repowatch.py plan|apply` for a sync button. */
+export function syncArgs(action: string, repo: string, hop: RwSyncHop, sha?: string): string[] {
+  return [action, '--repo', repo, '--hop', `${hop.from}:${hop.to}`, ...(sha ? ['--sha', sha] : [])]
+}
+
+/** What to ask Claude when a sync stopped on conflicts. */
+export function resolveAskText(r: HopRow): string {
+  const p = r.hop.inProgress
+  const files = r.hop.forecast?.files ?? []
+  return `In the worktree ${p?.path ?? '?'} (branch ${p?.branch ?? '?'}) the sync of ${r.hop.from} into ${r.hop.to} stopped on conflicts${files.length ? ` in ${files.join(', ')}` : ''}. Resolve them, keep what both sides meant, and commit (finish the merge, or continue the cherry-pick and pick the rest). Do not push: I will press Finish in the Sync view.`
+}
+
+/** One line for the toast after an action: what happened, and what is left for the person. */
+export function resultLine(r: RwResult): string {
+  if (!r.ok) return r.error ?? 'not done'
+  if (r.state === 'pr') return `PR ${r.pr?.id ?? '?'} opened for ${r.branch ?? 'the sync branch'}`
+  if (r.state === 'conflict') return `Conflicts${r.files?.length ? ` in ${r.files.join(', ')}` : ''}: resolve them in ${r.worktree ?? 'the sync worktree'}`
+  return 'done'
 }

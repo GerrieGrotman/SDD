@@ -8,8 +8,8 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { RwPlan, RwResult, RwState } from '../types'
 import {
   actionArgs, ago, baseText, branchText, bulkRows, classLabel, conflictToast, dedupePrune, flagLabel, forecastText, isUrgent,
-  fixGlyph, fixLine, hopKey, hopLine, hopRows, mergeAskText, page, planArgs, planGist, sddRemoveText, statusText, stepText,
-  undoArgs, undoLabel, visibleRepos, worktreeRows,
+  fixGlyph, fixLine, hopKey, hopLine, hopRows, mergeAskText, page, planArgs, planGist, resolveAskText, resultLine, sddRemoveText,
+  statusText, stepText, syncArgs, undoArgs, undoLabel, visibleRepos, worktreeRows,
 } from './view/model'
 
 const PANE = 'repowatch'
@@ -98,6 +98,7 @@ async function applyPlans($: EngineInterface, todo: RwPlan[]): Promise<RwResult[
 function resultText(rs: RwResult[]): string {
   const ok = rs.filter(r => r.ok).length
   const bad = rs.filter(r => !r.ok)
+  if (rs.length === 1) return resultLine(rs[0]).slice(0, 240)
   return `${ok} done${bad.length ? `, ${bad.length} not done: ${bad.map(r => r.error ?? '?').join(' | ').slice(0, 200)}` : ''}`
 }
 
@@ -242,7 +243,7 @@ export const register: Register = on => {
                 {p.repo}{p.branch ? ` · ${p.branch}` : ''}  [{p.level === 'blocked' ? 'skipped' : p.level}]
               </Text>
               {(p.level === 'blocked' ? p.blocked : p.reasons).map((r, j) => <Text key={`r${j}`} dimColor>  {r}</Text>)}
-              {p.steps.map((st, j) => <Text key={`s${j}`} dimColor>  $ git -C {p.repo} {stepText(st.slice(1))}</Text>)}
+              {p.steps.map((st, j) => <Text key={`s${j}`} dimColor>  {st[0] === 'git' ? `$ git -C ${p.repo} ${stepText(st.slice(1))}` : `→ ${st.join(' ')}`}</Text>)}
               {p.atRisk.length > 0 && <Text color={COLORS.warn}>  Commits that exist only here:</Text>}
               {p.atRisk.map((c, j) => <Text key={`c${j}`} color={COLORS.warn}>    {c}</Text>)}
               {p.level !== 'blocked' && p.restore.length > 0 && <Text dimColor>  To undo: {p.restore.join(' && ')}</Text>}
@@ -271,6 +272,7 @@ export const register: Register = on => {
             </Text>
           ) : <Text dimColor>Branch sync has not been read yet.</Text>}
           <Button key="refresh-sync" label="Refresh sync" onPress={() => sync(false, 'sync')} />
+          {confirmPanel}
           {sy && p.rows.length === 0 && <Text color={COLORS.ok}>{only ? 'Every team branch has what the older ones have.' : 'No repo has two team branches.'}</Text>}
           {p.rows.map(r => {
             const key = hopKey(r)
@@ -285,10 +287,34 @@ export const register: Register = on => {
                   {r.hop.mode === 'cherry-pick' && <Text dimColor>cherry-pick hop  </Text>}
                 </Box>
                 {conflict && <Text color={COLORS.urgent}>      {conflict}</Text>}
+                {r.hop.inProgress ? (
+                  <Box marginLeft={6}>
+                    <Text color={COLORS.warn}>{r.hop.inProgress.state === 'conflict' ? 'stopped on conflicts' : 'resolved, ready to finish'} in {r.hop.inProgress.path}  </Text>
+                    {r.hop.inProgress.state === 'conflict' && !pending && (
+                      <Button key={`ask-${key}`} label="Ask Claude to resolve" onPress={() => $.prompt.fill({ text: resolveAskText(r) })} />
+                    )}
+                    {!pending && <Button key={`fin-${key}`} label="Finish…" onPress={propose([syncArgs('sync-finish', r.repo, r.hop)])} />}
+                    {!pending && <Button key={`abt-${key}`} label="Abort…" onPress={propose([syncArgs('sync-abort', r.repo, r.hop)])} />}
+                  </Box>
+                ) : r.hop.pushed ? (
+                  <Text dimColor>      {r.hop.pushed} is on origin: open its pull request, or merge it</Text>
+                ) : r.hop.missing && !pending ? (
+                  <Box marginLeft={6}>
+                    <Button key={`go-${key}`} label="Sync…" onPress={propose([syncArgs('sync-hop', r.repo, r.hop)])} />
+                  </Box>
+                ) : null}
                 {isOpen && (r.hop.fixes ?? []).map(f => (
                   <Box key={`${key}-${f.key}`} flexDirection="column" marginLeft={4}>
                     <Text color={f.state === 'skipped' ? COLORS.dim : COLORS.warn}>{fixGlyph(f)} {fixLine(f)}</Text>
-                    {f.commits.filter(c => c.state === 'skipped').map(c => <Text key={c.sha} dimColor>    skipped {c.sha.slice(0, 8)}: {c.reason ?? 'no reason given'}</Text>)}
+                    {f.commits.filter(c => c.state !== 'applied').map(c => (
+                      <Box key={c.sha} marginLeft={4}>
+                        <Text dimColor>{c.sha.slice(0, 8)} {c.subject.slice(0, 60)}{c.state === 'skipped' ? `  (skipped: ${c.reason ?? 'no reason given'})` : ''}  </Text>
+                        {!pending && !r.hop.inProgress && (
+                          <Button key={`sk-${c.sha}`} label={c.state === 'skipped' ? 'Take again…' : 'Do not take…'}
+                            onPress={propose([syncArgs(c.state === 'skipped' ? 'sync-unskip' : 'sync-skip', r.repo, r.hop, c.sha)])} />
+                        )}
+                      </Box>
+                    ))}
                   </Box>
                 ))}
                 {isOpen && r.hop.truncated && <Text dimColor>    more fixes than are listed</Text>}
@@ -335,6 +361,7 @@ export const register: Register = on => {
                   <Text color={CLASS_COLOR[w.class]}>{classLabel(w.class).padEnd(15)}</Text>
                   <Text>{r.repo} · {w.branch ?? '(detached)'}  </Text>
                   {w.owner === 'sdd' && <Text dimColor>sdd {w.workItem ?? ''}  </Text>}
+                  {w.owner === 'sync' && <Text dimColor>branch sync  </Text>}
                   {args && !pending && (
                     <Button key={`act-${w.path}`} label={w.class === 'prune' ? 'Prune' : w.class === 'review' ? 'Review…' : 'Remove…'} onPress={propose([args])} />
                   )}

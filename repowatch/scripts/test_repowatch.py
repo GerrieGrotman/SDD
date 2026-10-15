@@ -430,6 +430,163 @@ def test_sync():
         assert rw.work_items("Merged PR 5: t", "") == []
 
 
+def test_sync_actions():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        origins = tmp / "origins"
+        origins.mkdir()
+        # origin looks like an ADO remote to repowatch, and reads from the local bare repos to git
+        gitcfg = tmp / "gitconfig"
+        gitcfg.write_text("[user]\n\tname = Dev\n\temail = dev@x.co\n[init]\n\tdefaultBranch = main\n"
+                          "[url \"%s/\"]\n\tinsteadOf = https://dev.azure.com/org/proj/_git/\n" % posix_path(origins))
+        os.environ["GIT_CONFIG_GLOBAL"] = str(gitcfg)
+        pr_file = tmp / "pr.json"
+        os.environ["REPOWATCH_FAKE_PR"] = str(pr_file)
+        ws = tmp / "ws"
+        for d in (ws, ws / ".claude"):
+            d.mkdir()
+        (ws / ".claude" / "repowatch.json").write_text("{}")
+
+        def chain(name, conflict=False, fixes=()):
+            repo = make_repo(ws, origins, name)
+            sh(["git", "remote", "set-url", "origin", "https://dev.azure.com/org/proj/_git/%s.git" % name], repo)
+            sh(["git", "checkout", "-q", "-b", "team/0.0.1"], repo)
+            commit(repo, "shared.txt", "one\n")
+            sh(["git", "push", "-q", "-u", "origin", "team/0.0.1"], repo)
+            sh(["git", "checkout", "-q", "-b", "team/0.0.2"], repo)
+            if conflict:
+                commit(repo, "shared.txt", "two\n", "own change on 0.0.2")
+            sh(["git", "push", "-q", "-u", "origin", "team/0.0.2"], repo)
+            sh(["git", "checkout", "-q", "team/0.0.1"], repo)
+            shas = []
+            for fname, msg in fixes:
+                commit(repo, fname, fname + "\n", msg)
+                shas.append(git_out(repo, "rev-parse", "HEAD"))
+            if conflict:
+                commit(repo, "shared.txt", "fixed\n", "Fix shared ADO 7000")
+            sh(["git", "push", "-q", "origin", "team/0.0.1"], repo)
+            sh(["git", "checkout", "-q", "main"], repo)
+            return repo, shas
+
+        hop = "team/0.0.1:team/0.0.2"
+        app, _ = chain("app", fixes=[("a.txt", "Fix A\n\nRelated work items: #4471"), ("b.txt", "Fix B ADO 5000 see #99")])
+        run_cli(ws, "scan", "--fetch", "--fetch-batch", "10")
+        run_cli(ws, "sync")
+
+        # a clean hop: planned, then merged into sync/0.0.1-0.0.2, pushed, and a PR opened
+        rc, plan = cli(ws, "plan", "sync-hop", "--repo", "app", "--hop", hop)
+        assert rc == 0 and plan["level"] == "safe" and plan["mode"] == "merge" and plan["branch"] == "sync/0.0.1-0.0.2", plan
+        assert any(st[:2] == ["git", "merge"] for st in plan["steps"]) and plan["steps"][-1][0] == "ado", plan["steps"]
+        assert "2 commits in 2 fixes" in plan["reasons"][0] and not pr_file.exists()
+        rc, res = cli(ws, "apply", "sync-hop", "--repo", "app", "--hop", hop)
+        assert rc == 0 and res["ok"] and res["state"] == "pr" and res["pr"]["id"] == 4242, res
+        pr = json.loads(pr_file.read_text())
+        assert pr["sourceRefName"] == "refs/heads/sync/0.0.1-0.0.2" and pr["targetRefName"] == "refs/heads/team/0.0.2", pr
+        assert pr["title"] == "Sync team/0.0.1 into team/0.0.2" and "ADO 4471" in pr["description"] and "#" not in pr["description"], pr
+        assert pr["org"] == "org" and pr["repo"] == "app"
+        assert "sync/0.0.1-0.0.2" in git_out(app, "ls-remote", "--heads", "origin")
+        sh(["git", "fetch", "-q"], app)
+        assert git_out(app, "rev-list", "--count", "origin/team/0.0.2..origin/sync/0.0.1-0.0.2") == "3"  # 2 fixes + the merge
+        assert git_out(app, "rev-list", "--count", "origin/sync/0.0.1-0.0.2..origin/team/0.0.2") == "0"
+        assert not (ws / ".claude" / "repowatch" / "sync" / "app" / "0.0.1-0.0.2").exists()
+        h = json.loads(run_cli(ws, "status", "--json"))["sync"]["repos"]["app"]["hops"][0]
+        assert h["pushed"] == "sync/0.0.1-0.0.2" and "inProgress" not in h, h
+        # team/0.0.2 itself was not pushed to
+        assert git_out(app, "rev-list", "--count", "origin/team/0.0.2..team/0.0.2") == "0"
+        # a second go is blocked: the branch is on origin
+        rc, plan = cli(ws, "plan", "sync-hop", "--repo", "app", "--hop", hop)
+        assert plan["level"] == "blocked" and "on origin already" in plan["blocked"][0], plan
+        # not a hop
+        assert cli(ws, "plan", "sync-hop", "--repo", "app", "--hop", "team/0.0.2:team/0.0.1")[1]["level"] == "blocked"
+
+        # a conflicting hop: review level, left for someone to resolve, finished after they do
+        pr_file.unlink()
+        conf, _ = chain("conf", conflict=True, fixes=[("c.txt", "Fix C ADO 6000")])
+        run_cli(ws, "scan", "--fetch", "--fetch-batch", "10")
+        run_cli(ws, "sync")
+        rc, plan = cli(ws, "plan", "sync-hop", "--repo", "conf", "--hop", hop)
+        assert plan["level"] == "review" and "shared.txt" in plan["reasons"][-1], plan
+        rc, res = cli(ws, "apply", "sync-hop", "--repo", "conf", "--hop", hop)
+        assert rc == 2 and "--allow-review" in res["error"] and not pr_file.exists(), res
+        rc, res = cli(ws, "apply", "sync-hop", "--repo", "conf", "--hop", hop, "--allow-review")
+        assert rc == 0 and res["state"] == "conflict" and res["files"] == ["shared.txt"] and not pr_file.exists(), res
+        wt = Path(res["worktree"])
+        assert wt.is_dir() and "sync/0.0.1-0.0.2" not in git_out(conf, "ls-remote", "--heads", "origin")
+        h = json.loads(run_cli(ws, "status", "--json"))["sync"]["repos"]["conf"]["hops"][0]
+        assert h["inProgress"]["state"] == "conflict", h
+        state = json.loads(run_cli(ws, "status", "--json"))
+        assert [w["owner"] for w in state["repos"]["conf"]["worktrees"]] == ["sync"], state["repos"]["conf"]["worktrees"]
+        rc, plan = cli(ws, "plan", "remove-worktree", "--repo", "conf", "--path", str(wt))
+        assert plan["level"] == "blocked" and "branch sync" in plan["blocked"][0], plan
+        assert "still waiting" in cli(ws, "plan", "sync-finish", "--repo", "conf", "--hop", hop)[1]["blocked"][0]
+        assert cli(ws, "plan", "sync-hop", "--repo", "conf", "--hop", hop)[1]["level"] == "blocked"
+        (wt / "shared.txt").write_text("resolved\n")
+        sh(["git", "add", "shared.txt"], wt)
+        sh(["git", "commit", "-q", "--no-edit"], wt)
+        rc, plan = cli(ws, "plan", "sync-finish", "--repo", "conf", "--hop", hop)
+        assert plan["level"] == "safe", plan
+        rc, res = cli(ws, "apply", "sync-finish", "--repo", "conf", "--hop", hop)
+        assert rc == 0 and res["state"] == "pr" and pr_file.exists() and not wt.exists(), res
+        # abort throws the attempt away; finishing with conflict markers left in a file is refused
+        abt, _ = chain("abt", conflict=True, fixes=[("d.txt", "Fix D ADO 6100")])
+        run_cli(ws, "scan", "--fetch", "--fetch-batch", "10")
+        run_cli(ws, "sync", "--only", "abt")
+        rc, res = cli(ws, "apply", "sync-hop", "--repo", "abt", "--hop", hop, "--allow-review")
+        wt = Path(res["worktree"])
+        (wt / "shared.txt").write_text("<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n")
+        sh(["git", "add", "shared.txt"], wt)
+        sh(["git", "commit", "-q", "--no-edit"], wt)
+        rc, plan = cli(ws, "plan", "sync-finish", "--repo", "abt", "--hop", hop)
+        assert plan["level"] == "blocked" and "conflict markers" in plan["blocked"][0], plan
+        rc, plan = cli(ws, "plan", "sync-abort", "--repo", "abt", "--hop", hop)
+        assert plan["level"] == "review", plan
+        rc, res = cli(ws, "apply", "sync-abort", "--repo", "abt", "--hop", hop, "--allow-review")
+        assert rc == 0 and not wt.exists() and git_out(abt, "branch", "--list", "sync/0.0.1-0.0.2") == "", res
+        assert "inProgress" not in json.loads(run_cli(ws, "status", "--json"))["sync"]["repos"]["abt"]["hops"][0]
+
+        # skip a commit: the hop becomes a cherry-pick hop that leaves it out
+        skp, shas = chain("skp", fixes=[("x.txt", "Fix X ADO 1"), ("y.txt", "Fix Y ADO 2")])
+        run_cli(ws, "scan", "--fetch", "--fetch-batch", "10")
+        run_cli(ws, "sync", "--only", "skp")
+        assert cli(ws, "plan", "sync-skip", "--repo", "skp", "--hop", hop, "--sha", "nope")[1]["level"] == "blocked"
+        assert cli(ws, "plan", "sync-unskip", "--repo", "skp", "--hop", hop, "--sha", shas[1])[1]["level"] == "blocked"
+        rc, res = cli(ws, "apply", "sync-skip", "--repo", "skp", "--hop", hop, "--sha", shas[1], "--reason", "only for 0.0.1")
+        assert rc == 0 and res["ok"], res
+        dec = json.loads((ws / ".claude" / "repowatch" / "sync.json").read_text())
+        assert dec == {"skp": {hop.replace(":", ">"): {"skipped": {shas[1]: "only for 0.0.1"}}}}, dec
+        h = json.loads(run_cli(ws, "status", "--json"))["sync"]["repos"]["skp"]["hops"][0]
+        assert h["mode"] == "cherry-pick" and h["missing"] == 1 and h["skipped"] == 1, h
+        assert cli(ws, "apply", "sync-unskip", "--repo", "skp", "--hop", hop, "--sha", shas[1])[0] == 0
+        assert not (ws / ".claude" / "repowatch" / "sync.json").read_text().strip("{} \n")  # nothing left
+        cli(ws, "apply", "sync-skip", "--repo", "skp", "--hop", hop, "--sha", shas[1])
+        rc, plan = cli(ws, "plan", "sync-hop", "--repo", "skp", "--hop", hop)
+        assert plan["mode"] == "cherry-pick" and plan["wanted"] == [shas[0]] and any("skipped" in r for r in plan["reasons"]), plan
+        rc, res = cli(ws, "apply", "sync-hop", "--repo", "skp", "--hop", hop)
+        assert rc == 0 and res["state"] == "pr", res
+        sh(["git", "fetch", "-q"], skp)
+        assert git_out(skp, "show", "origin/sync/0.0.1-0.0.2:x.txt") == "x.txt"
+        assert sh(["git", "show", "origin/sync/0.0.1-0.0.2:y.txt"], skp, check=False).returncode != 0
+        assert "cherry picked from commit" in git_out(skp, "log", "-1", "--format=%B", "origin/sync/0.0.1-0.0.2")
+
+        # a remote that is not ADO: the branch is pushed, the PR is not, and it says so
+        del os.environ["REPOWATCH_FAKE_PR"]
+        nof, _ = chain("nof", fixes=[("n.txt", "Fix N ADO 3")])
+        sh(["git", "remote", "set-url", "origin", str(origins / "nof.git")], nof)
+        run_cli(ws, "scan", "--fetch", "--fetch-batch", "10")
+        run_cli(ws, "sync", "--only", "nof")
+        rc, res = cli(ws, "apply", "sync-hop", "--repo", "nof", "--hop", hop)
+        assert rc == 2 and res["state"] == "pushed" and "not an Azure DevOps remote" in res["error"], res
+        assert "sync/0.0.1-0.0.2" in git_out(nof, "ls-remote", "--heads", "origin")
+        assert rw.parse_remote("git@ssh.dev.azure.com:v3/o/p/r") == ("o", "p", "r")
+        assert rw.parse_remote("https://o.visualstudio.com/DefaultCollection/p/_git/r") == ("o", "p", "r")
+        assert rw.parse_remote("https://github.com/a/b") is None
+        assert rw.no_ids("fix #12 and #3") == "fix 12 and 3"
+
+
+def posix_path(p):
+    return str(p).replace("\\", "/")
+
+
 def git_out(repo, *args):
     return sh(["git"] + list(args), repo).stdout.strip()
 
@@ -440,6 +597,7 @@ def main():
     test_worktrees()
     test_forecast()
     test_sync()
+    test_sync_actions()
     print("ok")
 
 

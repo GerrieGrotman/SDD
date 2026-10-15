@@ -17,6 +17,11 @@ What is built, and what is decided but not built yet. Update this when a decisio
   One difference from the sketch below: fixes are listed per hop, not as one grid, because with one hop at a
   time a fix is only a candidate for the next hop once it has landed on the one before.
 
+- Step 5: `sync-hop`, `sync-finish`, `sync-abort`, `sync-skip`, `sync-unskip` with the buttons in the Sync view,
+  the ADO pull request (REST with an `az` token, as sdd does), cherry-pick hops, and the conflict hand-off
+  (a prompt filled for the person to send, not a slash command). A branch sync's worktree is labelled `sync`
+  and cannot be removed from the Worktrees view.
+
 Squash merges: git cannot see that a squash-merged branch is merged. Such a worktree is classed `review`
 (its upstream is gone and its commits are on no remote), and the plan lists those commits. A later step
 can ask ADO whether the PR merged and move it to `safe`.
@@ -31,9 +36,11 @@ can ask ADO whether the PR merged and move it to `safe`.
   `.claude/repowatch/journal.jsonl` (branch name and sha, so a deleted branch can be recreated).
 - The sdd view stays read-only (CLAUDE.md). Actions live in repowatch; the sdd Worktrees page links to them.
 
-## Steps still to build
+## Not built
 
-5. Branch sync actions (skip, sync hop, resolve) and the conflict hand-off to Claude.
+- Asking ADO whether a PR merged (squash merges stay in `review`), and registering a merged bug-flow PR as a pending fix.
+- A custom reason typed in the pane when skipping a commit.
+
 
 ## Branch sync (steps 4 and 5)
 
@@ -52,7 +59,7 @@ A fix reaches `team/0.0.3` by landing on `team/0.0.2` first. Each hop is its own
 
 **Merge is the default.** The hop makes `sync/<x>-<y>` from y (versions only: `team/0.0.1` to `team/0.0.2` is `sync/0.0.1-0.0.2`), merges x into it, pushes it,
 and opens a PR into y (ADO). It never pushes to y. A merge that conflicts leaves the worktree in
-place and hands over to Claude: the pane fills `/repowatch resolve <hop>` for the person to send.
+place and hands over to Claude: the pane fills the prompt ("Ask Claude to resolve") for the person to send.
 
 **Cherry-pick is for the hop where a commit must not travel.** A merge cannot leave a commit out.
 So when the person marks a commit on x "do not take to y", that hop switches to cherry-picking the

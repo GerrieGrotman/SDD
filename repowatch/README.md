@@ -27,9 +27,28 @@ installs with sdd.
 - **Sync view** (`/repowatch sync`): for each repo with two or more `team/*` branches on origin, the branches
   sorted by version (`0.0.2` before `0.0.10`) and, for each hop to the next newer one, the commits the
   newer one lacks, grouped into fixes by ADO id (`AB#n`, `ADO n`, or `Related work items: #n`). A commit
-  whose patch is already there under another sha counts as applied. The hop also says whether merging the
-  older branch in would conflict. Read-only for now. `syncPattern`, `syncWindowDays` and `syncMaxFixes`
-  in `repowatch.json` tune it; `repowatch.py sync` runs it by hand.
+  whose patch is already there under another sha counts as applied. The hop says whether merging the
+  older branch in would conflict.
+
+  - **Sync…** makes `sync/<older>-<newer>` (versions only, e.g. `sync/0.0.1-0.0.2`) from the newer branch
+    in a worktree under `.claude/repowatch/sync/`, merges the older branch in, pushes the sync branch and
+    opens an ADO pull request into the newer branch. **Nothing is ever pushed to the newer branch itself.**
+    The plan and a confirm come first; a hop that will conflict needs the review confirm.
+  - **On a conflict** the worktree is left as it is. **Ask Claude to resolve** fills the prompt for you to
+    send; when the merge is committed, **Finish…** checks it is complete (nothing uncommitted, no conflict
+    markers, the older branch really in) and pushes and opens the PR. **Abort…** throws the attempt away.
+  - **Do not take…** marks one commit as not for the newer branch. A merge cannot leave a commit out, so that
+    hop becomes a cherry-pick hop: the wanted commits are cherry-picked oldest first with `-x`. The decision is
+    kept in `.claude/repowatch/sync.json` (with a reason; the pane records "not needed on <branch>", edit the
+    file or use `--reason` for your own words). **Take again…** reverses it. A hop stays a cherry-pick hop
+    while any commit is skipped, because a merge would bring the skipped ones back.
+  - The PR needs `az login` and an Azure DevOps `origin`. If the PR cannot be opened the branch is still
+    pushed, and the pane says so. A sync branch that is still on origin blocks a second sync of that hop
+    until its PR is merged and the branch deleted.
+
+  `syncPattern`, `syncWindowDays` and `syncMaxFixes` in `repowatch.json` tune it; `repowatch.py sync` reads
+  it by hand, and `plan|apply sync-hop|sync-finish|sync-abort|sync-skip|sync-unskip --repo NAME --hop OLDER:NEWER`
+  does the actions.
 - **Background scan**: local facts every minute; every fifth scan also fetches the four repos fetched
   longest ago, so dozens of repos are covered without a stall. Nothing is pulled, merged or deleted.
 
@@ -60,4 +79,4 @@ By hand: `python scripts/repowatch.py scan [--fetch] [--only NAME]` and `status 
 
 Install: `/plugin install repowatch --marketplace ruadrauflessa/SDD` (it comes with sdd).
 
-Planned: branch sync along `team/*`. See `DESIGN.md`.
+See `DESIGN.md` for what was decided and what is not built.
