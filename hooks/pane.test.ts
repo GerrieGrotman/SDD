@@ -174,7 +174,11 @@ test('desktop: each stage is a button with a rail slice, and the picked stage op
   for (const name of ['Specify', 'Design', 'Review']) expect((await ui.find({ key: `row:${name}` })).props.label).toBe(name)
   expect(await ui.find({ key: 'pick-stage' })).toBe(undefined)                         // no picker row: the stages are the picker
   expect(await ui.find({ key: 'stage-next' })).toBe(undefined)
-  expect(await ui.find({ key: 'stagedetail-Design' })).toBeTruthy()                    // the pane opens on the stage the item is at
+  const detail = await ui.find({ key: 'stagedetail-Design' })
+  expect(detail).toBeTruthy()                                                          // the pane opens on the stage the item is at
+  expect(detail.props.borderStyle).toBe(undefined)                                     // no frame: it would run over the rail
+  expect(detail.props.marginLeft).toBeGreaterThanOrEqual(6)                            // it starts right of the 40 px rail slice
+  expect((await ui.find({ key: 'stagerow-Design' })).props.paddingRight).toBeGreaterThanOrEqual(1)   // the cost and time keep room on the right
   expect(await ui.find({ key: 'log:Design' })).toBeTruthy()
   expect(await ui.find({ key: 'log:Specify' })).toBe(undefined)                        // and shows only that one
   await ui.press({ key: 'row:Review' })

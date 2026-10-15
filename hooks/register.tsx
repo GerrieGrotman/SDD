@@ -946,7 +946,7 @@ export const register: Register = on => {
               const maxUsd = Math.max(0, ...rows.map(x => spend[x.stage.key]?.usd ?? 0))
               return (
                 <Box key={`stagebox-${key}`} flexDirection="column">
-                  <Box key={`stagerow-${key}`} flexDirection="row" gap={1} alignItems="center" backgroundColor={isOpen ? tint : undefined}>
+                  <Box key={`stagerow-${key}`} flexDirection="row" gap={1} alignItems="center" paddingRight={2} backgroundColor={isOpen ? tint : undefined}>
                     <Svg source={rail.source} alt={rail.alt} width={rail.width} height={rail.height} />
                     <Box flexShrink={1} minWidth={0}>
                       <Button key={`row:${key}`} dimColor={r.mark === 'later'} label={stageName(r.stage)} onPress={() => pickStage(key)} />
@@ -967,7 +967,8 @@ export const register: Register = on => {
                     {wide && at && <Text dimColor>{at}</Text>}
                   </Box>
                   {isOpen && (
-                    <Box key={`stagedetail-${key}`} flexDirection="column" marginLeft={2} paddingLeft={2} borderStyle="quote" borderColor={markColor(r.mark) ?? C.line}>
+                    // no border: the rail is drawn in the slices, and a frame would run over it; the detail starts where the buttons do
+                    <Box key={`stagedetail-${key}`} flexDirection="column" marginLeft={6} marginBottom={1}>
                       {sum.note && <Text dimColor wrap="wrap">{sum.note}</Text>}
                       {drawStageDetail(r)}
                     </Box>
