@@ -397,10 +397,13 @@ test('the flow picture: one node per stage on a rail, the picked stage outlined,
   expect(p.source).toContain(`viewBox="0 0 560 ${p.height}"`)
   expect(p.source.match(/<circle [^>]*r="10"/g)).toHaveLength(7)                     // a node per stage
   expect(p.source.match(/fill-opacity="0.13"/g)).toHaveLength(1)                       // one outline: the picked stage
-  expect(p.source).toContain('>waiting on you</text>')
+  expect(p.source).toContain('>waiting on you</tspan>')
+  expect(p.source).toMatch(/Design<tspan dx="10"[^>]*>waiting on you/)                // the word follows its name in the same text, one small gap
+  expect(p.source).toMatch(/Design agreed<tspan dx="8"[^>]*>your turn/)          // and "your turn" follows its gate
+  expect(p.source).not.toContain('>done</tspan>')
   expect(p.source).not.toContain('>done</text>')                                       // colour says done and next: no word
-  expect(p.source).not.toContain('>next</text>')
-  expect(p.source).toContain('>your turn</text>')                                      // the gate the item waits on
+  expect(p.source).not.toContain('>next</tspan>')
+  expect(p.source).toContain('>your turn</tspan>')                                      // the gate the item waits on
   expect(p.source).toContain('>Requirements agreed</text>')
   expect(p.source).toContain('$1.84')
   expect(p.source).toContain('stroke-dasharray="4 4"')                                 // the rail ahead of the item is dashed
@@ -450,7 +453,7 @@ test('the flow picture shows the open-question count on its stage, and works for
   const bug: SddItem = { ...ITEM, flow: 'bug', progress: { ...ITEM.progress!, phase: 'Phase 6', status: 'active' } }
   const p = flowPicture({ flow: BUG, item: bug, rows: stageRows(BUG, bug), derived: [], colors: PIC_COLORS, pending: null, spend: {}, selected: 'Phase 6', width: 420 })
   expect(p.source.match(/<circle [^>]*r="10"/g)).toHaveLength(6)
-  expect(p.source).toContain('>6  step 6</text>')
+  expect(p.source).toContain('>6  step 6<tspan')
 })
 
 test('the stage the pane opens on, and the stage before and after', () => {
