@@ -6,8 +6,8 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, agentRows, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
-import type { AgentInfoLike, AgentTone, Mark } from './view/model'
+import { GLYPH, addSpend, agentRows, contextTone, mergeSpend, moneyText, spendLine, spendTotal, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import type { AgentInfoLike, AgentTone, Mark, Spend } from './view/model'
 import { registerWorktrees, registerWorktreesCommand, worktreesPaneClosed } from './worktrees'
 
 const PANE = 'sdd-view'
@@ -58,6 +58,11 @@ function stageName(st: SddStage): string {
 let python = 'python'  // module state: lost on reload, which is fine
 let isOpen = false
 let isWorkspace = false
+// Cost and context, from session.measure. The cost is charged to the stage the item was in when the turn began.
+let sessionId = ''
+let lastUsd: number | null = null
+let turnOf: { id: number; key: string } | null = null
+let ctx: { percent: number; window: number } | null = null
 let agentsBusy = false  // an agent works: the pane redraws on a timer so its row keeps up
 let notified = ''  // the wait the person was last notified of; lost on reload, which at worst tells them once more
 // An open AskUserQuestion call's way to take an answer from the view, by tool_use_id. Lost on a
@@ -169,6 +174,30 @@ async function watchAgent($: EngineInterface, agentId?: string): Promise<void> {
   }
 }
 
+const SPEND = 'cost|'
+
+/** What the item has cost over every session of this machine that kept a record: their records, added up. */
+async function readSpend($: EngineInterface, id: number): Promise<Spend> {
+  try {
+    const keys = (await $.store.keys()).filter(k => k.startsWith(`${SPEND}${id}|`))
+    const records = await Promise.all(keys.map(async k => ((await $.store.get(k)) ?? {}) as Spend))
+    return mergeSpend(records)
+  } catch {
+    return {}
+  }
+}
+
+/** Adds one turn's cost to this session's record for the item. */
+async function chargeStage($: EngineInterface, id: number, key: string, usd: number): Promise<void> {
+  const name = `${SPEND}${id}|${sessionId}`
+  try {
+    const was = ((await $.store.get(name)) ?? {}) as Spend
+    await $.store.set(name, addSpend(was, key, usd))
+  } catch {
+    // the store is full or not there: the turn goes uncounted, nothing else breaks
+  }
+}
+
 const AGENT_GLYPH: Record<AgentTone, string> = { working: '●', waiting: '●', done: '✓', failed: '✕', quiet: '○' }
 
 export const register: Register = on => {
@@ -187,6 +216,15 @@ export const register: Register = on => {
       await $.state.set(error, v.why)
     }
     void sync()
+    // the baseline the cost is measured from: only what the session spends from here on counts
+    try {
+      sessionId = await $.session.id()
+      const u = await $.session.usage()
+      lastUsd = u.cost?.usd ?? null
+      if (u.context.percent != null) ctx = { percent: u.context.percent, window: u.context.window }
+    } catch {
+      lastUsd = null
+    }
     $.clock.every(30_000, () => {
       if (isOpen || isWorkspace) void sync()
     })
@@ -291,7 +329,29 @@ export const register: Register = on => {
 
   // a subagent's turn starts: the pane's agent rows may have a new one
   on('turn.start', async ($, e, next) => {
+    if (!e.agentId) {
+      // the main loop's turn: the stage the chat's item is in as it begins is the stage the turn is charged to
+      const s = (await $.state.get(snap)).value ?? null
+      const own = (await $.state.get(mine)).value ?? null
+      const item = s?.items.find(i => i.id === own)
+      const flow = item ? s?.flows[item.flow] : undefined
+      const key = item && flow ? phaseKey(flow, item.progress?.phase) : null
+      turnOf = item && key ? { id: item.id, key } : null
+    }
     if (isOpen) $.ui.invalidate('ui.render')
+    return next(e)
+  })
+
+  // after each turn: what the session spent over it goes to the stage the turn began in; the context fill is kept for the pane and band
+  on('session.measure', async ($, e, next) => {
+    if (e.context.percent != null) ctx = { percent: e.context.percent, window: e.context.window }
+    const usd = e.cost?.usd
+    if (usd != null) {
+      const delta = lastUsd == null ? 0 : usd - lastUsd
+      lastUsd = usd
+      if (delta > 0 && turnOf && sessionId) await chargeStage($, turnOf.id, turnOf.key, delta)
+    }
+    $.ui.invalidate('ui.render')
     return next(e)
   })
 
@@ -360,6 +420,9 @@ export const register: Register = on => {
               </Text>
             : <Text dimColor wrap="truncate-end">{`${first.id} · ${phaseLabel(s?.flows[first.flow], first)} · ${statusWord(first)}`}</Text>}
         </Box>
+        {ctx && contextTone(ctx.percent) !== 'ok' && (
+          <Text bold color={contextTone(ctx.percent) === 'high' ? C.revoked : C.now}>{`context ${ctx.percent}%`}</Text>
+        )}
         <Button key="band-open" label="Open sdd view" onPress={() => void (async () => {
           await $.state.set(selected, first.id)
           await $.state.set(stage, null)
@@ -458,6 +521,7 @@ export const register: Register = on => {
     const Svg = 'Svg' in t ? t.Svg : undefined
     const rows = flow ? stageRows(flow, item) : []
     const agents = agentRows(await listAgents($))
+    const spend = await readSpend($, item.id)
     agentsBusy = agents.some(a => a.isLive)
     const links = [item.url ? `[ADO ${item.id}](${item.url})` : `ADO ${item.id}`,
       ...Object.values(item.repos ?? {}).filter(r => r.pr).map(r => `[PR ${r.pr!.id}](${r.pr!.url})`)].join('  |  ')
@@ -525,6 +589,14 @@ export const register: Register = on => {
             <Box flexGrow={1} flexShrink={1}><Text dimColor wrap="truncate-end">{`${item.type}, ${item.state} in ADO`}</Text></Box>
           </Box>
           <Markdown text={links} />
+          {(spendTotal(spend) > 0 || ctx) && (
+            <Box flexDirection="row" gap={2}>
+              {spendTotal(spend) > 0 && <Text dimColor>{`Spent ${moneyText(spendTotal(spend))} on this item`}</Text>}
+              {ctx && <Text color={{ ok: undefined, warn: C.now, high: C.revoked }[contextTone(ctx.percent)]} dimColor={contextTone(ctx.percent) === 'ok'}>
+                {`Context ${ctx.percent}%${contextTone(ctx.percent) === 'ok' ? '' : ' full'}`}
+              </Text>}
+            </Box>
+          )}
         </Box>
 
         {p && isWaiting && (
@@ -593,6 +665,7 @@ export const register: Register = on => {
                       <Button hover={{ color: C.hoverText, dimColor: false }} key={key} plain dimColor label={stageName(r.stage)}
                         onPress={() => toggle(key)} />
                     </Box>
+                    {spendLine(spend, r.stage.key) && <Text dimColor>{moneyText(spend[r.stage.key].usd)}</Text>}
                     {badge && <Text color={badge.warn ? C.now : C.dim}>{badge.text}</Text>}
                     {stamp(sum.lastAt) && (
                       <Button hover={{ color: C.hoverText, dimColor: false }} key={`${key}-at`} plain dimColor label={stamp(sum.lastAt)} onPress={() => toggle(key)} />

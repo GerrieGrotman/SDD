@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { agentRows, itemOptions, itemSuggestions, flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { addSpend, contextTone, mergeSpend, moneyText, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -403,4 +403,31 @@ test('autocomplete: only after /sdd, by id prefix or a word of the title', () =>
   expect(ids('/sdd ', 'nothing matches')).toEqual([])
   expect(itemSuggestions(MANY, '/sdd ', '92', 2)).toHaveLength(2)           // at most max rows
   expect(itemSuggestions(MANY, '/sdd ', '921')[0]).toEqual({ text: '92100', label: '92100', description: 'Second thing · Design · waiting on you' })
+})
+
+test('spend: a turn adds to its stage, a bad figure adds nothing, sessions merge', () => {
+  let sp = addSpend({}, 'Design', 0.5)
+  sp = addSpend(sp, 'Design', 0.25)
+  sp = addSpend(sp, 'Implement', 1)
+  expect(sp).toEqual({ Design: { usd: 0.75, turns: 2 }, Implement: { usd: 1, turns: 1 } })
+  expect(addSpend(sp, 'Design', 0)).toBe(sp)
+  expect(addSpend(sp, 'Design', -1)).toBe(sp)
+  expect(addSpend(sp, 'Design', Number.NaN)).toBe(sp)
+  const merged = mergeSpend([sp, { Design: { usd: 2, turns: 3 } }, {} as never, null as never, { Bad: { usd: Number.NaN, turns: 1 } }])
+  expect(merged).toEqual({ Design: { usd: 2.75, turns: 5 }, Implement: { usd: 1, turns: 1 } })
+  expect(spendTotal(merged)).toBe(3.75)
+  expect(spendTotal({})).toBe(0)
+})
+
+test('spend text: small, ordinary and large amounts, and the line for a stage', () => {
+  expect([0, -1, Number.NaN].map(moneyText)).toEqual(['$0', '$0', '$0'])
+  expect([0.004, 0.01, 1.234, 9.999, 12.34, 99.94, 123.4].map(moneyText)).toEqual(['<$0.01', '$0.01', '$1.23', '$10.00', '$12.3', '$99.9', '$123'])
+  const sp = { Design: { usd: 1.234, turns: 4 }, Implement: { usd: 0.5, turns: 1 } }
+  expect(spendLine(sp, 'Design')).toBe('$1.23 over 4 turns')
+  expect(spendLine(sp, 'Implement')).toBe('$0.50 over 1 turn')
+  expect(spendLine(sp, 'Verify')).toBe(null)
+})
+
+test('context tone: a word from 80 percent, nearly full from 90', () => {
+  expect([undefined, 0, 79, 79.9, 80, 89, 90, 100, Number.NaN].map(contextTone)).toEqual(['ok', 'ok', 'ok', 'ok', 'warn', 'warn', 'high', 'high', 'ok'])
 })

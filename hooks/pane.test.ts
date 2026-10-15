@@ -34,10 +34,10 @@ const AGENTS = [
   { id: 'a2', type: 'sdd:skeptic', status: 'running', description: 'Attack the design' },
 ]
 
-type Fake = { registered: string[]; viewed: unknown[]; denyView: boolean }
+type Fake = { registered: string[]; viewed: unknown[]; denyView: boolean; store: Map<string, unknown>; usd: number | null }
 
 function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents = AGENTS): Fake {
-  const f: Fake = { registered: [], viewed: [], denyView: false }
+  const f: Fake = { registered: [], viewed: [], denyView: false, store: new Map(), usd: 1 }
   on('process.run', (() => ({ value: { exitCode: 0, stdout: JSON.stringify(SNAP), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })) as never)
   on('session.cwd' as never, (() => ({ value: '/ws' })) as never)
   on('session.start' as never, ((_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd })) as never)
@@ -45,7 +45,16 @@ function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents
   on('clock.every' as never, (() => ({ value: { id: 'tick' } })) as never)
   on('ui.open' as never, (() => ({ value: { isPlaced: true } })) as never)
   on('ui.toast' as never, (() => ({ value: undefined })) as never)
+  on('command.run' as never, (() => ({})) as never)  // /sdd is the skill's: the plugin only watches it run
+  on('turn.start' as never, ((_$: unknown, e: { turnId: string }) => ({ turnId: e.turnId })) as never)           // the engine echoes both
+  on('session.measure' as never, ((_$: unknown, e: { changed: string[] }) => ({ changed: e.changed })) as never)
   on('prompt.autocomplete' as never, (() => ({ suggestions: [] })) as never)  // the engine's own answer: no rows
+  // the engine's session id and usage, and a store that keeps what is set
+  on('session.id' as never, (() => ({ value: 's1' })) as never)
+  on('session.usage' as never, (() => ({ value: { context: { window: 1_000_000, percent: 10 }, rateLimits: [], ...(f.usd == null ? {} : { cost: { usd: f.usd } }) } })) as never)
+  on('store.set' as never, ((_$: unknown, e: { key: string; value: unknown }) => { f.store.set(e.key, e.value); return { value: undefined } }) as never)
+  on('store.get' as never, ((_$: unknown, e: { key: string }) => ({ value: f.store.get(e.key) })) as never)
+  on('store.keys' as never, (() => ({ value: [...f.store.keys()] })) as never)
   on('agent.list' as never, (() => ({ value: agents })) as never)
   on('ui.view' as never, ((_$: unknown, e: unknown) => { f.viewed.push(e); return { value: f.denyView ? { deny: 'not person-initiated' } : {} } }) as never)
   return f
@@ -156,4 +165,81 @@ test('autocomplete: after /sdd the prompt box offers the open items, and nothing
   const after = await ask('/sdd 92')
   expect(after.suggestions.map((r: { text: string }) => r.text)).toEqual(['92100', '92012'])
   expect((await ask('fix 92')).suggestions ?? []).toEqual([])
+})
+
+// ---- cost and context per stage
+
+/** One turn of the chat's item: it begins, then the session reports what it has spent so far. */
+const turn = async ($: any, f: Fake, usd: number, percent = 12) => {
+  await $.turn.start({ text: 'go', turnId: `t${usd}` })
+  f.usd = usd
+  await $.session.measure({ context: { window: 1_000_000, tokens: percent * 10_000, percent }, rateLimits: [], cost: { usd }, changed: ['cost', 'context'] })
+}
+
+/** The session starts with the chat on 92012, so the view knows the item and its stage (Design). */
+const begin = async ($: any, f: Fake) => {
+  await $.session.start({ cwd: '/ws', surface: 'terminal', isInteractive: true })
+  if (!f.registered.includes('sdd-view')) {
+    await new Promise(r => setTimeout(r, 100))
+    return false
+  }
+  await $.command.run({ command: 'sdd', args: '92012' })
+  return true
+}
+
+test('cost: a turn charges what the session spent over it to the stage the item was in, and a session keeps its own record', async ($: any, on: any) => {
+  const f = fake(on, [])
+  if (!(await begin($, f))) return
+  await turn($, f, 1.5)
+  expect(f.store.get('cost|92012|s1')).toEqual({ Design: { usd: 0.5, turns: 1 } })    // 1.00 at the start, 1.50 after the turn
+  await turn($, f, 2.25)
+  expect(f.store.get('cost|92012|s1')).toEqual({ Design: { usd: 1.25, turns: 2 } })
+  expect([...f.store.keys()]).toEqual(['cost|92012|s1'])
+})
+
+test('cost: nothing is charged when the session keeps no ledger, or a turn cost nothing', async ($: any, on: any) => {
+  const f = fake(on, [])
+  f.usd = null                                       // no cost at the start: no baseline to measure from
+  if (!(await begin($, f))) return
+  await turn($, f, 3)
+  expect(f.store.size).toBe(0)
+  await turn($, f, 3)                                // the same total again: the turn cost nothing
+  expect(f.store.size).toBe(0)
+})
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: the pane shows the item's cost, this stage's cost and the context, the sessions added up`, async ($: any, on: any) => {
+    const f = fake(on, [])
+    f.store.set('cost|92012|other', { Design: { usd: 2, turns: 3 }, Specify: { usd: 0.004, turns: 1 } })   // another session's record
+    f.store.set('cost|99999|s9', { Design: { usd: 50, turns: 1 } })                                             // another item's
+    if (!(await begin($, f))) return
+    await turn($, f, 1.5)
+    const ui = await $.ui.mount({ plugin: 'sdd', surface, component: 'Pane', props: { title: 'sdd', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never,
+      requestId: 'sdd-view', viewport: { columns: 100, rows: 40 } })
+    for (let i = 0; i < 100 && !(await texts(ui)).includes('Spent'); i++) await new Promise(r => setTimeout(r, 10))
+    const t = await texts(ui)
+    expect(t).toContain('Spent $2.50 on this item')      // 0.50 here + 2.00 + 0.004 in the other session
+    expect(t).toContain('$2.50')                         // the Design row
+    expect(t).toContain('<$0.01')                        // the Specify row: a tiny cost still shows
+    expect(t).toContain('Context 12%')
+    expect(t).not.toContain('$50')
+  })
+}
+
+test('context: from 80 percent the band says so', async ($: any, on: any) => {
+  const f = fake(on, [])
+  if (!(await begin($, f))) return
+  const ui = await $.ui.mount({ plugin: 'sdd', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } as never,
+    requestId: 'band', viewport: { columns: 100, rows: 40 } })
+  const until = async (word: string) => { for (let i = 0; i < 100 && !(await texts(ui)).includes(word); i++) await new Promise(r => setTimeout(r, 10)) }
+  await until('Author tags')
+  await turn($, f, 1.5, 50)
+  await new Promise(r => setTimeout(r, 50))
+  expect(await texts(ui)).not.toContain('context')
+  await turn($, f, 2, 85)
+  await until('context 85%')
+  expect(await texts(ui)).toContain('context 85%')
+  await turn($, f, 2.5, 93)
+  await until('context 93%')
+  expect(await texts(ui)).toContain('context 93%')
 })

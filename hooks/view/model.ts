@@ -539,3 +539,60 @@ export function itemSuggestions(snap: Pick<SddSnapshot, 'items' | 'flows'>, befo
     .slice(0, max)
     .map(i => ({ text: String(i.id), label: String(i.id), description: cutAt(itemLine(snap.flows, i).slice(String(i.id).length + 1), 80) }))
 }
+
+
+// ---------------------------------------------------------------- cost and context
+// What a work item has cost, by stage. The session reports one running total ($.session.usage().cost); the
+// view takes what it grew by over a turn and adds it to the stage the item was in when the turn began. A
+// stage that changed mid-turn is charged to the stage the turn began in. Each session keeps its own record
+// in the store, and the pane adds the sessions up, so two sessions never overwrite each other.
+
+/** Dollars and turns per stage key. */
+export type Spend = Record<string, { usd: number; turns: number }>
+
+/** `spend` with one more turn of `usd` on stage `key`. A change that is not a positive number is not a turn. */
+export function addSpend(spend: Spend, key: string, usd: number): Spend {
+  if (!Number.isFinite(usd) || usd <= 0) return spend
+  const was = spend[key] ?? { usd: 0, turns: 0 }
+  return { ...spend, [key]: { usd: was.usd + usd, turns: was.turns + 1 } }
+}
+
+/** The records of several sessions as one. */
+export function mergeSpend(records: Spend[]): Spend {
+  const out: Spend = {}
+  for (const r of records) {
+    for (const [key, v] of Object.entries(r ?? {})) {
+      if (!v || !Number.isFinite(v.usd)) continue
+      const was = out[key] ?? { usd: 0, turns: 0 }
+      out[key] = { usd: was.usd + v.usd, turns: was.turns + (Number.isFinite(v.turns) ? v.turns : 0) }
+    }
+  }
+  return out
+}
+
+export function spendTotal(spend: Spend): number {
+  return Object.values(spend).reduce((a, v) => a + v.usd, 0)
+}
+
+/** 0.004 -> `<$0.01`, 1.234 -> `$1.23`, 12.34 -> `$12.3`, 123.4 -> `$123`. */
+export function moneyText(usd: number): string {
+  if (!Number.isFinite(usd) || usd <= 0) return '$0'
+  if (usd < 0.01) return '<$0.01'
+  if (usd < 10) return `$${usd.toFixed(2)}`
+  if (usd < 100) return `$${usd.toFixed(1)}`
+  return `$${Math.round(usd)}`
+}
+
+export type ContextTone = 'ok' | 'warn' | 'high'
+
+/** From 80 percent a context window is worth a word, from 90 it is nearly full. */
+export function contextTone(percent: number | undefined): ContextTone {
+  if (percent == null || !Number.isFinite(percent)) return 'ok'
+  return percent >= 90 ? 'high' : percent >= 80 ? 'warn' : 'ok'
+}
+
+/** The tooltip-sized line for a stage: `$1.23 over 4 turns`. Null when the stage has cost nothing. */
+export function spendLine(spend: Spend, key: string): string | null {
+  const v = spend[key]
+  return v && v.usd > 0 ? `${moneyText(v.usd)} over ${v.turns} turn${v.turns === 1 ? '' : 's'}` : null
+}
