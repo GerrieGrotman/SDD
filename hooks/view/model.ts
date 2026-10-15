@@ -472,10 +472,10 @@ export function flowPicture(input: { flow: SddFlow; item: SddItem; rows: StageRo
     parts.push(`<text x="${PIC.rail}" y="${cy + 4}" text-anchor="middle" font-family="${PIC_FONT}" font-size="11" font-weight="700" fill="${quiet ? col : '#ffffff'}">${xml(GLYPH[r.mark])}</text>`)
     const name = r.stage.key === r.stage.label ? r.stage.label : `${r.stage.key.replace('Phase ', '')}  ${r.stage.label}`
     const nameFit = fitText(name, right - PIC.text - (wide ? 200 : mid ? 120 : 60), 14 * 1.14)
-    parts.push(`<text x="${PIC.text}" y="${cy + 5}" font-family="${PIC_FONT}" font-size="14" font-weight="600" fill="${r.mark === 'later' ? PIC_INK.dim : PIC_INK.fg}">${xml(nameFit)}</text>`)
-    if (word && l.wordInline) {
-      parts.push(`<text x="${PIC.text + boldPx(nameFit, 14) + 12}" y="${cy + 5}" font-family="${PIC_FONT}" font-size="12"${r.mark === 'waiting' ? ' font-weight="700"' : ''} fill="${badge?.warn || r.mark === 'waiting' ? colors.now : r.mark === 'next' ? colors.work : r.mark === 'missed' || r.mark === 'blocked' ? colors.revoked : PIC_INK.dim}">${xml(word)}</text>`)
-    }
+    // the state word follows the name inside the same text, so the gap is the same whatever the font measures
+    const wordFill = badge?.warn || r.mark === 'waiting' ? colors.now : r.mark === 'next' ? colors.work : r.mark === 'missed' || r.mark === 'blocked' ? colors.revoked : PIC_INK.dim
+    const wordSpan = word && l.wordInline ? `<tspan dx="10" font-size="12" font-weight="${r.mark === 'waiting' ? 700 : 400}" fill="${wordFill}">${xml(word)}</tspan>` : ''
+    parts.push(`<text x="${PIC.text}" y="${cy + 5}" font-family="${PIC_FONT}" font-size="14" font-weight="600" fill="${r.mark === 'later' ? PIC_INK.dim : PIC_INK.fg}">${xml(nameFit)}${wordSpan}</text>`)
     // the right of the first line: cost bar, amount, last activity; less of it as the room shrinks
     let rx = right
     const at = shortStamp(sum.lastAt)
@@ -495,10 +495,9 @@ export function flowPicture(input: { flow: SddFlow; item: SddItem; rows: StageRo
       const gy = chipTop + c.row * PIC.chipH + 6
       const gc = c.chip.state === 'passed' ? colors.done : c.chip.state === 'pending' ? colors.now : c.chip.state === 'revoked' ? colors.revoked : PIC_INK.dim
       parts.push(`<path d="M${c.x + 6},${gy - 6} l6,6 l-6,6 l-6,-6z" fill="${c.chip.state === 'passed' ? gc : 'none'}" stroke="${gc}" stroke-width="1.6"/>`)
-      parts.push(`<text x="${c.x + 18}" y="${gy + 4}" font-family="${PIC_FONT}" font-size="12" fill="${c.chip.state === 'open' ? PIC_INK.dim : PIC_INK.fg}">${xml(c.chip.gate)}</text>`)
-      if (c.chip.state === 'pending' || c.chip.state === 'revoked') {
-        parts.push(`<text x="${c.x + 18 + textPx(c.chip.gate, 12) + 8}" y="${gy + 4}" font-family="${PIC_FONT}" font-size="11" font-weight="700" fill="${gc}">${c.chip.state === 'pending' ? 'your turn' : 'revoked'}</text>`)
-      }
+      const turn = c.chip.state === 'pending' ? 'your turn' : c.chip.state === 'revoked' ? 'revoked' : ''
+      const after = turn ? `<tspan dx="8" font-size="11" font-weight="700" fill="${gc}">${turn}</tspan>` : ''
+      parts.push(`<text x="${c.x + 18}" y="${gy + 4}" font-family="${PIC_FONT}" font-size="12" fill="${c.chip.state === 'open' ? PIC_INK.dim : PIC_INK.fg}">${xml(c.chip.gate)}${after}</text>`)
     }
     parts.push('</g>')
   })
