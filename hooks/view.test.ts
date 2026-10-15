@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, railSlice, costBar, stageWord, flowAlt, RAIL, railLine, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, railSlice, costBar, stageWord, flowAlt, RAIL, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -385,7 +385,6 @@ const PIC_ITEM: SddItem = { ...ITEM, gates: { Claimed: '2026-10-01T08:50:08Z', '
     { at: '2026-10-01T12:41:15Z', flow: 'spec', phase: 'Requirements', status: 'done', note: 'approved with two caveats and a very long note that has to be cut to fit the room it has', gates: { passed: ['Requirements agreed'], revoked: [] } },
     { at: '2026-10-01T13:40:00Z', flow: 'spec', phase: 'Design', status: 'waiting', note: 'design.md ready' }] }
 const PIC_SPEND = { Requirements: { usd: 1.05, turns: 4 }, Design: { usd: 1.84, turns: 5, input: 12000, output: 3400, cacheRead: 1_200_000, cacheWrite: 80_000 } }
-const SNAP_ONE = () => ({ items: [{ ...ITEM, title: 'x'.repeat(200) }], flows: SNAP.flows })
 const PIC_ROWS = stageRows(SPEC, PIC_ITEM)
 const slice = (i: number, over: Partial<Parameters<typeof railSlice>[0]> = {}) =>
   railSlice({ mark: PIC_ROWS[i].mark, prevMark: i > 0 ? PIC_ROWS[i - 1].mark : null, hasNext: i < PIC_ROWS.length - 1, colors: PIC_COLORS, ...over })
@@ -423,15 +422,6 @@ test('a rail slice marks a conditional or skipped stage with a dashed node, and 
   const at = rows.findIndex(r => r.mark === 'active')
   expect(at).toBeGreaterThan(0)
   expect(railSlice({ mark: 'active', prevMark: rows[at - 1].mark, hasNext: true, colors: PIC_COLORS }).source).toContain('stroke="#4a7fc4"')
-})
-
-test('the rail line beside an open stage is solid behind the work and dashed ahead of it, a whole number of dashes high', () => {
-  const l = (mark: Parameters<typeof railLine>[0]['mark']) => railLine({ mark, colors: PIC_COLORS })
-  expect([l('done').width, l('done').height]).toEqual([RAIL.w, 48])
-  expect(l('done').source).toContain('stroke="#3f9a63" stroke-width="3"/>')
-  expect(l('waiting').source).toContain('stroke="#5c6670" stroke-width="3" stroke-dasharray="4 4"')
-  expect(48 % 8).toBe(0)
-  expect(itemOptions(SNAP_ONE(), undefined, 30)[0].label.length).toBeLessThanOrEqual(30)
 })
 
 test('the cost bar is as long as the stage cost is of the dearest stage, and never empty', () => {

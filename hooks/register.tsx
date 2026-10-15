@@ -7,7 +7,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, railLine, costBar, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, costBar, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
 
@@ -976,16 +976,14 @@ export const register: Register = on => {
                     {wide && at && <Text dimColor>{at}</Text>}
                   </Box>
                   {isOpen && (
-                    <Box key={`stagewrap-${key}`} flexDirection="column">
-                      {/* the rail runs on beside the detail: tiles of line, laid over the left edge and cut to the detail's height */}
-                      <Box key={`stagerail-${key}`} position="absolute" top={0} bottom={0} left={0} width={5} overflow="hidden" flexDirection="column">
-                        {Array.from({ length: 20 }, (_, n) => {
-                          const line = railLine({ mark: r.mark, colors: C })
-                          return <Svg key={`rail-${key}-${n}`} source={line.source} alt={line.alt} width={line.width} height={line.height} />
-                        })}
+                    <Box key={`stagewrap-${key}`} flexDirection="row" alignItems="stretch">
+                      {/* the rail runs on beside the detail: a bar of colour as tall as the detail, where the slices' line would be (a picture cannot stretch) */}
+                      <Box key={`stagerail-${key}`} width={6} flexShrink={0} flexDirection="row">
+                        <Box width={2} flexShrink={0} />
+                        <Box key={`stagebar-${key}`} width={1} flexShrink={0} backgroundColor={r.mark === 'done' || r.mark === 'skipped' ? C.done : C.line} />
                       </Box>
-                      {/* no border: a frame would run over the rail; the detail starts where the buttons do */}
-                      <Box key={`stagedetail-${key}`} flexDirection="column" marginLeft={6} marginBottom={1}>
+                      {/* no border: a frame would run over the rail */}
+                      <Box key={`stagedetail-${key}`} flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} marginBottom={1}>
                         {sum.note && <Text dimColor wrap="wrap">{sum.note}</Text>}
                         {drawStageDetail(r)}
                       </Box>
