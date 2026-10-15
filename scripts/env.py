@@ -2,6 +2,7 @@
 
     .claude/worktrees/{id}-{slug}/
         workitem.json   which repo is on which base branch, its dev branch, its PR
+        cost.jsonl      one line per turn: what it cost and the stage it began in (append-only)
         CLAUDE.md       generated: work only here
         src/{Repo}/     git worktrees
         graph/          graphify code graph of src/
@@ -30,9 +31,13 @@ Commands (run from anywhere inside the workspace):
     verify --id N                            run every tasks.md Verify command; proof for Ready to PR
     path   --id N --set full|short --confirmed WORDS
                                              the way through the spec flow the user chose
+    cost   --id N --stage S --usd X [--session ID]
+                                             record what a turn cost, against the stage it began in (the sdd
+                                             view calls this after each turn; `view` reports the totals)
 """
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -668,6 +673,52 @@ def cmd_status(a):
 
 # ---------------------------------------------------------------- view
 
+COST_FILE = "cost.jsonl"
+
+
+def read_spend(env_dir):
+    """What the item has cost, from the item folder's cost.jsonl: {stage: {"usd": dollars, "turns": n}}.
+    One line per turn, appended by `cost`, so sessions running at once never rewrite each other's data.
+    A line that is not a record, or has no sensible amount, is skipped."""
+    out = {}
+    try:
+        lines = (Path(env_dir) / COST_FILE).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        try:
+            rec = json.loads(line)
+            stage, usd = str(rec["stage"]), float(rec["usd"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if not 0 < usd < 1e6:
+            continue
+        was = out.setdefault(stage, {"usd": 0.0, "turns": 0})
+        was["usd"] = round(was["usd"] + usd, 6)
+        was["turns"] += 1
+    return out
+
+
+def cmd_cost(a):
+    """Record what a turn cost, against the stage it began in. The sdd view calls it after each turn. It
+    appends one line to the item's cost.jsonl and touches nothing else: no gate, no progress."""
+    root = require_root()
+    cfg = load_config(root)
+    env_dir = env_or_die(root, cfg, a.id)
+    data = read_env(env_dir)
+    flow = (data.get("progress") or {}).get("flow") or data.get("flow")
+    key = phase_key(flow, a.stage) if flow in FLOWS["flows"] else None
+    if key is None:
+        die(f"unknown stage '{a.stage}' for the {flow or 'unknown'} flow. Stages: "
+            f"{', '.join(stage_keys(flow)) if flow in FLOWS['flows'] else 'none'}")
+    if not 0 < a.usd < 1e6 or math.isnan(a.usd):
+        die("--usd must be a positive amount of dollars")
+    rec = {"at": now(), "session": a.session or "", "stage": key, "usd": round(a.usd, 6)}
+    with open(env_dir / COST_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec) + "\n")
+    print(f"{a.id}: {key} +${a.usd:.4f}")
+
+
 def view_item(root, cfg, data, env_dir, full):
     wid = data["id"]
     sp = spec_state(root, cfg, wid)
@@ -682,6 +733,7 @@ def view_item(root, cfg, data, env_dir, full):
     if full:
         out["history"] = data.get("history") or []
     flow = (data.get("progress") or {}).get("flow") or data.get("flow")
+    out["spend"] = read_spend(env_dir) if env_dir else (data.get("spend") or {})  # stage -> dollars and turns
     out["path"] = flow_path(flow, data)  # the spec flow's full / short; None for the bug flow, or not chosen yet
     out["stages"] = stage_record(flow, data) if flow in FLOWS["flows"] else {}
     out["feedback"] = {}  # stage -> gates a reopen there revokes; only stages that take feedback now
@@ -1320,6 +1372,9 @@ def cmd_remove(a):
         if git(["branch", "--list", r["branch"]], src):
             git(["branch", "-D", r["branch"]], src)
         print(f"{n}: removed")
+    spend = read_spend(env_dir)  # the cost file goes with the folder: the totals stay in the record
+    if spend:
+        data["spend"] = spend
     # keep a small record so /sdd status can still answer "is this done?" once the folder is gone
     data["removed"] = now()
     final = {"at": now(), "flow": (data.get("progress") or {}).get("flow", data.get("flow", "")),
@@ -1412,6 +1467,11 @@ def main():
     s.add_argument("--id", type=int, required=True)
     s.add_argument("--gate", default="Ready to PR")
     s.add_argument("--timeout", type=int, default=1800)
+    s = sp.add_parser("cost", help="record what a turn cost, against the stage it began in (the sdd view calls this)")
+    s.add_argument("--id", type=int, required=True)
+    s.add_argument("--stage", required=True, help="the stage the turn began in (Design, Phase 8, ...)")
+    s.add_argument("--usd", type=float, required=True, help="what the turn cost, in dollars")
+    s.add_argument("--session", default="", help="the chat's session id, for the record")
     s = sp.add_parser("remove")
     s.add_argument("--id", type=int, required=True)
     s.add_argument("--abandon", action="store_true")
@@ -1419,7 +1479,7 @@ def main():
     a = ap.parse_args()
     {"init": cmd_init, "doctor": cmd_doctor, "progress": cmd_progress, "refs": cmd_refs, "can": cmd_can, "type": cmd_type, "new": cmd_new, "status": cmd_status, "view": cmd_view, "reopen": cmd_reopen, "graph": cmd_graph,
      "pr": cmd_pr, "remove": cmd_remove, "upgrade-config": cmd_upgrade_config, "run": cmd_run,
-     "revert-check": cmd_revert_check, "verify": cmd_verify, "path": cmd_path}[a.cmd](a)
+     "revert-check": cmd_revert_check, "verify": cmd_verify, "path": cmd_path, "cost": cmd_cost}[a.cmd](a)
 
 
 if __name__ == "__main__":

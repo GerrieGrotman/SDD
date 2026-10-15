@@ -269,10 +269,13 @@ def main():
         assert not ok and "the flow is abandoned" in why, why
         # a real remove: folder gone, record kept, verdict now "completed"
         (ddir / "workitem.json").write_text(json.dumps({**drec, "repos": {}}))
+        (ddir / "cost.jsonl").write_text(json.dumps({"stage": "Verify", "usd": 0.5}) + "\n", encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
             env.cmd_remove(_ap.Namespace(id=6, abandon=False, yes=True))
         kept = json.loads((env.done_dir(root, cfg) / "6.json").read_text(encoding="utf-8"))
         assert not ddir.exists() and v(None, kept, []).startswith("completed")
+        assert kept["spend"] == {"Verify": {"usd": 0.5, "turns": 1}}                       # the cost file goes with the folder: its totals stay
+        assert env.view_item(root, cfg, kept, None, False)["spend"] == kept["spend"]       # and the view still reports them
         # Open Questions: conditional stage, driven by the unticked boxes in questions.md
         sdir = root / cfg["specRoot"] / "9-US-asks"
         sdir.mkdir(parents=True)
@@ -333,6 +336,34 @@ def main():
         (qdir / "workitem.json").write_text(json.dumps(fin))
         ok, why, _ = env.check_op(root, cfg, 9, "phase", "spec", "Review")
         assert not ok and "the flow is done" in why, why                                   # the last stage done: flow over
+        # cost: appended per turn, against a stage of the item's flow; the view reports the totals, sessions added up
+        (qdir / "workitem.json").write_text(json.dumps({**qrec, "progress": {"flow": "spec", "phase": "Design", "status": "active"}}))
+
+        def cost(stage, usd, session="s1", expect_ok=True):
+            err = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                    env.cmd_cost(_ap.Namespace(id=9, stage=stage, usd=usd, session=session))
+            except SystemExit:
+                assert not expect_ok, err.getvalue()
+                return err.getvalue()
+            assert expect_ok
+            return ""
+        assert env.read_spend(qdir) == {}                                                  # nothing yet: no file, no totals
+        cost("Design", 0.5)
+        cost("Design (task 1)", 0.25, session="s2")                                        # another session, same stage, a long phase name
+        cost("Specify", 0.004)
+        assert env.read_spend(qdir) == {"Design": {"usd": 0.75, "turns": 2}, "Specify": {"usd": 0.004, "turns": 1}}
+        assert "unknown stage" in cost("Nowhere", 1, expect_ok=False)
+        for bad in (0, -1, float("nan"), 1e6):
+            assert "positive amount" in cost("Design", bad, expect_ok=False), bad
+        assert env.read_spend(qdir)["Design"]["turns"] == 2                                # a refused cost records nothing
+        with open(qdir / "cost.jsonl", "a", encoding="utf-8") as f:
+            f.write("not json\n{\"stage\": \"Design\"}\n{\"stage\": \"Design\", \"usd\": \"x\"}\n")
+        assert env.read_spend(qdir)["Design"] == {"usd": 0.75, "turns": 2}                 # broken lines are skipped
+        got = json.loads((qdir / "workitem.json").read_text(encoding="utf-8"))
+        assert "spend" not in got and got["progress"]["phase"] == "Design"                 # workitem.json is never rewritten by a cost
+        assert env.view_item(root, cfg, got, qdir, False)["spend"]["Design"] == {"usd": 0.75, "turns": 2}
         os.chdir(Path(__file__).parent)
     stage_docs()
     short_path()

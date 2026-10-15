@@ -53,6 +53,18 @@ The sdd view opens by itself the first time a chat takes up a work item. In it:
   is in progress, and turns amber when it waits on you;
 - the review stage (spec: Review, bug: Phase 15) has **Approved**, **Merged** and **Rejected**;
 - a worktree opens in File Explorer or VS Code from its box.
+- in the Desktop app the pane draws the flow as a map: a box per stage, coloured by state, a diamond on
+  a stage that holds a gate, and a dashed arrow back for a rejected review;
+- a **Work item** dropdown switches the pane to another open item, and after `/sdd ` the prompt box
+  offers your open items by id or a word of the title;
+- an **Agents** section lists the session's sub-agents, each with a **Watch** button;
+- while Claude works, the spinner names the item, its stage and what it works toward, and a system
+  notification tells you once when the item waits on you;
+- **cost and context**: what each turn cost is recorded against the work item and the stage the turn
+  began in (`env.py cost`, one line in `cost.jsonl` in the item's folder; the totals stay in the record
+  after the folder is removed). The header shows `Spent $x on this item`, each stage row its own cost,
+  and the context fill shows beside it, in the band too from 80 percent. Chats and sessions on the
+  same item add up. A turn is charged to the item the chat took up with `/sdd <id>`.
 
 ## Configure (`.claude/sdd.json`)
 

@@ -543,32 +543,12 @@ export function itemSuggestions(snap: Pick<SddSnapshot, 'items' | 'flows'>, befo
 
 // ---------------------------------------------------------------- cost and context
 // What a work item has cost, by stage. The session reports one running total ($.session.usage().cost); the
-// view takes what it grew by over a turn and adds it to the stage the item was in when the turn began. A
-// stage that changed mid-turn is charged to the stage the turn began in. Each session keeps its own record
-// in the store, and the pane adds the sessions up, so two sessions never overwrite each other.
+// view takes what it grew by over a turn and has `env.py cost` append it to the item's own folder, against the
+// stage the item was in when the turn began (a stage that changes mid-turn is charged to the one it began in).
+// `env.py view` reports the totals per stage, whichever chat or session spent them.
 
 /** Dollars and turns per stage key. */
 export type Spend = Record<string, { usd: number; turns: number }>
-
-/** `spend` with one more turn of `usd` on stage `key`. A change that is not a positive number is not a turn. */
-export function addSpend(spend: Spend, key: string, usd: number): Spend {
-  if (!Number.isFinite(usd) || usd <= 0) return spend
-  const was = spend[key] ?? { usd: 0, turns: 0 }
-  return { ...spend, [key]: { usd: was.usd + usd, turns: was.turns + 1 } }
-}
-
-/** The records of several sessions as one. */
-export function mergeSpend(records: Spend[]): Spend {
-  const out: Spend = {}
-  for (const r of records) {
-    for (const [key, v] of Object.entries(r ?? {})) {
-      if (!v || !Number.isFinite(v.usd)) continue
-      const was = out[key] ?? { usd: 0, turns: 0 }
-      out[key] = { usd: was.usd + v.usd, turns: was.turns + (Number.isFinite(v.turns) ? v.turns : 0) }
-    }
-  }
-  return out
-}
 
 export function spendTotal(spend: Spend): number {
   return Object.values(spend).reduce((a, v) => a + v.usd, 0)

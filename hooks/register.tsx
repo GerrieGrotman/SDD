@@ -1,13 +1,14 @@
 // The sdd view: a pane that shows where a work item is in its flow, a band when one waits on the
-// person, and a toast when a gate passes. It only reads: `env.py view` (local files, no ADO) and the
-// spec documents. It never passes a gate or runs a state-changing command; "Resume" only fills the
+// person, and a toast when a gate passes. It reads `env.py view` (local files, no ADO) and the spec
+// documents. The one thing it writes is what each turn cost (`env.py cost`: one appended line in the item's
+// folder). It never passes a gate or runs any other state-changing command; "Resume" only fills the
 // prompt box with `/sdd <id>` for the person to send.
 import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, addSpend, agentRows, contextTone, mergeSpend, moneyText, spendLine, spendTotal, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
-import type { AgentInfoLike, AgentTone, Mark, Spend } from './view/model'
+import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTotal, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import type { AgentInfoLike, AgentTone, Mark } from './view/model'
 import { registerWorktrees, registerWorktreesCommand, worktreesPaneClosed } from './worktrees'
 
 const PANE = 'sdd-view'
@@ -21,6 +22,7 @@ const feedback = { plugin: 'sdd', key: 'feedback' } as const
 const gate = { plugin: 'sdd', key: 'gate' } as const
 const autoOpened = { plugin: 'sdd', key: 'opened' } as const
 const mine = { plugin: 'sdd', key: 'mine' } as const
+const home = { plugin: 'sdd', key: 'home' } as const
 const asked = { plugin: 'sdd', key: 'asked' } as const
 const picks = { plugin: 'sdd', key: 'picks' } as const
 
@@ -60,6 +62,7 @@ let isOpen = false
 let isWorkspace = false
 // Cost and context, from session.measure. The cost is charged to the stage the item was in when the turn began.
 let sessionId = ''
+let costFailed = false
 let lastUsd: number | null = null
 let turnOf: { id: number; key: string } | null = null
 let ctx: { percent: number; window: number } | null = null
@@ -174,28 +177,22 @@ async function watchAgent($: EngineInterface, agentId?: string): Promise<void> {
   }
 }
 
-const SPEND = 'cost|'
-
-/** What the item has cost over every session of this machine that kept a record: their records, added up. */
-async function readSpend($: EngineInterface, id: number): Promise<Spend> {
-  try {
-    const keys = (await $.store.keys()).filter(k => k.startsWith(`${SPEND}${id}|`))
-    const records = await Promise.all(keys.map(async k => ((await $.store.get(k)) ?? {}) as Spend))
-    return mergeSpend(records)
-  } catch {
-    return {}
+/** Records what a turn cost, against the item and the stage the turn began in: `env.py cost` appends one line to
+ *  the item's folder. Two chats on the same item append to the same file and never rewrite each other. */
+async function recordCost($: EngineInterface, folder: string | null, id: number, key: string, usd: number): Promise<string | null> {
+  const cwd = folder || (await $.session.cwd())
+  let why: string | null = null
+  for (const exe of [python, 'python3', 'py']) {
+    try {
+      const r = await $.process.run([exe, `${$.plugin.root}/scripts/env.py`, 'cost', '--id', String(id), '--stage', key,
+        '--usd', usd.toFixed(6), '--session', sessionId], { cwd, timeoutMs: 20000 })
+      python = exe
+      return r.exitCode === 0 ? null : (r.stderr || r.stdout).trim().split('\n').pop() || `env.py cost exited ${r.exitCode}`
+    } catch (err) {
+      why = `could not run python: ${String(err)}`
+    }
   }
-}
-
-/** Adds one turn's cost to this session's record for the item. */
-async function chargeStage($: EngineInterface, id: number, key: string, usd: number): Promise<void> {
-  const name = `${SPEND}${id}|${sessionId}`
-  try {
-    const was = ((await $.store.get(name)) ?? {}) as Spend
-    await $.store.set(name, addSpend(was, key, usd))
-  } catch {
-    // the store is full or not there: the turn goes uncounted, nothing else breaks
-  }
+  return why
 }
 
 const AGENT_GLYPH: Record<AgentTone, string> = { working: '●', waiting: '●', done: '✓', failed: '✕', quiet: '○' }
@@ -242,6 +239,7 @@ export const register: Register = on => {
       const id = idFromArgs(e.args)
       if (id != null) {
         await $.state.set(mine, id)
+        await $.state.set(home, id)
         await $.state.set(selected, id)
         const v = await loadView($, id, (await $.state.get(snap)).value ?? null, (await $.state.get(place)).value ?? null)
         await $.state.set(snap, v.out)
@@ -288,6 +286,8 @@ export const register: Register = on => {
           await $.state.set(mine, id)
           await $.state.set(selected, id)
         }
+        // a chat that never ran /sdd belongs to the first item its scripts name
+        if (id != null && (await $.state.get(home)).value == null) await $.state.set(home, id)
         const v = await loadView($, id ?? (await $.state.get(selected)).value ?? null, (await $.state.get(snap)).value ?? null, (await $.state.get(place)).value ?? null)
         await $.state.set(snap, v.out)
         await $.state.set(error, v.why)
@@ -332,7 +332,8 @@ export const register: Register = on => {
     if (!e.agentId) {
       // the main loop's turn: the stage the chat's item is in as it begins is the stage the turn is charged to
       const s = (await $.state.get(snap)).value ?? null
-      const own = (await $.state.get(mine)).value ?? null
+      // the item the chat took up with /sdd, not the one a script run last named
+      const own = (await $.state.get(home)).value ?? (await $.state.get(mine)).value ?? null
       const item = s?.items.find(i => i.id === own)
       const flow = item ? s?.flows[item.flow] : undefined
       const key = item && flow ? phaseKey(flow, item.progress?.phase) : null
@@ -349,7 +350,19 @@ export const register: Register = on => {
     if (usd != null) {
       const delta = lastUsd == null ? 0 : usd - lastUsd
       lastUsd = usd
-      if (delta > 0 && turnOf && sessionId) await chargeStage($, turnOf.id, turnOf.key, delta)
+      if (delta > 0 && turnOf && sessionId) {
+        const why = await recordCost($, (await $.state.get(place)).value ?? null, turnOf.id, turnOf.key, delta)
+        if (why && !costFailed) {
+          costFailed = true  // once a session: a missing script would otherwise say it after every turn
+          $.ui.toast(`Cost not recorded: ${why.slice(0, 160)}`)
+        }
+        if (!why && (isOpen || isWorkspace)) {
+          // the pane and the stage rows show the new total at once, not at the next refresh
+          const v = await loadView($, (await $.state.get(selected)).value ?? null, (await $.state.get(snap)).value ?? null, (await $.state.get(place)).value ?? null)
+          await $.state.set(snap, v.out)
+          await $.state.set(error, v.why)
+        }
+      }
     }
     $.ui.invalidate('ui.render')
     return next(e)
@@ -521,7 +534,7 @@ export const register: Register = on => {
     const Svg = 'Svg' in t ? t.Svg : undefined
     const rows = flow ? stageRows(flow, item) : []
     const agents = agentRows(await listAgents($))
-    const spend = await readSpend($, item.id)
+    const spend = item.spend ?? {}
     agentsBusy = agents.some(a => a.isLive)
     const links = [item.url ? `[ADO ${item.id}](${item.url})` : `ADO ${item.id}`,
       ...Object.values(item.repos ?? {}).filter(r => r.pr).map(r => `[PR ${r.pr!.id}](${r.pr!.url})`)].join('  |  ')

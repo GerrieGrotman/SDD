@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { addSpend, contextTone, mergeSpend, moneyText, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { contextTone, moneyText, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -405,17 +405,8 @@ test('autocomplete: only after /sdd, by id prefix or a word of the title', () =>
   expect(itemSuggestions(MANY, '/sdd ', '921')[0]).toEqual({ text: '92100', label: '92100', description: 'Second thing · Design · waiting on you' })
 })
 
-test('spend: a turn adds to its stage, a bad figure adds nothing, sessions merge', () => {
-  let sp = addSpend({}, 'Design', 0.5)
-  sp = addSpend(sp, 'Design', 0.25)
-  sp = addSpend(sp, 'Implement', 1)
-  expect(sp).toEqual({ Design: { usd: 0.75, turns: 2 }, Implement: { usd: 1, turns: 1 } })
-  expect(addSpend(sp, 'Design', 0)).toBe(sp)
-  expect(addSpend(sp, 'Design', -1)).toBe(sp)
-  expect(addSpend(sp, 'Design', Number.NaN)).toBe(sp)
-  const merged = mergeSpend([sp, { Design: { usd: 2, turns: 3 } }, {} as never, null as never, { Bad: { usd: Number.NaN, turns: 1 } }])
-  expect(merged).toEqual({ Design: { usd: 2.75, turns: 5 }, Implement: { usd: 1, turns: 1 } })
-  expect(spendTotal(merged)).toBe(3.75)
+test('spend: the total of an item, over its stages', () => {
+  expect(spendTotal({ Design: { usd: 0.75, turns: 2 }, Implement: { usd: 1, turns: 1 } })).toBe(1.75)
   expect(spendTotal({})).toBe(0)
 })
 
