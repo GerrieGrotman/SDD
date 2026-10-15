@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, railSlice, costBar, stageWord, flowAlt, RAIL, clipboardArgv, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, railSlice, costBar, stageWord, flowAlt, RAIL, railBarColor, clipboardArgv, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -422,6 +422,24 @@ test('a rail slice marks a conditional or skipped stage with a dashed node, and 
   const at = rows.findIndex(r => r.mark === 'active')
   expect(at).toBeGreaterThan(0)
   expect(railSlice({ mark: 'active', prevMark: rows[at - 1].mark, hasNext: true, colors: PIC_COLORS }).source).toContain('stroke="#4a7fc4"')
+})
+
+test('the rail stops short of an open stage\'s bar, and the bar takes the stage\'s own colour', () => {
+  // the open stage (waiting, yellow): its slice draws a solid line down to short of the bottom
+  expect([RAIL.gap, RAIL.h - RAIL.gap]).toEqual([6, 40])                                  // a gap of 6 px, however it is spelt below
+  const open = slice(3, { open: true }).source
+  expect(open).toContain(`y1="${RAIL.mid}" x2="${RAIL.x}" y2="${RAIL.h - RAIL.gap}" stroke="#c98a12" stroke-width="3"/>`)
+  expect(open).not.toContain('stroke-dasharray="4 4"')
+  // the stage below it: its line starts a little below the top, in the open stage's colour
+  const below = slice(4, { prevOpen: true }).source
+  expect(below).toContain(`y1="${RAIL.gap}" x2="${RAIL.x}" y2="${RAIL.mid}" stroke="#c98a12" stroke-width="3"/>`)
+  // a finished open stage keeps green, with the same gaps; one that is not open draws to the edges as before
+  expect(slice(1, { open: true }).source).toContain(`y2="${RAIL.h - RAIL.gap}" stroke="#3f9a63"`)
+  expect(slice(3).source).toContain(`y2="${RAIL.h}"`)
+  expect(slice(4).source).toContain('y1="0"')
+  const colour = (m: Parameters<typeof railBarColor>[0]) => railBarColor(m, PIC_COLORS)
+  expect([colour('done'), colour('skipped'), colour('waiting'), colour('active'), colour('blocked'), colour('next'), colour('later')])
+    .toEqual(['#3f9a63', '#3f9a63', '#c98a12', '#4a7fc4', '#c0503f', '#5c6670', '#5c6670'])
 })
 
 test('the clipboard command quotes the path for the shell it runs in', () => {

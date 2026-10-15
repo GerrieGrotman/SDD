@@ -7,7 +7,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, costBar, clipboardArgv, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, railBarColor, costBar, clipboardArgv, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
 
@@ -955,7 +955,8 @@ export const register: Register = on => {
             {rows.map((r, i) => {
               const key = r.stage.key
               const isOpen = key === shownKey
-              const rail = railSlice({ mark: r.mark, prevMark: i > 0 ? rows[i - 1].mark : null, hasNext: i < rows.length - 1, conditional: r.stage.conditional, colors: C })
+              const rail = railSlice({ mark: r.mark, prevMark: i > 0 ? rows[i - 1].mark : null, hasNext: i < rows.length - 1, conditional: r.stage.conditional, colors: C,
+                open: isOpen, prevOpen: i > 0 && rows[i - 1].stage.key === shownKey })
               const word = stageWord(flow, item, r)
               const sum = stageSummary(flow, item, key)
               const sp = spend[key]
@@ -992,7 +993,7 @@ export const register: Register = on => {
                       <Box key={`stagerail-${key}`} width={6} flexShrink={0} flexDirection="row">
                         {/* a bar 3 px wide, its middle 20 px in like the slices' rail: whole percentages of the 48 px column (the engine refuses px and fractions), a 39% gap and a 6% bar. If Desktop ignored them the bar would be gone, and a 1-column bar comes back */}
                         <Box key={`stagegap-${key}`} width="39%" flexShrink={0} />
-                        <Box key={`stagebar-${key}`} width="6%" flexShrink={0} backgroundColor={r.mark === 'done' || r.mark === 'skipped' ? C.done : C.line} />
+                        <Box key={`stagebar-${key}`} width="6%" flexShrink={0} backgroundColor={railBarColor(r.mark, C)} />
                       </Box>
                       {/* no border: a frame would run over the rail */}
                       <Box key={`stagedetail-${key}`} flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} marginBottom={1}>
