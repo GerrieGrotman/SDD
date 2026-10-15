@@ -259,6 +259,30 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect((await $.command.run({ command: 'repowatch', args: 'history app nope' })).text).toContain('no such branch or commit: nope')
   })
 
+  test(`${surface}: /repowatch worktree shows that one worktree, and Show all brings the list back`, async ($: any, on: any) => {
+    const calls = fakeScript(on)
+    const ui = await mountPane($, 'repos', calls)
+    if (!ui) return
+    const res = await $.command.run({ command: 'repowatch', args: 'worktree ' + JSON.stringify({ path: '/w/clash' }) })
+    expect(res.text).toContain('/w/clash shown')
+    const t = await texts(ui)
+    expect(t).toContain('Showing one worktree')
+    expect(t).toContain('feat/clash')       // in use, and still shown: the attention filter does not hide a focused one
+    expect(t).not.toContain('feat/merged')
+    await ui.press({ key: 'show-all-wt' })
+    const all = await texts(ui)
+    expect(all).not.toContain('Showing one worktree')
+    expect(all).toContain('feat/merged')
+    // a path that names no worktree says so; no path is a usage line; an option-looking path is refused
+    await $.command.run({ command: 'repowatch', args: 'worktree /nowhere' })
+    expect(await texts(ui)).toContain('does not know that worktree')
+    expect((await $.command.run({ command: 'repowatch', args: 'worktree' })).text).toContain('Usage:')
+    expect((await $.command.run({ command: 'repowatch', args: 'worktree --all' })).text).toContain('Usage:')
+    // the plain Worktrees command clears the focus
+    await $.command.run({ command: 'repowatch', args: 'worktrees' })
+    expect(await texts(ui)).not.toContain('Showing one worktree')
+  })
+
   test(`${surface}: History can drop the base, follow first parents only, show more, and go back`, async ($: any, on: any) => {
     const calls = fakeScript(on)
     const ui = await mountPane($, 'worktrees', calls)

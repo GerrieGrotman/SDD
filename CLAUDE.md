@@ -75,6 +75,10 @@ to trust the plugin directory, and each case is a paid agent run. A full TypeScr
   calls a mods API method the engine lacks (`$.ui.view` is 2.1.300+), is refused whole, and nothing of it shows. Keep `$`
   and `on` in `register.tsx`; put pure code in `view/`. Before a PR, run `claude plugin validate .` and `claude plugin test .`
   on that engine too: `npm i @anthropic-ai/claude-code@<version>` in a temp folder and run its `claude`.
+- **The view is for the Claude Desktop app only.** A mod cannot refuse to load, so it stays out of the way: `setupDesktop`
+  (commands, first read, cost baseline, timers) runs from `session.start` and `session.attach` when a Desktop app is
+  attached, every draw hook returns `next(e)` unless `e.surface === 'desktop'`, and every other hook passes through until
+  setup ran. Never set up from a draw hook: the engine refuses state writes while a draw is dispatched.
 - **The view writes one thing**: what each turn cost, in dollars and tokens, through `env.py cost` (one appended
   line in the item's `cost.jsonl`; `view` reports the totals). Otherwise `register.tsx` reads `env.py view` and posts the user's
   messages. It never passes a gate or runs another state-changing command.

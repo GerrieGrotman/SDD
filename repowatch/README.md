@@ -63,6 +63,8 @@ installs with sdd.
   reads. `/repowatch history <repo> <branch> [<base>]` opens it directly (sdd's `/sdd-worktrees` page uses the same
   command). `repowatch.py graph --repo NAME --ref BRANCH [--ref BASE] [--limit N] [--first-parent]` and
   `show --repo NAME --sha SHA` do it by hand; refs that start with `-` are refused.
+- **One worktree**: `/repowatch worktree <path>` (or `worktree {"path": "..."}`) opens the Worktrees list on that one worktree,
+  in use or not, with a **Show all worktrees** button. sdd's spanner button on a work item's worktree uses it.
 - **Background scan**: local facts every minute; every fifth scan also fetches the four repos fetched
   longest ago, so dozens of repos are covered without a stall. Nothing is pulled, merged or deleted.
 

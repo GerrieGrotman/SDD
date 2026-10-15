@@ -321,151 +321,191 @@ export function approveMessage(id: number, key: string): string {
 }
 
 
-// ---------------------------------------------------------------- the flow map
-// The stages of a flow as one drawing: a snake of boxes four to a row, an arrow from each stage to the
-// next, a diamond on a stage that holds a gate, and a dashed arrow back along `reworkTo`. It is an SVG
-// string for the apps that draw one. It carries its own colours (boxes with ink on them), so it reads on a
-// light and a dark theme, and it only shows: the stage rows below it stay the buttons.
+// ---------------------------------------------------------------- the vertical flow
 
-export type FlowMap = { source: string; alt: string; width: number; height: number }
-
-const MARK_WORD: Record<Mark, string> = { done: 'done', skipped: 'skipped', missed: 'never worked', active: 'working', waiting: 'waiting on you',
+/** A word for each mark, for the line of a stage's card. A stage not reached yet has none. */
+export const MARK_WORD: Record<Mark, string> = { done: 'done', skipped: 'skipped', missed: 'never worked', active: 'working', waiting: 'waiting on you',
   blocked: 'blocked', abandoned: 'abandoned', next: 'next', later: '' }
 
-const BOX = { cols: 4, w: 126, h: 46, gapX: 22, gapY: 44, pad: 14, lane: 14, gutter: 6 }
-const FONT = '-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
+export type GateChip = { gate: string; state: 'passed' | 'pending' | 'revoked' | 'open'; at?: string }
 
-function esc(text: string): string {
+/** The gates a stage holds that a person decides, each as a chip on the stage's card: passed (with when), the one the
+ *  item waits on now, one a revoke took back, or still open. In the flow's order. */
+export function gateChips(item: SddItem, stage: SddStage, derived: string[], pending: { gate: string; key: string } | null): GateChip[] {
+  return decidedGates(stage, derived).map(gate => {
+    const at = item.gates?.[gate]
+    if (at) return { gate, state: 'passed', at }
+    if (pending?.gate === gate && pending.key === stage.key) return { gate, state: 'pending' }
+    const last = gateStory(item, gate).slice(-1)[0]
+    return { gate, state: last?.kind === 'revoked' ? 'revoked' : 'open' }
+  })
+}
+
+// ---------------------------------------------------------------- the flow picture
+// The flow as one vertical picture for the apps that draw an SVG: a node per stage on a rail, with its state, cost,
+// last activity, latest note and gates on its row, and the picked stage outlined. The pane lays it out for the width it
+// has, so a resize re-draws it: wide gets cost bars and times, narrow keeps the essentials and shortens the text.
+// It only shows. The stage picker under it, and the detail of the picked stage, are what a person presses.
+
+export type FlowPicture = { source: string; alt: string; width: number; height: number }
+
+/** The stage the pane opens on: the one the item works at or waits on, else the next, else the last it finished. */
+export function defaultStage(rows: StageRow[]): string | null {
+  const now = rows.find(r => r.mark === 'waiting' || r.mark === 'blocked' || r.mark === 'active')
+  const next = rows.find(r => r.mark === 'next')
+  const lastDone = [...rows].reverse().find(r => r.mark === 'done' || r.mark === 'skipped')
+  return (now ?? next ?? lastDone ?? rows[0])?.stage.key ?? null
+}
+
+/** The stage before (-1) or after (1) `key`, held at the first and the last. */
+export function stepStage(rows: StageRow[], key: string | null, dir: -1 | 1): string | null {
+  if (!rows.length) return null
+  const i = rows.findIndex(r => r.stage.key === key)
+  return rows[Math.min(rows.length - 1, Math.max(0, (i < 0 ? 0 : i) + dir))].stage.key
+}
+
+/** 2026-10-01T12:41:15Z -> 10/01 12:41 in this computer's time zone. */
+export function shortStamp(at: string | undefined): string {
+  if (!at) return ''
+  const d = new Date(at)
+  if (Number.isNaN(d.getTime())) return ''
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${two(d.getMonth() + 1)}/${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`
+}
+
+const PIC = { min: 300, max: 960, pad: 12, rail: 26, text: 54, chipH: 20 }
+const PIC_FONT = '-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
+// the picture draws on a panel of its own, so it reads on a light and a dark theme
+const PIC_INK = { bg: '#1d2126', edge: '#2c333a', fg: '#e6e9ec', dim: '#8a949e', pick: '#4a7fc4' }
+
+function xml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-function cut(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+/** The width a text takes, near enough to place things: an average character is a bit over half the font size. */
+function textPx(text: string, size: number): number {
+  return Math.ceil(text.length * size * 0.56)
 }
 
-/** White or near-black, whichever reads on `color`. Not a hex colour: white. */
-function ink(color: string): string {
-  const m = /^#([0-9a-f]{6})/i.exec(color)
-  if (!m) return '#ffffff'
-  const n = parseInt(m[1], 16)
-  const lin = (v: number) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4 }
-  const lum = 0.2126 * lin(n >> 16) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255)
-  return lum > 0.4 ? '#14181d' : '#ffffff'
+/** The width of semi-bold text: wider than the regular average. */
+function boldPx(text: string, size: number): number {
+  return Math.ceil(text.length * size * 0.64)
 }
 
-/** The box, the ink and the line of one mark. `later` is a quiet box, `next` has the work colour on its edge. */
-function markStyle(mark: Mark, c: SddColors): { fill: string; stroke: string; ink: string; dash?: string; } {
-  const quiet = '#2f3640'
-  switch (mark) {
-    case 'done': return { fill: c.done, stroke: c.done, ink: ink(c.done) }
-    case 'skipped': return { fill: c.dim, stroke: c.dim, ink: ink(c.dim), dash: '4 3' }
-    case 'missed': return { fill: c.revoked, stroke: c.revoked, ink: ink(c.revoked), dash: '4 3' }
-    case 'active': return { fill: c.work, stroke: c.work, ink: ink(c.work) }
-    case 'waiting': return { fill: c.now, stroke: c.now, ink: ink(c.now) }
-    case 'blocked': return { fill: c.revoked, stroke: c.revoked, ink: ink(c.revoked) }
-    case 'abandoned': return { fill: c.dim, stroke: c.dim, ink: ink(c.dim) }
-    case 'next': return { fill: quiet, stroke: c.work, ink: '#ffffff' }
-    case 'later': return { fill: '#39414b', stroke: c.line, ink: '#b4bec9' }
-  }
+/** `text` cut with an ellipsis to fit `max` pixels. */
+function fitText(text: string, max: number, size: number): string {
+  if (textPx(text, size) <= max) return text
+  const keep = Math.max(1, Math.floor(max / (size * 0.56)) - 1)
+  return `${text.slice(0, keep).trimEnd()}…`
 }
 
-/** Where stage `i` sits: boxes run left to right on the first row, right to left on the next, so the
- *  arrow between two rows is a short drop. */
-function boxAt(i: number, count: number): { x: number; y: number; row: number } {
-  const cols = Math.min(BOX.cols, count)
-  const row = Math.floor(i / cols)
-  const c = i % cols
-  const col = row % 2 ? cols - 1 - c : c
-  return { x: BOX.pad + col * (BOX.w + BOX.gapX), y: BOX.pad + row * (BOX.h + BOX.gapY), row }
-}
+export function flowPicture(input: { flow: SddFlow; item: SddItem; rows: StageRow[]; derived: string[]; colors: SddColors;
+  pending: { gate: string; key: string } | null; spend: Spend; selected: string | null; width: number }): FlowPicture {
+  const { flow, item, rows, derived, colors, pending, spend, selected } = input
+  const W = Math.max(PIC.min, Math.min(PIC.max, Math.round(Number.isFinite(input.width) ? input.width : PIC.min)))
+  const right = W - PIC.pad
+  const wide = W >= 500
+  const mid = W >= 380
+  const tone = (m: Mark): string => ({ done: colors.done, skipped: colors.dim, missed: colors.revoked, active: colors.work, waiting: colors.now,
+    blocked: colors.revoked, abandoned: colors.dim, next: colors.work, later: colors.line })[m]
+  const maxSpend = Math.max(0, ...rows.map(r => spend[r.stage.key]?.usd ?? 0))
 
-/** The tooltip of one stage: where it stands, then each gate it holds and when the gate passed. */
-function boxTip(flow: SddFlow, item: SddItem, row: StageRow, gates: string[]): string {
-  const st = row.stage
-  const lines = [`${st.key === st.label ? st.label : `${st.key} · ${st.label}`}: ${MARK_WORD[row.mark] || 'not reached yet'}`]
-  if (st.conditional) lines.push('Runs only when there are questions to answer.')
-  for (const g of gates) lines.push(item.gates?.[g] ? `Gate passed: ${g} (${when(item.gates[g])} UTC)` : `Gate open: ${g}`)
-  if (st.reworkTo) lines.push(`A rejected review goes back to ${st.reworkTo}.`)
-  return lines.join('\n')
-}
-
-export function flowMap(flow: SddFlow, item: SddItem, rows: StageRow[], derived: string[], colors: SddColors,
-  pending: { gate: string; key: string } | null): FlowMap {
-  const n = rows.length
-  const cols = Math.min(BOX.cols, Math.max(n, 1))
-  const rowCount = Math.max(Math.ceil(n / cols), 1)
-  const width = BOX.pad * 2 + cols * BOX.w + (cols - 1) * BOX.gapX
-  const height = BOX.pad + rowCount * BOX.h + (rowCount - 1) * BOX.gapY + BOX.lane * 2
-  const isPhase = flow.stages.every(s => /^Phase\s+\d+$/i.test(s.key))
-  const at = rows.map((_, i) => boxAt(i, n))
-  const parts: string[] = []
-
-  // arrows first, so a box covers the end of its own line
-  const arrow = (id: string, color: string) =>
-    `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="${esc(color)}"/></marker>`
-  parts.push(`<defs>${arrow('go', colors.line)}${arrow('gone', colors.done)}${arrow('back', colors.dim)}</defs>`)
-  for (let i = 0; i + 1 < n; i++) {
-    const a = at[i]
-    const b = at[i + 1]
-    const walked = rows[i].mark === 'done' || rows[i].mark === 'skipped'
-    const color = walked ? colors.done : colors.line
-    const head = walked ? 'gone' : 'go'
-    if (a.row === b.row) {
-      const dir = a.row % 2 ? -1 : 1
-      const y = a.y + BOX.h / 2
-      const x1 = dir === 1 ? a.x + BOX.w : a.x
-      const x2 = dir === 1 ? b.x : b.x + BOX.w
-      parts.push(`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${esc(color)}" stroke-width="2" marker-end="url(#${head})"/>`)
-    } else {
-      const x = a.x + BOX.w / 2
-      parts.push(`<line x1="${x}" y1="${a.y + BOX.h}" x2="${x}" y2="${b.y}" stroke="${esc(color)}" stroke-width="2" marker-end="url(#${head})"/>`)
+  // lay the rows out first: each row's height depends on how its text and gates wrap at this width
+  type Laid = { r: StageRow; top: number; h: number; chips: { x: number; row: number; chip: GateChip; w: number }[]; chipRows: number; note: string; wordInline: boolean }
+  const laid: Laid[] = []
+  let y = PIC.pad
+  for (const r of rows) {
+    const badge = questionBadge(flow, item, r.stage.key)
+    const word = [r.mark === 'done' || r.mark === 'next' ? '' : MARK_WORD[r.mark], badge?.text].filter(Boolean).join(' · ')
+    const name = r.stage.key === r.stage.label ? r.stage.label : `${r.stage.key.replace('Phase ', '')}  ${r.stage.label}`
+    const rightBlock = (wide ? 70 + 8 : 0) + (mid ? 46 + 8 : 46) + (wide || mid ? 74 : 0)
+    const wordInline = !word || boldPx(name, 14) + 12 + textPx(word, 12) < right - PIC.text - rightBlock
+    const sum = stageSummary(flow, item, r.stage.key)
+    const rawNote = sum.note || (sum.count ? `${sum.count} log ${sum.count === 1 ? 'entry' : 'entries'}` : '')
+    const lead = wordInline || !word ? '' : rawNote ? `${word} · ` : word
+    const note = fitText(`${lead}${rawNote}`, right - PIC.text, 12)
+    const chips: Laid['chips'] = []
+    let cx = PIC.text
+    let crow = 0
+    for (const chip of gateChips(item, r.stage, derived, pending)) {
+      const label = `${chip.gate}${chip.state === 'pending' ? '  your turn' : chip.state === 'revoked' ? '  revoked' : ''}`
+      const w = 18 + textPx(label, 12) + 14
+      if (cx + w > right && cx > PIC.text) { cx = PIC.text; crow++ }
+      chips.push({ x: cx, row: crow, chip, w })
+      cx += w
     }
+    const chipRows = chips.length ? crow + 1 : 0
+    const h = 12 + 24 + (note ? 18 : 0) + chipRows * PIC.chipH + 10
+    laid.push({ r, top: y, h, chips, chipRows, note, wordInline })
+    y += h
   }
+  const H = y + PIC.pad
 
-  // the way back: down to the lane under the row, along it (by the left edge to an earlier row), up into the target
-  rows.forEach((r, i) => {
-    const to = r.stage.reworkTo ? flow.stages.findIndex(s => s.key === r.stage.reworkTo) : -1
-    if (to < 0 || to >= i) return
-    const a = at[i]
-    const b = at[to]
-    const sx = a.x + BOX.w / 2
-    const tx = b.x + BOX.w / 2
-    const laneA = a.y + BOX.h + BOX.lane
-    const laneB = b.y + BOX.h + BOX.lane
-    const path = a.row === b.row
-      ? `M${sx},${a.y + BOX.h} V${laneA} H${tx} V${b.y + BOX.h + 1}`
-      : `M${sx},${a.y + BOX.h} V${laneA} H${BOX.gutter} V${laneB} H${tx} V${b.y + BOX.h + 1}`
-    parts.push(`<path d="${path}" fill="none" stroke="${esc(colors.dim)}" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#back)"/>`)
-    parts.push(`<text x="${tx + 14}" y="${(a.row === b.row ? laneA : laneB) - 4}" font-family="${FONT}" font-size="9" fill="${esc(colors.dim)}">${esc(`rework → ${flow.stages[to].key}`)}</text>`)
+  const parts: string[] = []
+  parts.push(`<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="10" fill="${PIC_INK.bg}" stroke="${PIC_INK.edge}"/>`)
+  laid.forEach((l, i) => {
+    const cy = l.top + 12 + 12
+    const next = laid[i + 1]
+    if (next) {
+      const ahead = l.r.mark !== 'done' && l.r.mark !== 'skipped'
+      parts.push(`<line x1="${PIC.rail}" y1="${cy + 11}" x2="${PIC.rail}" y2="${next.top + 24 - 11}" stroke="${ahead ? colors.line : colors.done}" stroke-width="3"${ahead ? ' stroke-dasharray="4 4"' : ''}/>`)
+    }
   })
-
-  rows.forEach((r, i) => {
-    const { x, y } = at[i]
-    const st = markStyle(r.mark, colors)
-    const gates = decidedGates(r.stage, derived)
-    const done = gates.length > 0 && gates.every(g => item.gates?.[g])
-    const waitsHere = pending?.key === r.stage.key
-    const name = isPhase ? r.stage.key : r.stage.label
-    const second = isPhase ? r.stage.label : MARK_WORD[r.mark]
-    const here = r.mark === 'active' || r.mark === 'waiting' || r.mark === 'blocked'
-    parts.push(`<g><title>${esc(boxTip(flow, item, r, gates))}</title>`)
-    if (here) parts.push(`<rect x="${x - 4}" y="${y - 4}" width="${BOX.w + 8}" height="${BOX.h + 8}" rx="11" fill="none" stroke="${esc(st.stroke)}" stroke-width="2"/>`)
-    parts.push(`<rect x="${x}" y="${y}" width="${BOX.w}" height="${BOX.h}" rx="8" fill="${esc(st.fill)}" stroke="${esc(st.stroke)}" stroke-width="2"${r.stage.conditional || st.dash ? ` stroke-dasharray="${st.dash ?? '4 3'}"` : ''}/>`)
-    parts.push(`<text x="${x + 10}" y="${y + 19}" font-family="${FONT}" font-size="12" font-weight="600" fill="${esc(st.ink)}">${esc(`${GLYPH[r.mark]} ${cut(name, isPhase ? 9 : 14)}`)}</text>`)
-    if (second) parts.push(`<text x="${x + 10}" y="${y + 35}" font-family="${FONT}" font-size="10" fill="${esc(st.ink)}" opacity="0.9">${esc(cut(second, 17))}</text>`)
-    if (gates.length) {
-      const cx = x + BOX.w - 12
-      const cy = y + BOX.h - 12
-      parts.push(`<path d="M${cx},${cy - 6} L${cx + 6},${cy} L${cx},${cy + 6} L${cx - 6},${cy} z" fill="${done ? esc(st.ink) : 'none'}" stroke="${esc(st.ink)}" stroke-width="${waitsHere ? 2.5 : 1.5}"/>`)
+  laid.forEach(l => {
+    const { r } = l
+    const col = tone(r.mark)
+    const cy = l.top + 24
+    const isPick = r.stage.key === selected
+    const quiet = r.mark === 'later' || r.mark === 'next'
+    const sp = spend[r.stage.key]
+    const sum = stageSummary(flow, item, r.stage.key)
+    const badge = questionBadge(flow, item, r.stage.key)
+    const word = [r.mark === 'done' || r.mark === 'next' ? '' : MARK_WORD[r.mark], badge?.text].filter(Boolean).join(' · ')
+    const tip = [`${r.stage.key === r.stage.label ? r.stage.label : `${r.stage.key} · ${r.stage.label}`}: ${word || 'not reached yet'}`,
+      ...l.chips.map(c => `${c.chip.state === 'passed' ? 'Gate passed' : c.chip.state === 'pending' ? 'Waiting on' : c.chip.state === 'revoked' ? 'Gate revoked' : 'Gate open'}: ${c.chip.gate}`),
+      ...(spendLine(spend, r.stage.key) ? [`Spent ${spendLine(spend, r.stage.key)}`] : []),
+      ...(sum.lastAt ? [`Last activity ${shortStamp(sum.lastAt)}`] : [])].join('\n')
+    parts.push(`<g><title>${xml(tip)}</title>`)
+    if (isPick) parts.push(`<rect x="${PIC.pad / 2}" y="${l.top}" width="${W - PIC.pad}" height="${l.h - 4}" rx="8" fill="${PIC_INK.pick}" fill-opacity="0.13" stroke="${PIC_INK.pick}" stroke-width="1.5"/>`)
+    if (r.mark === 'waiting' || r.mark === 'active' || r.mark === 'blocked') parts.push(`<circle cx="${PIC.rail}" cy="${cy}" r="14" fill="none" stroke="${col}" stroke-width="2" opacity="0.5"/>`)
+    parts.push(`<circle cx="${PIC.rail}" cy="${cy}" r="10" fill="${quiet ? PIC_INK.bg : col}" stroke="${col}" stroke-width="2"${r.stage.conditional || r.mark === 'skipped' || r.mark === 'missed' ? ' stroke-dasharray="3 2"' : ''}/>`)
+    parts.push(`<text x="${PIC.rail}" y="${cy + 4}" text-anchor="middle" font-family="${PIC_FONT}" font-size="11" font-weight="700" fill="${quiet ? col : '#ffffff'}">${xml(GLYPH[r.mark])}</text>`)
+    const name = r.stage.key === r.stage.label ? r.stage.label : `${r.stage.key.replace('Phase ', '')}  ${r.stage.label}`
+    const nameFit = fitText(name, right - PIC.text - (wide ? 200 : mid ? 120 : 60), 14 * 1.14)
+    parts.push(`<text x="${PIC.text}" y="${cy + 5}" font-family="${PIC_FONT}" font-size="14" font-weight="600" fill="${r.mark === 'later' ? PIC_INK.dim : PIC_INK.fg}">${xml(nameFit)}</text>`)
+    if (word && l.wordInline) {
+      parts.push(`<text x="${PIC.text + boldPx(nameFit, 14) + 12}" y="${cy + 5}" font-family="${PIC_FONT}" font-size="12"${r.mark === 'waiting' ? ' font-weight="700"' : ''} fill="${badge?.warn || r.mark === 'waiting' ? colors.now : r.mark === 'next' ? colors.work : r.mark === 'missed' || r.mark === 'blocked' ? colors.revoked : PIC_INK.dim}">${xml(word)}</text>`)
+    }
+    // the right of the first line: cost bar, amount, last activity; less of it as the room shrinks
+    let rx = right
+    const at = shortStamp(sum.lastAt)
+    if (at && wide) { parts.push(`<text x="${rx}" y="${cy + 4}" text-anchor="end" font-family="${PIC_FONT}" font-size="11" fill="${PIC_INK.dim}">${xml(at)}</text>`); rx -= 74 }
+    if (sp && (sp.usd > 0 || spendLine(spend, r.stage.key))) {
+      const money = sp.usd > 0 ? moneyText(sp.usd) : 'tokens'
+      parts.push(`<text x="${rx}" y="${cy + 4}" text-anchor="end" font-family="${PIC_FONT}" font-size="12" fill="${PIC_INK.dim}">${xml(money)}</text>`)
+      rx -= 46 + 8
+      if (wide && maxSpend > 0 && sp.usd > 0) {
+        const bw = Math.max(3, Math.round((sp.usd / maxSpend) * 64))
+        parts.push(`<rect x="${rx - 64}" y="${cy - 3}" width="64" height="6" rx="3" fill="${PIC_INK.dim}" opacity="0.25"/><rect x="${rx - 64}" y="${cy - 3}" width="${bw}" height="6" rx="3" fill="${col}"/>`)
+      }
+    }
+    if (l.note) parts.push(`<text x="${PIC.text}" y="${cy + 24}" font-family="${PIC_FONT}" font-size="12" fill="${PIC_INK.dim}">${xml(l.note)}</text>`)
+    const chipTop = cy + (l.note ? 24 : 6) + 8
+    for (const c of l.chips) {
+      const gy = chipTop + c.row * PIC.chipH + 6
+      const gc = c.chip.state === 'passed' ? colors.done : c.chip.state === 'pending' ? colors.now : c.chip.state === 'revoked' ? colors.revoked : PIC_INK.dim
+      parts.push(`<path d="M${c.x + 6},${gy - 6} l6,6 l-6,6 l-6,-6z" fill="${c.chip.state === 'passed' ? gc : 'none'}" stroke="${gc}" stroke-width="1.6"/>`)
+      parts.push(`<text x="${c.x + 18}" y="${gy + 4}" font-family="${PIC_FONT}" font-size="12" fill="${c.chip.state === 'open' ? PIC_INK.dim : PIC_INK.fg}">${xml(c.chip.gate)}</text>`)
+      if (c.chip.state === 'pending' || c.chip.state === 'revoked') {
+        parts.push(`<text x="${c.x + 18 + textPx(c.chip.gate, 12) + 8}" y="${gy + 4}" font-family="${PIC_FONT}" font-size="11" font-weight="700" fill="${gc}">${c.chip.state === 'pending' ? 'your turn' : 'revoked'}</text>`)
+      }
     }
     parts.push('</g>')
   })
-
-  const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join('')}</svg>`
-  const alt = `${flow.label}, ${n} stages: ` + rows.map(r => `${r.stage.label}${MARK_WORD[r.mark] ? ` (${MARK_WORD[r.mark]})` : ''}`).join(', ') + '.'
-  return { source, alt, width, height }
+  const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join('')}</svg>`
+  const alt = `${flow.label}, ${rows.length} stages, top to bottom: ` + rows.map(r => `${r.stage.label}${MARK_WORD[r.mark] ? ` (${MARK_WORD[r.mark]})` : ''}`).join(', ') + '.'
+  return { source, alt, width: W, height: H }
 }
-
 
 // ---------------------------------------------------------------- the agents
 
@@ -520,9 +560,11 @@ function itemLine(flows: Record<string, SddFlow>, item: SddItem): string {
   return [`${item.id} ${item.title}`, where, item.progress ? statusWord(item) : ''].filter(Boolean).join(' · ')
 }
 
-/** The choices of the pane's work item dropdown: value is the id, label the line. */
-export function itemOptions(snap: Pick<SddSnapshot, 'items' | 'flows'>): { value: string; label: string }[] {
-  return openItems(snap).map(i => ({ value: String(i.id), label: cutAt(itemLine(snap.flows, i), 90) }))
+/** The choices of the pane's work item dropdown: value is the id, label the line. `current` is the item the pane shows. */
+export function itemOptions(snap: Pick<SddSnapshot, 'items' | 'flows'>, current?: SddItem): { value: string; label: string }[] {
+  // the item the pane shows may be a finished one, which is not among the open items: the list holds it last, so it shows
+  const all = current && !snap.items.some(i => i.id === current.id) ? [...openItems(snap), current] : openItems(snap)
+  return all.map(i => ({ value: String(i.id), label: cutAt(itemLine(snap.flows, i), 90) }))
 }
 
 /** `/sdd `, `/sdd spec `, `/sdd:sdd bug `, `/sdd-view `: the place a work item id goes. */

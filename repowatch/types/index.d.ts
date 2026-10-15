@@ -224,6 +224,8 @@ declare module 'claude-code' {
       note: string | null
       /** Show only repos that need attention. */
       onlyAttention: boolean
+      /** Path of the one worktree the Worktrees list shows, or null for all. */
+      focus: string | null
       /** First row of the page shown. */
       offset: number
       /** The repo whose details are open, or null. */

@@ -12,13 +12,15 @@ const SPEC = {
   stages: [
     { key: 'Specify', label: 'Specify', needs: [], passes: ['Claimed'] },
     { key: 'Design', label: 'Design', needs: ['Claimed'], passes: ['Design agreed'], stop: true },
+    { key: 'Review', label: 'Review', needs: ['Design agreed'], passes: ['PR approved'], stop: true },
   ],
 }
 const SNAP: SddSnapshot = {
   root: '/ws', specRoot: '/ws/docs/spec', flows: { spec: SPEC }, derived: [], done: [],
   items: [{
     id: 92012, type: 'User Story', title: 'Author tags', state: 'Active', project: 'P', flow: 'spec', slug: 'author', created: '2026-10-01T08:50:08Z',
-    repos: {}, gates: { Claimed: '2026-10-01T08:50:08Z' },
+    folder: '/ws/docs/spec/92012-author', repos: { Repo: { path: 'wt/Repo', branch: 'dev/x/92012-author', base: 'main' } },
+    gates: { Claimed: '2026-10-01T08:50:08Z' },
     progress: { at: '2026-10-01T10:00:00Z', flow: 'spec', phase: 'Design', status: 'active' },
     history: [], met: ['Claimed'], url: 'https://dev.azure.com/o/P/_workitems/edit/92012',
   }, {
@@ -37,10 +39,10 @@ const AGENTS = [
 type Cost = { id: number; stage: string; usd: number; session: string; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 type Row = { usd: number; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 type Fake = { registered: string[]; usd: number | null; costs: Cost[]; costFails: boolean; toasts: string[]
-  sid: string; spend: Record<string, Row>; spendOther: Record<string, Row> }
+  ran: string[]; finishFirst?: boolean; surfaces: string[]; sid: string; spend: Record<string, Row>; spendOther: Record<string, Row> }
 
 function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents = AGENTS): Fake {
-  const f: Fake = { registered: [], usd: 1, costs: [], costFails: false, toasts: [], sid: 's1', spend: {}, spendOther: {} }
+  const f: Fake = { registered: [], usd: 1, costs: [], costFails: false, toasts: [], ran: [], sid: 's1', surfaces: ['desktop'], spend: {}, spendOther: {} }
   // env.py: `cost` records a turn (and the totals the next `view` reports); anything else is the view
   on('process.run', ((_$: unknown, e: { argv: string[] }) => {
     const done = (exitCode: number, stdout: string, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
@@ -56,7 +58,8 @@ function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents
         cacheRead: was.cacheRead + c.cacheRead, cacheWrite: was.cacheWrite + c.cacheWrite }
       return done(0, `${c.id}: ${c.stage}`)
     }
-    const snap = { ...(SNAP as any), items: (SNAP as any).items.map((i: any) => ({ ...i, spend: i.id === 92012 ? f.spend : f.spendOther })) }
+    const all = (SNAP as any).items.map((i: any) => ({ ...i, spend: i.id === 92012 ? f.spend : f.spendOther }))
+    const snap = f.finishFirst ? { ...(SNAP as any), items: all.filter((i: any) => i.id !== 92012), done: all.filter((i: any) => i.id === 92012) } : { ...(SNAP as any), items: all }
     return done(0, JSON.stringify(snap))
   }) as never)
   on('tool.call' as never, (() => ({ result: 'ok' })) as never)  // a Bash run: the plugin only watches it
@@ -66,11 +69,16 @@ function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents
   on('clock.every' as never, (() => ({ value: { id: 'tick' } })) as never)
   on('ui.open' as never, (() => ({ value: { isPlaced: true } })) as never)
   on('ui.toast' as never, ((_$: unknown, e: unknown) => { f.toasts.push(JSON.stringify(e)); return { value: undefined } }) as never)
-  on('command.run' as never, (() => ({})) as never)  // /sdd is the skill's: the plugin only watches it run
+  on('command.run' as never, ((_$: unknown, e: { command: string; args: string }) => {
+    if (e.command === 'repowatch') f.ran.push(e.args)
+    return {}
+  }) as never)  // /sdd is the skill's: the plugin only watches it run
   on('turn.start' as never, ((_$: unknown, e: { turnId: string }) => ({ turnId: e.turnId })) as never)           // the engine echoes both
   on('session.measure' as never, ((_$: unknown, e: { changed: string[] }) => ({ changed: e.changed })) as never)
   on('prompt.autocomplete' as never, (() => ({ suggestions: [] })) as never)  // the engine's own answer: no rows
   // the engine's session id and usage, and a store that keeps what is set
+  on('session.attach' as never, ((_$: unknown, e: { clientId: string }) => ({ clientId: e.clientId })) as never)
+  on('session.surfaces' as never, (() => ({ value: f.surfaces })) as never)
   on('session.id' as never, (() => ({ value: f.sid })) as never)
   on('session.end' as never, ((_$: unknown, e: { sessionId: string }) => ({ sessionId: e.sessionId })) as never)
   on('turn.complete' as never, (() => ({ text: '' })) as never)
@@ -82,20 +90,20 @@ function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents
 const texts = async (ui: { findAll: (q: { type: string }) => Promise<Array<{ text?: string }>> }) =>
   (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').join('\n')
 
-const mountPane = async ($: any, f: Fake, surface: 'terminal' | 'desktop') => {
+const mountPane = async ($: any, f: Fake, surface: 'terminal' | 'desktop', columns = 100) => {
   await $.session.start({ cwd: '/ws', surface: 'terminal', isInteractive: true })
   if (!f.registered.includes('sdd-view')) {
     await new Promise(r => setTimeout(r, 100)) // let the other plugin's session.start work finish before the test ends
     return null
   }
   await $.command.run({ command: 'sdd-view', args: '92012' })
-  const ui = await $.ui.mount({ plugin: 'sdd', surface, component: 'Pane', props: { title: 'sdd', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never,
-    requestId: 'sdd-view', viewport: { columns: 100, rows: 40 } })
+  const ui = await $.ui.mount({ plugin: 'sdd', surface, component: 'Pane', props: { title: 'sdd', isFocused: true, bodyColumns: columns, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never,
+    requestId: 'sdd-view', viewport: { columns, rows: 40 } })
   for (let i = 0; i < 100 && !(await texts(ui)).includes('Author tags'); i++) await new Promise(r => setTimeout(r, 10))
   return ui
 }
 
-for (const surface of ['terminal', 'desktop'] as const) {
+for (const surface of ['desktop'] as const) {
   test(`${surface}: the pane lists the session's agents, the working one first, without the plugin prefix`, async ($: any, on: any) => {
     const f = fake(on)
     const ui = await mountPane($, f, surface)
@@ -117,7 +125,9 @@ for (const surface of ['terminal', 'desktop'] as const) {
   })
 }
 
-test('the flow map shows where the app draws an Svg, and the stage rows stay either way', async ($: any, on: any) => {
+const until = async (ok: () => Promise<boolean>) => { for (let i = 0; i < 100 && !(await ok()); i++) await new Promise(r => setTimeout(r, 10)) }
+
+test('terminal: the mod draws nothing there, whatever else the session draws on', async ($: any, on: any) => {
   const f = fake(on, [])
   await $.session.start({ cwd: '/ws', surface: 'terminal', isInteractive: true })
   if (!f.registered.includes('sdd-view')) {
@@ -125,46 +135,134 @@ test('the flow map shows where the app draws an Svg, and the stage rows stay eit
     return
   }
   await $.command.run({ command: 'sdd-view', args: '92012' })
-  const props = { title: 'sdd', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never
-  const desktop = await $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'Pane', props, requestId: 'sdd-view', viewport: { columns: 100, rows: 40 } })
-  for (let i = 0; i < 100 && !(await texts(desktop)).includes('Author tags'); i++) await new Promise(r => setTimeout(r, 10))
-  expect(await desktop.find({ type: 'Svg' })).toBeTruthy()
-  expect(await desktop.find({ key: 'stage:Design' })).toBeTruthy()
+  // the mod passes the draw on, and nothing beneath it draws a pane: that is the proof it drew none of its own
+  let why = ''
+  try {
+    await $.ui.mount({ plugin: 'sdd', surface: 'terminal', component: 'Pane', props: { title: 'sdd', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never,
+      requestId: 'sdd-view', viewport: { columns: 100, rows: 40 } })
+  } catch (err) {
+    why = String(err)
+  }
+  expect(why).toContain('no implementation for ui.render')
 })
 
-for (const surface of ['terminal', 'desktop'] as const) {
-  test(`${surface}: the dropdown lists the open items and picking one makes the pane follow it`, async ($: any, on: any) => {
-    const f = fake(on, [])
-    const ui = await mountPane($, f, surface)
+test('no Desktop app attached: the mod registers nothing and records nothing, until a Desktop app attaches', async ($: any, on: any) => {
+  const f = fake(on, [])
+  f.surfaces = ['terminal']
+  await $.session.start({ cwd: '/ws', surface: 'terminal', isInteractive: true })
+  const early = [...f.registered]
+  // a turn in a terminal chat costs something; the view records none of it
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  f.usd = 3
+  await $.session.measure({ context: { window: 1_000_000, percent: 5 }, rateLimits: [], cost: { usd: 3 }, changed: ['cost'] })
+  expect(f.costs).toEqual([])
+  // the Desktop app attaches: now the view sets itself up
+  f.surfaces = ['desktop']
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  if (!f.registered.includes('sdd-view')) { await new Promise(r => setTimeout(r, 100)); return }   // another plugin is under test
+  expect(early).not.toContain('sdd-view')
+  expect(early).not.toContain('sdd-worktrees')
+  expect(f.registered).toContain('sdd-worktrees')
+})
+
+test('desktop: the flow is one picture, a picker under it, and the detail of one stage at a time', async ($: any, on: any) => {
+  const ui = await mountPane($, fake(on, []), 'desktop')
+  if (!ui) return
+  const svg = await ui.find({ type: 'Svg' })
+  expect(svg).toBeTruthy()
+  expect(svg.props.source).toContain('viewBox')
+  for (const name of ['Specify', 'Design', 'Review']) expect(svg.props.source).toContain(`>${name}</text>`)
+  expect(await ui.find({ key: 'stage:Specify' })).toBe(undefined)                      // no second list of stages under the picture
+  expect(await ui.find({ key: 'log:Design' })).toBeTruthy()                            // the pane opens on the stage the item is at
+  expect(await ui.find({ key: 'log:Specify' })).toBe(undefined)                        // and shows only that one
+  expect((await ui.find({ key: 'stage-prev' })).props.hotkey).toBe('p')
+  expect((await ui.find({ key: 'stage-next' })).props.hotkey).toBe('n')
+  expect((await ui.find({ key: 'pick-stage' })).props.value).toBe('Design')
+  const before = svg.props.source
+  await ui.press({ key: 'stage-next' })
+  await until(async () => !!(await ui.find({ key: 'log:Review' })))
+  expect(await ui.find({ key: 'log:Review' })).toBeTruthy()
+  expect(await ui.find({ key: 'log:Design' })).toBe(undefined)                         // one stage's detail at a time
+  expect((await ui.find({ type: 'Svg' })).props.source).not.toBe(before)               // the picture outlines the new pick
+  await ui.press({ key: 'stage-next' })                                                // held at the last stage
+  expect((await ui.find({ key: 'pick-stage' })).props.value).toBe('Review')
+  await ui.press({ key: 'stage-prev' })
+  await ui.press({ key: 'stage-prev' })
+  await until(async () => !!(await ui.find({ key: 'log:Specify' })))
+  expect(await ui.find({ key: 'log:Specify' })).toBeTruthy()
+  await ui.select({ key: 'pick-stage', value: 'Review' })
+  await until(async () => !!(await ui.find({ key: 'log:Review' })))
+  expect(await ui.find({ key: 'log:Review' })).toBeTruthy()
+})
+
+test('desktop: the spanner on a worktree asks repowatch to show that one worktree', async ($: any, on: any) => {
+  const f = fake(on, [])
+  const ui = await mountPane($, f, 'desktop')
+  if (!ui) return
+  const btn = await ui.find({ key: 'open-Repo-repowatch' })
+  expect(btn.props.label).toBe('🔧')
+  await ui.press({ key: 'open-Repo-repowatch' })
+  await until(async () => f.ran.length > 0)
+  expect(f.ran).toEqual(['worktree ' + JSON.stringify({ path: '/ws/docs/spec/92012-author/wt/Repo' })])
+})
+
+test('desktop: a picked stage lapses when the item moves to another stage, and the detail follows the flow again', async ($: any, on: any) => {
+  const ui = await mountPane($, fake(on, []), 'desktop')
+  if (!ui) return
+  const item = (SNAP as any).items[0]
+  const was = item.progress
+  try {
+    await ui.select({ key: 'pick-stage', value: 'Specify' })
+    await until(async () => !!(await ui.find({ key: 'log:Specify' })))
+    expect(await ui.find({ key: 'log:Specify' })).toBeTruthy()
+    item.progress = { ...was, phase: 'Review' }                                          // the flow moves on
+    await ui.press({ key: 'refresh' })
+    await until(async () => !!(await ui.find({ key: 'log:Review' })))
+    expect(await ui.find({ key: 'log:Review' })).toBeTruthy()                            // the detail followed it
+    expect(await ui.find({ key: 'log:Specify' })).toBe(undefined)
+    expect((await ui.find({ key: 'pick-stage' })).props.value).toBe('Review')
+    // a pick made now stays while the item stays
+    await ui.select({ key: 'pick-stage', value: 'Design' })
+    await until(async () => !!(await ui.find({ key: 'log:Design' })))
+    await ui.press({ key: 'refresh' })
+    await new Promise(r => setTimeout(r, 50))
+    expect(await ui.find({ key: 'log:Design' })).toBeTruthy()
+  } finally {
+    item.progress = was
+  }
+})
+
+// a resize re-draws the pane at its new width: the picture is laid out for it, not scaled from one size
+for (const [cols, width] of [[20, 300], [50, 400], [100, 800], [140, 960]] as const) {
+  test(`desktop: the picture is laid out for the pane's width, ${cols} columns -> ${width} px`, async ($: any, on: any) => {
+    const ui = await mountPane($, fake(on, []), 'desktop', cols)
     if (!ui) return
-    expect(await texts(ui)).toContain('Author tags')
-    const select = await ui.find({ type: 'Select' })
-    expect(select).toBeTruthy()
-    expect(select.props.options.map((o: { value: string }) => o.value)).toEqual(['92100', '92012'])   // 92100 waits on the person
-    expect(select.props.value).toBe('92012')
-    await ui.select({ key: 'pick-item', value: '92100' })
-    for (let i = 0; i < 100 && !(await texts(ui)).includes('Second thing'); i++) await new Promise(r => setTimeout(r, 10))
-    expect(await texts(ui)).toContain('Second thing')
-    expect((await ui.find({ type: 'Select' })).props.value).toBe('92100')
+    const source: string = (await ui.find({ type: 'Svg' })).props.source
+    expect(source).toContain(`width="${width}" height=`)
+    expect(source).toContain(`viewBox="0 0 ${width} `)
   })
 }
 
-test('autocomplete: after /sdd the prompt box offers the open items, and nothing elsewhere', async ($: any, on: any) => {
-  const f = fake(on, [])
-  await $.session.start({ cwd: '/ws', surface: 'terminal', isInteractive: true })
-  if (!f.registered.includes('sdd-view')) {
-    await new Promise(r => setTimeout(r, 100))
-    return
-  }
-  await $.command.run({ command: 'sdd-view', args: '92012' })   // reads the snapshot
-  const ask = (text: string) => {
-    const m = /\S*$/.exec(text)!
-    return $.prompt.autocomplete({ text, cursor: text.length, token: m[0], start: m.index })
-  }
-  const after = await ask('/sdd 92')
-  expect(after.suggestions.map((r: { text: string }) => r.text)).toEqual(['92100', '92012'])
-  expect((await ask('fix 92')).suggestions ?? []).toEqual([])
-})
+for (const surface of ['desktop'] as const) {
+  test(`${surface}: the dropdown shows a finished item the pane is on, which is not among the open ones`, async ($: any, on: any) => {
+    const f = fake(on, [])
+    await $.session.start({ cwd: '/ws', surface: 'terminal', isInteractive: true })
+    if (!f.registered.includes('sdd-view')) {
+      await new Promise(r => setTimeout(r, 100))
+      return
+    }
+    await $.command.run({ command: 'sdd-view', args: '92012' })
+    // 92012 leaves the open items: the snapshot lists it as done
+    f.finishFirst = true
+    await $.command.run({ command: 'sdd-view', args: '92012' })
+    const ui = await $.ui.mount({ plugin: 'sdd', surface, component: 'Pane', props: { title: 'sdd', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never,
+      requestId: 'sdd-view', viewport: { columns: 100, rows: 40 } })
+    for (let i = 0; i < 100 && !(await texts(ui)).includes('Author tags'); i++) await new Promise(r => setTimeout(r, 10))
+    const select = await ui.find({ type: 'Select' })
+    expect(select.props.value).toBe('92012')
+    expect(select.props.options.map((o: { value: string }) => o.value)).toContain('92012')
+  })
+}
 
 // ---- cost and context per stage
 
@@ -241,7 +339,7 @@ test('cost: a failed record says so once, and the turn goes on', async ($: any, 
   expect(f.toasts.find(t => t.includes('Cost not recorded'))).toContain('no work item folder')
 })
 
-for (const surface of ['terminal', 'desktop'] as const) {
+for (const surface of ['desktop'] as const) {
   test(`${surface}: the pane shows the item's cost, this stage's cost and the context, and another item's cost stays out`, async ($: any, on: any) => {
     const f = fake(on, [])
     f.spend = { Design: { usd: 2, turns: 3 }, Specify: { usd: 0.004, turns: 1 } }          // earlier turns, any chat
@@ -255,8 +353,9 @@ for (const surface of ['terminal', 'desktop'] as const) {
     for (let i = 0; i < 100 && !(await texts(ui)).includes('Spent $2.50'); i++) await new Promise(r => setTimeout(r, 10))
     const t = await texts(ui)
     expect(t).toContain('Spent $2.50 on this item')
-    expect(t).toContain('$2.50')                         // the Design row
-    expect(t).toContain('<$0.01')                        // the Specify row: a tiny cost still shows
+    const rowsText: string = surface === 'desktop' ? (await ui.find({ type: 'Svg' })).props.source : t   // the stage rows: in the picture, or on the cards
+    expect(rowsText).toContain('$2.50')                  // the Design row
+    expect(rowsText).toContain(surface === 'desktop' ? '&lt;$0.01' : '<$0.01')   // the Specify row: a tiny cost still shows
     expect(t).toContain('Context 12%')
     expect(t).not.toContain('$50')
   })
@@ -326,7 +425,7 @@ test('another reason for a session to end changes nothing', async ($: any, on: a
   expect(f.costs.map(c => [c.session, c.usd])).toEqual([['s1', 0.5], ['s1', 0.5]])
 })
 
-test('the pane shows the token split for the item, and for a stage when it is opened', async ($: any, on: any) => {
+test('the pane shows the token split for the item, and for the stage it is on', async ($: any, on: any) => {
   const f = fake(on, [])
   f.spend = { Design: { usd: 2, turns: 3, input: 12_000, output: 3400, cacheRead: 1_200_000, cacheWrite: 80_000 } }
   if (!(await begin($, f))) return
@@ -334,7 +433,6 @@ test('the pane shows the token split for the item, and for a stage when it is op
     requestId: 'sdd-view', viewport: { columns: 100, rows: 40 } })
   for (let i = 0; i < 100 && !(await texts(ui)).includes('Tokens'); i++) await new Promise(r => setTimeout(r, 10))
   expect(await texts(ui)).toContain('Tokens: in 12k · out 3.4k · cache read 1.2M · cache write 80k')
-  await ui.press({ key: 'stage:Design' })
   for (let i = 0; i < 100 && !(await texts(ui)).includes('Spent $2.00 over'); i++) await new Promise(r => setTimeout(r, 10))
   expect(await texts(ui)).toContain('Spent $2.00 over 3 turns · in 12k · out 3.4k · cache read 1.2M · cache write 80k')
 })
@@ -342,7 +440,7 @@ test('the pane shows the token split for the item, and for a stage when it is op
 test('context: from 80 percent the band says so', async ($: any, on: any) => {
   const f = fake(on, [])
   if (!(await begin($, f))) return
-  const ui = await $.ui.mount({ plugin: 'sdd', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } as never,
+  const ui = await $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } as never,
     requestId: 'band', viewport: { columns: 100, rows: 40 } })
   const until = async (word: string) => { for (let i = 0; i < 100 && !(await texts(ui)).includes(word); i++) await new Promise(r => setTimeout(r, 10)) }
   await until('Author tags')

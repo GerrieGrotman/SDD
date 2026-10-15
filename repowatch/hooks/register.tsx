@@ -10,7 +10,7 @@ import {
   actionArgs, ago, baseText, branchText, bulkRows, classLabel, conflictToast, dedupePrune, flagLabel, forecastText, isUrgent,
   fixGlyph, fixLine, hopKey, hopLine, hopRows, mergeAskText, page, planArgs, planGist, resolveAskText, resultLine, sddRemoveText,
   statusText, stepText, syncArgs, undoArgs, undoLabel, visibleRepos, worktreeRows,
-  commitMeta, graphArgs, parseHistoryArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory,
+  commitMeta, graphArgs, parseHistoryArgs, parseWorktreeArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory,
 } from './view/model'
 import type { GraphTarget } from './view/model'
 
@@ -19,6 +19,7 @@ const state = { plugin: 'repowatch', key: 'state' } as const
 const error = { plugin: 'repowatch', key: 'error' } as const
 const note = { plugin: 'repowatch', key: 'note' } as const
 const onlyAttention = { plugin: 'repowatch', key: 'onlyAttention' } as const
+const focus = { plugin: 'repowatch', key: 'focus' } as const
 const offset = { plugin: 'repowatch', key: 'offset' } as const
 const open = { plugin: 'repowatch', key: 'open' } as const
 const busy = { plugin: 'repowatch', key: 'busy' } as const
@@ -173,7 +174,18 @@ export const register: Register = on => {
       }
       return { text: `History of ${target.title} opened.` }
     }
+    if (arg === 'worktree' || arg.startsWith('worktree ')) {
+      // sdd's spanner button asks this way: the Worktrees list, on that one worktree
+      const path = parseWorktreeArgs(e.args.trim().slice('worktree'.length))
+      if (!path) return { text: 'Usage: /repowatch worktree <path>' }
+      await $.state.set(focus, path)
+      await $.state.set(view, 'worktrees')
+      await $.state.set(offset, 0)
+      await $.state.set(note, null)
+      return { text: `Worktree ${path} shown.` }
+    }
     if (arg === 'worktrees' || arg === 'sync') {
+      await $.state.set(focus, null)
       await $.state.set(view, arg)
       await $.state.set(offset, 0)
     }
@@ -196,6 +208,7 @@ export const register: Register = on => {
     const why = (await $.state.get(error)).value ?? null
     const said = (await $.state.get(note)).value ?? null
     const only = (await $.state.get(onlyAttention)).value ?? true
+    const focused = (await $.state.get(focus)).value ?? null
     const from = (await $.state.get(offset)).value ?? 0
     const opened = (await $.state.get(open)).value ?? null
     const working = (await $.state.get(busy)).value ?? null
@@ -478,7 +491,7 @@ export const register: Register = on => {
 
     // ---- every worktree, the ones to act on first
     if (mode === 'worktrees') {
-      const rows = worktreeRows(s, only)
+      const rows = worktreeRows(s, only, focused)
       const p = page(rows, from, size)
       const bulk = dedupePrune(bulkRows(rows))
       return (
@@ -493,7 +506,16 @@ export const register: Register = on => {
             <Button key="undo" label={undoLabel((s.undoable ?? [])[0])} onPress={propose([undoArgs((s.undoable ?? [])[0])])} />
           )}
           {confirmPanel}
-          {p.rows.length === 0 && <Text color={COLORS.ok}>{only ? 'No worktree needs a look.' : 'No worktrees.'}</Text>}
+          {focused && (
+            <Box>
+              <Text dimColor>Showing one worktree.  </Text>
+              <Button key="show-all-wt" label="Show all worktrees" onPress={async () => {
+                await $.state.set(focus, null)
+                await $.state.set(offset, 0)
+              }} />
+            </Box>
+          )}
+          {p.rows.length === 0 && <Text color={COLORS.ok}>{focused ? 'repowatch does not know that worktree yet. Scan, then try again.' : only ? 'No worktree needs a look.' : 'No worktrees.'}</Text>}
           {p.rows.map(r => {
             const args = actionArgs(r)
             const w = r.wt
