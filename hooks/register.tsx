@@ -679,7 +679,10 @@ export const register: Register = on => {
     const waiting = first.progress?.status === 'waiting'
     return (
       <Box flexDirection="row" gap={1} width={e.props.bodyColumns}>
-        <Text bold color={tag.open ? C.now : C.work}>{`[${tag.brief}]`}</Text>
+        {/* the tag keeps one line and its full width: the spaces in it do not break */}
+        <Box key="band-tag" flexShrink={0}>
+          <Text bold wrap="truncate-end" color={tag.open ? C.now : C.work}>{`[${tag.brief}]`.replace(/ /g, '\u00a0')}</Text>
+        </Box>
         {/* the long text gives way to the button: it may shrink to nothing and is cut, never pushing the button off the edge */}
         <Box key="band-text" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
           {waiting

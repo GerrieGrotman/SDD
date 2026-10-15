@@ -441,6 +441,13 @@ test('the pane shows the token split for the item, and for the stage it is on', 
 
 test('the band above the prompt: a long text shrinks and is cut, and the button keeps its room', async ($: any, on: any) => {
   const f = fake(on, [])
+  const item = (SNAP as any).items[0]
+  ;(SPEC as any).paths = { full: { label: 'full' } }                                   // a flow with paths: the tag is 'spec · full', with a space in it
+  item.path = 'full'
+  try { await bandCheck($, f) } finally { delete (SPEC as any).paths; delete item.path }
+})
+
+async function bandCheck($: any, f: Fake) {
   if (!(await begin($, f))) return
   const ui = await $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 60, scroll: { offset: 0, bodyRows: 3 }, view: {} } as never,
     requestId: 'band', viewport: { columns: 60, rows: 40 } })
@@ -452,7 +459,10 @@ test('the band above the prompt: a long text shrinks and is cut, and the button 
   expect(text.props.overflow).toBe('hidden')                                           // and is cut, not spilled
   expect(text.props.flexShrink).toBe(1)
   expect((await ui.findAll({ type: 'Text' })).every((t: any) => t.props.wrap !== 'wrap')).toBe(true)
-})
+  expect((await ui.find({ key: 'band-tag' })).props.flexShrink).toBe(0)                // the tag keeps its width
+  const tag = (await ui.findAll({ type: 'Text' })).find((t: any) => /^\[/.test(t.text ?? ''))
+  expect(tag.text).toBe('[spec\u00a0·\u00a0full]')                                      // no plain space to wrap at
+}
 
 test('context: from 80 percent the band says so', async ($: any, on: any) => {
   const f = fake(on, [])
