@@ -171,6 +171,8 @@ test('desktop: the flow is one picture, a picker under it, and the detail of one
   const svg = await ui.find({ type: 'Svg' })
   expect(svg).toBeTruthy()
   expect(svg.props.source).toContain('viewBox')
+  expect(svg.props.width).toBe(800)                                                    // the size is set in pixels, not left to the engine
+  expect(svg.props.height).toBeGreaterThan(100)
   for (const name of ['Specify', 'Design', 'Review']) expect(svg.props.source).toContain(`>${name}</text>`)
   expect(await ui.find({ key: 'stage:Specify' })).toBe(undefined)                      // no second list of stages under the picture
   expect(await ui.find({ key: 'log:Design' })).toBeTruthy()                            // the pane opens on the stage the item is at
