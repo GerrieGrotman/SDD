@@ -206,6 +206,32 @@ test('desktop: the spanner on a worktree asks repowatch to show that one worktre
   expect(f.ran).toEqual(['worktree ' + JSON.stringify({ path: '/ws/docs/spec/92012-author/wt/Repo' })])
 })
 
+test('desktop: a picked stage lapses when the item moves to another stage, and the detail follows the flow again', async ($: any, on: any) => {
+  const ui = await mountPane($, fake(on, []), 'desktop')
+  if (!ui) return
+  const item = (SNAP as any).items[0]
+  const was = item.progress
+  try {
+    await ui.select({ key: 'pick-stage', value: 'Specify' })
+    await until(async () => !!(await ui.find({ key: 'log:Specify' })))
+    expect(await ui.find({ key: 'log:Specify' })).toBeTruthy()
+    item.progress = { ...was, phase: 'Review' }                                          // the flow moves on
+    await ui.press({ key: 'refresh' })
+    await until(async () => !!(await ui.find({ key: 'log:Review' })))
+    expect(await ui.find({ key: 'log:Review' })).toBeTruthy()                            // the detail followed it
+    expect(await ui.find({ key: 'log:Specify' })).toBe(undefined)
+    expect((await ui.find({ key: 'pick-stage' })).props.value).toBe('Review')
+    // a pick made now stays while the item stays
+    await ui.select({ key: 'pick-stage', value: 'Design' })
+    await until(async () => !!(await ui.find({ key: 'log:Design' })))
+    await ui.press({ key: 'refresh' })
+    await new Promise(r => setTimeout(r, 50))
+    expect(await ui.find({ key: 'log:Design' })).toBeTruthy()
+  } finally {
+    item.progress = was
+  }
+})
+
 // a resize re-draws the pane at its new width: the picture is laid out for it, not scaled from one size
 for (const [cols, width] of [[20, 300], [50, 400], [100, 800], [140, 960]] as const) {
   test(`desktop: the picture is laid out for the pane's width, ${cols} columns -> ${width} px`, async ($: any, on: any) => {

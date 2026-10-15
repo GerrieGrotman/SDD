@@ -788,8 +788,10 @@ export const register: Register = on => {
     const Input = hasInput ? t.Input : undefined
     const rows = flow ? stageRows(flow, item) : []
     // the stage the picture shows in detail: the one picked, else the one the item is at
-    const pickedKey = open?.startsWith('stage:') ? open.slice('stage:'.length) : null
-    const shownKey = rows.some(r => r.stage.key === pickedKey) ? pickedKey : defaultStage(rows)
+    // a pick is kept as 'stage:KEY@AT', AT being the stage the item was at: once the item moves on, the pick lapses
+    const [pickedKey, pickedAt] = open?.startsWith('stage:') ? open.slice('stage:'.length).split('@') : [null, null]
+    const atKey = defaultStage(rows)
+    const shownKey = pickedAt === atKey && rows.some(r => r.stage.key === pickedKey) ? pickedKey : atKey
     const agents = agentRows(await listAgents($))
     const spend = item.spend ?? {}
     agentsBusy = agents.some(a => a.isLive)
@@ -798,7 +800,7 @@ export const register: Register = on => {
     // the picture's stage picker: show that stage's detail, with nothing of the last one left open
     const pickStage = (key: string | null) => void (async () => {
       if (!key) return
-      await $.state.set(stage, `stage:${key}`)
+      await $.state.set(stage, `stage:${key}@${defaultStage(rows)}`)
       await $.state.set(gate, null)
       await $.state.set(doc, null)
       await $.state.set(feedback, null)
