@@ -34,14 +34,16 @@ can ask ADO whether the PR merged and move it to `safe`.
 - Actions run only when the person clicks. Each shows its plan (the exact git commands, repos and
   branches), waits for a confirm, re-checks its preconditions, runs, and writes a journal entry to
   `.claude/repowatch/journal.jsonl` (branch name and sha, so a deleted branch can be recreated).
+- The only branch repowatch ever deletes on a remote is a stale `sync/<older>-<newer>` one. `git()` refuses every
+  other deleting push (`--delete`, `-d`, `:ref`, `--mirror`, `--prune`), so no later code path can break the rule.
 - The sdd view stays read-only (CLAUDE.md). Actions live in repowatch; the sdd Worktrees page links to them.
 
 ## Limits that were fixed later
 
 - Squash merges: `scan` asks ADO (`adoLookup`) for a completed PR from a deleted branch whose source commit is
   the worktree's HEAD, and then classes it `safe`. Cached by branch and sha. Without `az` nothing changes.
-- A sync branch whose PR was merged is stale; the next sync deletes it (local and origin) after a confirm
-  and uses the name again.
+- A sync branch whose PR was merged is stale; the next sync deletes it (local and origin, the one remote
+  deletion repowatch makes) after a confirm and uses the name again.
 - A skipped commit takes the person's own reason, typed in the pane.
 - "Register a merged bug-flow PR as a pending fix" is not needed: a fix merged into `team/x` shows up as
   missing on the next hop by itself, grouped by the ADO id in its commit message.

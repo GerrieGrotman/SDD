@@ -63,6 +63,40 @@ def add_worktree(repo, wt, branch, push=False, commit_file=None):
         sh(["git", "push", "-q", "-u", "origin", branch], wt)
 
 
+def test_remote_deletes():
+    """The only thing repowatch deletes on a remote is a sync/ branch."""
+    refuse = rw.remote_delete_refusal
+    for args in (["push", "origin", "--delete", "team/0.0.1"], ["push", "origin", "-d", "main"], ["push", "origin", ":feat/x"],
+                 ["push", "--delete", "origin", "team/0.0.2"], ["push", "origin", "--delete", "refs/heads/team/1"],
+                 ["push", "origin", "--delete", "sync/a", "team/b"], ["push", "origin", "--mirror"], ["push", "--prune", "origin"],
+                 ["push", "origin", "--delete", "sync/*"], ["push", "origin", ":refs/heads/main"], ["push", "origin", "--delete"]):
+        assert refuse(args), args
+    for args in (["push", "origin", "--delete", "sync/0.0.1-0.0.2"], ["push", "origin", ":sync/0.0.1-0.0.2"],
+                 ["push", "-u", "origin", "sync/0.0.1-0.0.2"], ["push", "-u", "origin", "feat/x"], ["fetch", "origin"],
+                 ["branch", "-D", "team/0.0.1"], ["push", "origin", "HEAD:refs/heads/sync/a"]):
+        assert refuse(args) is None, args
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        gitcfg = tmp / "gitconfig"
+        gitcfg.write_text("[user]\n\tname = Dev\n\temail = dev@x.co\n[init]\n\tdefaultBranch = main\n")
+        os.environ["GIT_CONFIG_GLOBAL"] = str(gitcfg)
+        origins = tmp / "origins"
+        origins.mkdir()
+        repo = make_repo(tmp, origins, "app")
+        for b in ("team/0.0.1", "sync/0.0.1-0.0.2"):
+            sh(["git", "push", "-q", "origin", "main:refs/heads/" + b], repo)
+        # the real git call is refused before git runs, and the branch is still on origin
+        rc, _, err = rw.git(["push", "origin", "--delete", "team/0.0.1"], repo)
+        assert rc == 126 and "only deletes sync/" in err, (rc, err)
+        assert rw.git(["push", "origin", ":main"], repo)[0] == 126
+        heads = git_out(repo, "ls-remote", "--heads", "origin")
+        assert "refs/heads/team/0.0.1" in heads and "refs/heads/main" in heads, heads
+        # a sync/ branch can go
+        rc, _, err = rw.git(["push", "origin", "--delete", "sync/0.0.1-0.0.2"], repo)
+        assert rc == 0, err
+        assert "sync/0.0.1-0.0.2" not in git_out(repo, "ls-remote", "--heads", "origin")
+
+
 def test_parsers():
     s = rw.parse_status("# branch.oid abc\n# branch.head main\n# branch.upstream origin/main\n# branch.ab +2 -3\n"
                         "1 M. N... 100644 100644 100644 a b f.txt\n1 .M N... 100644 100644 100644 a b g.txt\n"
@@ -657,6 +691,7 @@ def git_out(repo, *args):
 
 def main():
     test_parsers()
+    test_remote_deletes()
     test_scan()
     test_worktrees()
     test_forecast()

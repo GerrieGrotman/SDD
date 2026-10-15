@@ -67,4 +67,7 @@ to trust the plugin directory, and each case is a paid agent run. A full TypeScr
   `UPGRADE_KEYS` when a person should find them in the file to tune.
 - **Skill text is for a tired reader**: short sentences, active voice, exact paths and commands.
   A skill's `SKILL.md` stays an outline; stage detail goes in the stage's own file.
+- **repowatch deletes nothing on a remote except a stale `sync/<x>-<y>` branch.** `remote_delete_refusal` in
+  `repowatch/scripts/repowatch.py` refuses every other deleting `git push` (and `--mirror`, `--prune`), and
+  `test_remote_deletes` pins it. A new action must not route around `git()` for pushes.
 - **The view never writes**: `register.tsx` reads `env.py view` and posts the user's messages.

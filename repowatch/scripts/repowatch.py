@@ -87,8 +87,36 @@ SKIP_DIRS = {".claude", "node_modules", ".git", ".venv", "venv", "__pycache__", 
 
 # --- git ---------------------------------------------------------------------------------------
 
+SYNC_REF_PREFIX = "sync/"
+
+
+def remote_delete_refusal(args):
+    """Why a `git push` must not run, or None. The one rule: the only thing repowatch ever deletes on a
+    remote is a sync/ branch. Every deleting form is refused for any other name (--delete, -d, a
+    :branch refspec), and so are --mirror and --prune, which delete remote refs without naming them."""
+    if not args or args[0] != "push":
+        return None
+    rest = list(args[1:])
+    flags = [a for a in rest if a.startswith("-") and a != "-"]
+    if any(f in ("--mirror", "--prune") for f in flags):
+        return "repowatch never pushes with --mirror or --prune: they can delete remote branches"
+    refs = [a for a in rest if not a.startswith("-")][1:]  # the first non-flag is the remote
+    if any(f in ("--delete", "-d") for f in flags):
+        names = refs or [""]  # a delete that names nothing is refused, not left to git
+    else:
+        names = [r[1:] for r in refs if r.startswith(":")]
+    for n in names:
+        n = n[len("refs/heads/"):] if n.startswith("refs/heads/") else n
+        if not n.startswith(SYNC_REF_PREFIX) or any(c in n for c in "*?[ "):
+            return "repowatch only deletes sync/ branches on a remote, not %s" % (n or "(nothing)")
+    return None
+
+
 def git(args, cwd, timeout=60):
     """(returncode, stdout, stderr). Never prompts for a password and never raises."""
+    refusal = remote_delete_refusal(args)
+    if refusal:
+        return 126, "", "refused: " + refusal
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0", LC_ALL="C")
     try:
         r = subprocess.run(["git"] + list(args), cwd=str(cwd), capture_output=True, text=True,
@@ -1197,7 +1225,8 @@ def plan_sync(plan, repo, args, cfg, now, root):
         merged = lambda tip: git(["merge-base", "--is-ancestor", tip, "origin/" + newer], repo)[0] == 0
         if rtip:
             if merged(rtip):
-                cleanup.append(["git", "push", "origin", "--delete", branch])
+                if branch.startswith(SYNC_REF_PREFIX):  # the only branch repowatch ever deletes on origin
+                    cleanup.append(["git", "push", "origin", "--delete", branch])
             else:
                 plan["blocked"].append("branch %s is on origin already: its pull request is the next step" % branch)
         if ltip:
@@ -1219,7 +1248,8 @@ def plan_sync(plan, repo, args, cfg, now, root):
         plan["cleanup"] = cleanup
         if cleanup:
             plan["level"] = "review"
-            plan["reasons"].append("the earlier %s was merged: it is deleted first so the name can be used again" % branch)
+            plan["reasons"].append("the earlier %s was merged: it is deleted first so the name can be used again "
+                                   "(it is the only kind of branch repowatch ever deletes on origin)" % branch)
         if fc["state"] == "conflict":
             plan["level"] = "review"
             plan["reasons"].append("it will conflict in %s: the worktree is left for someone to resolve" % ", ".join(fc.get("files", [])[:5]))

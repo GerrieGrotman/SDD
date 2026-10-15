@@ -57,6 +57,15 @@ installs with sdd.
 - **Background scan**: local facts every minute; every fifth scan also fetches the four repos fetched
   longest ago, so dozens of repos are covered without a stall. Nothing is pulled, merged or deleted.
 
+## What it never does to a remote
+
+- It never deletes a branch on a remote except a stale `sync/<older>-<newer>` branch (one whose pull request
+  was merged), and only when you confirm. Every other deleting `git push` is refused in the code: `--delete`,
+  `-d`, a `:branch` refspec, `--mirror` and `--prune` for any name that does not start with `sync/`.
+- **Delete…** on a branch whose upstream is gone, **Remove…** with its branch, **Abort…** and **Undo** touch
+  local branches only.
+- It never pushes to a `team/*` branch. A sync pushes its own `sync/…` branch and opens a pull request.
+
 ## Clean-up is always a click, then a plan, then a confirm
 
 A button shows the plan first: the git commands, why, the commits that exist only there (for a review),
