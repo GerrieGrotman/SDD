@@ -226,6 +226,8 @@ declare module 'claude-code' {
       onlyAttention: boolean
       /** Path of the one worktree the Worktrees list shows, or null for all. */
       focus: string | null
+      /** The worktree row opened in the Worktrees list (its path); null = none. */
+      wtOpen: string | null
       /** First row of the page shown. */
       offset: number
       /** The repo whose details are open, or null. */

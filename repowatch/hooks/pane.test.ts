@@ -138,6 +138,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const calls = fakeScript(on)
     const ui = await mountPane($, 'worktrees', calls)
     if (!ui) return
+    await ui.press({ key: 'wt-/w/merged' })
     await ui.press({ key: 'act-/w/merged' })
     expect(calls.some(c => c[0] === 'plan' && c[1] === 'remove-worktree' && c.includes('/w/merged') && c.includes('--delete-branch'))).toBe(true)
     expect(calls.some(c => c[0] === 'apply')).toBe(false)
@@ -146,7 +147,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.press({ key: 'cancel' })
     expect(calls.some(c => c[0] === 'apply')).toBe(false)
     expect(await texts(ui)).not.toContain('Do this for')
-    // plan again, then Confirm applies the same arguments, without the review override
+    // plan again (the row stays open), then Confirm applies the same arguments, without the review override
     await ui.press({ key: 'act-/w/merged' })
     await ui.press({ key: 'confirm' })
     const apply = calls.find(c => c[0] === 'apply')
@@ -157,6 +158,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const calls = fakeScript(on, 'review')
     const ui = await mountPane($, 'worktrees', calls)
     if (!ui) return
+    await ui.press({ key: 'wt-/w/squash' })
     await ui.press({ key: 'act-/w/squash' })
     const t = await texts(ui)
     expect(t).toContain('Commits that exist only here')
@@ -170,6 +172,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const calls = fakeScript(on)
     const ui = await mountPane($, 'worktrees', calls)
     if (!ui) return
+    expect(await ui.find({ key: 'sdd-/w/sdd' })).toBe(undefined) // a closed row shows no buttons
+    await ui.press({ key: 'wt-/w/sdd' })
     expect(await ui.find({ key: 'act-/w/sdd' })).toBe(undefined)
     expect(await ui.find({ key: 'sdd-/w/sdd' })).toBeTruthy()
   })
@@ -190,10 +194,40 @@ for (const surface of ['terminal', 'desktop'] as const) {
     on('prompt.fill', ((_$: unknown, e: { text: string }) => { filled = e.text; return { isFilled: true } }) as never)
     const ui = await mountPane($, 'worktrees', calls)
     if (!ui) return
+    expect(await texts(ui)).not.toContain('would conflict in a.cs') // only an open row says it
+    await ui.press({ key: 'wt-/w/clash' })
     expect(await texts(ui)).toContain('would conflict in a.cs')
     await ui.press({ key: 'merge-/w/clash' })
     expect(filled).toContain('merge origin/main in and resolve the conflicts in a.cs')
     expect(calls.some(c => c[0] === 'apply')).toBe(false)
+  })
+
+  test(`${surface}: a worktree is one line, and a press opens its facts and buttons under it`, async ($: any, on: any) => {
+    const calls = fakeScript(on)
+    const ui = await mountPane($, 'worktrees', calls)
+    if (!ui) return
+    const t = await texts(ui)
+    expect(t).toContain('● 2 safe')
+    expect(t).toContain('● 1 conflict')
+    expect(await ui.find({ key: 'hist-/w/merged' })).toBe(undefined)
+    expect(await ui.find({ key: 'copy-/w/merged' })).toBe(undefined)
+    await ui.press({ key: 'wt-/w/merged' })
+    expect(await ui.find({ key: 'copy-/w/merged' })).toBeTruthy()
+    expect(await ui.find({ key: 'hist-/w/clash' })).toBe(undefined) // one open at a time
+    await ui.press({ key: 'wt-/w/clash' })
+    expect(await ui.find({ key: 'copy-/w/merged' })).toBe(undefined)
+    expect(await ui.find({ key: 'copy-/w/clash' })).toBeTruthy()
+    await ui.press({ key: 'wt-/w/clash' }) // pressing the open one closes it
+    expect(await ui.find({ key: 'copy-/w/clash' })).toBe(undefined)
+  })
+
+  test(`${surface}: the copy button runs the computer's clipboard tool with the path`, async ($: any, on: any) => {
+    const calls = fakeScript(on)
+    const ui = await mountPane($, 'worktrees', calls)
+    if (!ui) return
+    await ui.press({ key: 'wt-/w/merged' })
+    await ui.press({ key: 'copy-/w/merged' })
+    expect(calls.some(c => c.join(' ').includes('/w/merged') && /pbcopy|Set-Clipboard/.test(c.join(' ')))).toBe(true)
   })
 
   test(`${surface}: Undo is offered and goes through a plan first`, async ($: any, on: any) => {
@@ -219,6 +253,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const calls = fakeScript(on)
     const ui = await mountPane($, 'worktrees', calls)
     if (!ui) return
+    await ui.press({ key: 'wt-/w/clash' })
     await ui.press({ key: 'hist-/w/clash' })
     expect(calls.find(c => c[0] === 'graph')).toEqual(['graph', '--repo', 'app', '--ref=feat/clash', '--ref=origin/main', '--limit', '40'])
     const t = await texts(ui)
@@ -267,12 +302,13 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(res.text).toContain('/w/clash shown')
     const t = await texts(ui)
     expect(t).toContain('Showing one worktree')
-    expect(t).toContain('feat/clash')       // in use, and still shown: the attention filter does not hide a focused one
-    expect(t).not.toContain('feat/merged')
+    expect(await ui.find({ key: 'wt-/w/clash' })).toBeTruthy()   // in use, and still shown: the attention filter does not hide a focused one
+    expect(await ui.find({ key: 'hist-/w/clash' })).toBeTruthy() // and open, with no press
+    expect(await ui.find({ key: 'wt-/w/merged' })).toBe(undefined)
     await ui.press({ key: 'show-all-wt' })
     const all = await texts(ui)
     expect(all).not.toContain('Showing one worktree')
-    expect(all).toContain('feat/merged')
+    expect(await ui.find({ key: 'wt-/w/merged' })).toBeTruthy()
     // a path that names no worktree says so; no path is a usage line; an option-looking path is refused
     await $.command.run({ command: 'repowatch', args: 'worktree /nowhere' })
     expect(await texts(ui)).toContain('does not know that worktree')
@@ -287,6 +323,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const calls = fakeScript(on)
     const ui = await mountPane($, 'worktrees', calls)
     if (!ui) return
+    await ui.press({ key: 'wt-/w/clash' })
     await ui.press({ key: 'hist-/w/clash' })
     await ui.press({ key: 'graph-base' })
     expect(calls.filter(c => c[0] === 'graph').pop()).toEqual(['graph', '--repo', 'app', '--ref=feat/clash', '--limit', '40'])
@@ -296,7 +333,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.press({ key: 'graph-more' })
     expect(calls.filter(c => c[0] === 'graph').pop()).toEqual(['graph', '--repo', 'app', '--ref=feat/clash', '--limit', '80', '--first-parent'])
     await ui.press({ key: 'graph-back' })
-    expect(await ui.find({ key: 'act-/w/merged' })).toBeTruthy() // the Worktrees view again
+    expect(await ui.find({ key: 'wt-/w/merged' })).toBeTruthy() // the Worktrees view again
   })
 
   test(`${surface}: History opens from a repo and from a sync hop`, async ($: any, on: any) => {
@@ -320,9 +357,10 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await mountPane($, 'worktrees', calls)
     if (!ui) return
     calls.graphError = 'no such branch or commit: feat/clash'
+    await ui.press({ key: 'wt-/w/clash' })
     await ui.press({ key: 'hist-/w/clash' })
     expect(await texts(ui)).toContain('no such branch or commit: feat/clash')
-    expect(await ui.find({ key: 'act-/w/merged' })).toBeTruthy()
+    expect(await ui.find({ key: 'wt-/w/merged' })).toBeTruthy()
   })
 
   test(`${surface}: the sync view plans a hop, and a stopped one offers resolve, finish and abort`, async ($: any, on: any) => {

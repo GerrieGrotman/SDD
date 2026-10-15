@@ -10,7 +10,7 @@ import {
   actionArgs, ago, baseText, branchText, bulkRows, classLabel, conflictToast, dedupePrune, flagLabel, forecastText, isUrgent,
   fixGlyph, fixLine, hopKey, hopLine, hopRows, mergeAskText, page, planArgs, planGist, resolveAskText, resultLine, sddRemoveText,
   statusText, stepText, syncArgs, undoArgs, undoLabel, visibleRepos, worktreeRows,
-  commitMeta, graphArgs, parseHistoryArgs, parseWorktreeArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory,
+  commitMeta, graphArgs, agoShort, clipboardArgv, wtCounts, wtFacts, wtWord, parseHistoryArgs, parseWorktreeArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory,
 } from './view/model'
 import type { GraphTarget } from './view/model'
 
@@ -20,6 +20,7 @@ const error = { plugin: 'repowatch', key: 'error' } as const
 const note = { plugin: 'repowatch', key: 'note' } as const
 const onlyAttention = { plugin: 'repowatch', key: 'onlyAttention' } as const
 const focus = { plugin: 'repowatch', key: 'focus' } as const
+const wtOpen = { plugin: 'repowatch', key: 'wtOpen' } as const
 const offset = { plugin: 'repowatch', key: 'offset' } as const
 const open = { plugin: 'repowatch', key: 'open' } as const
 const busy = { plugin: 'repowatch', key: 'busy' } as const
@@ -103,6 +104,17 @@ async function applyPlans($: EngineInterface, todo: RwPlan[]): Promise<RwResult[
     }
   }
   return out
+}
+
+/** Copies a path to the clipboard with the computer's own tool; the toast says how it went. */
+async function copyPath($: EngineInterface, path: string): Promise<void> {
+  try {
+    const r = await $.process.run(clipboardArgv(path), { timeoutMs: 10_000 })
+    if (r.exitCode === 0) $.ui.toast('Path copied')
+    else $.ui.toast(`Could not copy the path: ${(r.stderr || r.stdout).trim().slice(0, 160) || `exit ${r.exitCode}`}`)
+  } catch (err) {
+    $.ui.toast(`Could not copy the path: ${String(err).slice(0, 160)}`)
+  }
 }
 
 /** The history of some refs, read-only. A refusal (no such branch) comes back as the error it is. */
@@ -209,6 +221,7 @@ export const register: Register = on => {
     const said = (await $.state.get(note)).value ?? null
     const only = (await $.state.get(onlyAttention)).value ?? true
     const focused = (await $.state.get(focus)).value ?? null
+    const wtOpened = (await $.state.get(wtOpen)).value ?? null
     const from = (await $.state.get(offset)).value ?? 0
     const opened = (await $.state.get(open)).value ?? null
     const working = (await $.state.get(busy)).value ?? null
@@ -494,10 +507,20 @@ export const register: Register = on => {
       const rows = worktreeRows(s, only, focused)
       const p = page(rows, from, size)
       const bulk = dedupePrune(bulkRows(rows))
+      const wtn = wtCounts(worktreeRows(s, false))
       return (
         <Box flexDirection="column">
           {header}
-          {sum && <Text dimColor>{sum.worktrees} worktrees · {sum.removable} to remove · {sum.toReview} to review · scanned {ago(s.generated, now)}</Text>}
+          {sum && (
+            <Box gap={2}>
+              {wtn.safe > 0 && <Text color={COLORS.ok}>● {wtn.safe} safe</Text>}
+              {wtn.review > 0 && <Text color={COLORS.warn}>● {wtn.review} review</Text>}
+              {wtn.conflict > 0 && <Text color={COLORS.urgent}>● {wtn.conflict} conflict</Text>}
+              {wtn.broken > 0 && <Text color={COLORS.warn}>● {wtn.broken} broken</Text>}
+              <Text color={COLORS.dim}>● {wtn.ok} in use</Text>
+              <Text dimColor>scanned {ago(s.generated, now)}</Text>
+            </Box>
+          )}
           {!pending && sum && sum.removable > 0 && (
             <Button key="bulk" label={`Remove all safe (${bulk.length})`}
               onPress={propose(bulk.map(r => actionArgs(r)).filter((a): a is string[] => !!a))} />
@@ -519,26 +542,42 @@ export const register: Register = on => {
           {p.rows.map(r => {
             const args = actionArgs(r)
             const w = r.wt
+            const isOpen = !!focused || wtOpened === w.path
+            const tone = w.forecast?.state === 'conflict' ? COLORS.urgent : CLASS_COLOR[w.class]
+            const fc = forecastText(w.forecast)
             return (
               <Box key={`${r.repo}-${w.path}`} flexDirection="column">
-                <Box>
-                  <Text color={CLASS_COLOR[w.class]}>{classLabel(w.class).padEnd(15)}</Text>
-                  <Text>{r.repo} · {w.branch ?? '(detached)'}  </Text>
-                  {w.owner === 'sdd' && <Text dimColor>sdd {w.workItem ?? ''}  </Text>}
-                  {w.owner === 'sync' && <Text dimColor>branch sync  </Text>}
-                  <Button key={`hist-${w.path}`} label="History" onPress={openGraph(worktreeHistory(r))} />
-                  {args && !pending && (
-                    <Button key={`act-${w.path}`} label={w.class === 'prune' ? 'Prune' : w.class === 'review' ? 'Review…' : 'Remove…'} onPress={propose([args])} />
-                  )}
-                  {w.owner === 'sdd' && (w.class === 'safe' || w.class === 'review') && (
-                    <Button key={`sdd-${w.path}`} label="Ask sdd to remove" onPress={() => $.prompt.fill({ text: sddRemoveText(w.workItem) })} />
-                  )}
+                <Box gap={1} alignItems="center">
+                  <Text color={tone}>●</Text>
+                  <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                    <Button key={`wt-${w.path}`} label={`${r.repo} · ${w.branch ?? '(detached)'}${w.owner === 'sdd' ? ` · sdd ${w.workItem ?? ''}` : ''}`}
+                      onPress={() => $.state.set(wtOpen, wtOpened === w.path ? null : w.path)} />
+                  </Box>
+                  <Text color={tone}>{wtWord(w)}</Text>
+                  <Text dimColor>{agoShort(w.lastCommit, now).padStart(4)}</Text>
                 </Box>
-                <Text dimColor>                 {w.reasons.join('; ') || 'in use'}{w.missing ? '' : ` · last commit ${ago(w.lastCommit, now)}`}{baseText(w) ? ` · ${baseText(w)}` : ''}</Text>
-                {forecastText(w.forecast) && (
-                  <Box>
-                    <Text color={COLORS.urgent}>                 {forecastText(w.forecast)}  </Text>
-                    <Button key={`merge-${w.path}`} label="Ask Claude to merge" onPress={() => $.prompt.fill({ text: mergeAskText(r) })} />
+                {isOpen && (
+                  <Box flexDirection="row" alignItems="stretch">
+                    <Box key={`wtrail-${w.path}`} width={2} flexShrink={0} flexDirection="row">
+                      <Box width="25%" flexShrink={0} />
+                      <Box width="20%" flexShrink={0} backgroundColor={tone} />
+                    </Box>
+                    <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} marginBottom={1}>
+                      <Text dimColor wrap="wrap">{wtFacts(w, now).join(' · ')}</Text>
+                      {w.owner === 'sync' && <Text dimColor>branch sync</Text>}
+                      {fc && <Text color={COLORS.urgent} wrap="wrap">{fc}</Text>}
+                      <Box gap={1} flexWrap="wrap">
+                        <Button key={`copy-${w.path}`} label="📋" onPress={() => copyPath($, w.path)} />
+                        <Button key={`hist-${w.path}`} label="History" onPress={openGraph(worktreeHistory(r))} />
+                        {args && !pending && (
+                          <Button key={`act-${w.path}`} label={w.class === 'prune' ? 'Prune' : w.class === 'review' ? 'Review…' : 'Remove…'} onPress={propose([args])} />
+                        )}
+                        {w.owner === 'sdd' && (w.class === 'safe' || w.class === 'review') && (
+                          <Button key={`sdd-${w.path}`} label="Ask sdd to remove" onPress={() => $.prompt.fill({ text: sddRemoveText(w.workItem) })} />
+                        )}
+                        {fc && <Button key={`merge-${w.path}`} label="Ask Claude to merge" onPress={() => $.prompt.fill({ text: mergeAskText(r) })} />}
+                      </Box>
+                    </Box>
                   </Box>
                 )}
               </Box>
