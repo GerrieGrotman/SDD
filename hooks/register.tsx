@@ -127,6 +127,16 @@ async function openPane($: EngineInterface, id: number | null): Promise<void> {
 }
 
 /** Opens a folder on this computer in the file manager or VS Code. It changes nothing in sdd. */
+/** The spanner: repowatch's Worktrees list, on that one worktree. Another plugin's command, so say so when it is missing. */
+async function showWorktree($: EngineInterface, path: string): Promise<void> {
+  try {
+    const res = await $.command.run({ command: 'repowatch', args: `worktree ${JSON.stringify({ path })}` })
+    if (/^Usage:|no such|not found/i.test(res.text ?? '')) $.ui.toast(res.text ?? 'repowatch could not show that worktree')
+  } catch (err) {
+    $.ui.toast(`repowatch could not show that worktree (is the repowatch plugin enabled?): ${String(err).slice(0, 120)}`)
+  }
+}
+
 async function openIn($: EngineInterface, app: 'files' | 'code', path: string): Promise<void> {
   const isWin = /^[A-Za-z]:[\\/]/.test(path)
   const native = isWin ? path.replace(/\//g, '\\') : path
@@ -954,9 +964,10 @@ export const register: Register = on => {
                 </Box>
                 {canOpen && (
                   <Box flexDirection="row" gap={1} flexShrink={0}>
-                    {/* icon buttons: 📁 the file manager, </> VS Code */}
+                    {/* icon buttons: 📁 the file manager, </> VS Code, 🔧 repowatch on this worktree */}
                     <Button key={`open-${name}-files`} label="📁" onPress={() => void openIn($, 'files', `${item.folder}/${r.path}`)} />
                     <Button key={`open-${name}-code`} label="</>" onPress={() => void openIn($, 'code', `${item.folder}/${r.path}`)} />
+                    <Button key={`open-${name}-repowatch`} label="🔧" onPress={() => void showWorktree($, `${item.folder}/${r.path}`)} />
                   </Box>
                 )}
               </Box>

@@ -416,7 +416,7 @@ export function flowPicture(input: { flow: SddFlow; item: SddItem; rows: StageRo
   let y = PIC.pad
   for (const r of rows) {
     const badge = questionBadge(flow, item, r.stage.key)
-    const word = [MARK_WORD[r.mark], badge?.text].filter(Boolean).join(' · ')
+    const word = [r.mark === 'done' || r.mark === 'next' ? '' : MARK_WORD[r.mark], badge?.text].filter(Boolean).join(' · ')
     const name = r.stage.key === r.stage.label ? r.stage.label : `${r.stage.key.replace('Phase ', '')}  ${r.stage.label}`
     const rightBlock = (wide ? 70 + 8 : 0) + (mid ? 46 + 8 : 46) + (wide || mid ? 74 : 0)
     const wordInline = !word || boldPx(name, 14) + 12 + textPx(word, 12) < right - PIC.text - rightBlock
@@ -460,7 +460,7 @@ export function flowPicture(input: { flow: SddFlow; item: SddItem; rows: StageRo
     const sp = spend[r.stage.key]
     const sum = stageSummary(flow, item, r.stage.key)
     const badge = questionBadge(flow, item, r.stage.key)
-    const word = [MARK_WORD[r.mark], badge?.text].filter(Boolean).join(' · ')
+    const word = [r.mark === 'done' || r.mark === 'next' ? '' : MARK_WORD[r.mark], badge?.text].filter(Boolean).join(' · ')
     const tip = [`${r.stage.key === r.stage.label ? r.stage.label : `${r.stage.key} · ${r.stage.label}`}: ${word || 'not reached yet'}`,
       ...l.chips.map(c => `${c.chip.state === 'passed' ? 'Gate passed' : c.chip.state === 'pending' ? 'Waiting on' : c.chip.state === 'revoked' ? 'Gate revoked' : 'Gate open'}: ${c.chip.gate}`),
       ...(spendLine(spend, r.stage.key) ? [`Spent ${spendLine(spend, r.stage.key)}`] : []),

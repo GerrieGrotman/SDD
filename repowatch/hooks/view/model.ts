@@ -98,13 +98,37 @@ export function classLabel(c: WorktreeClass): string {
 }
 
 /** Every worktree of every repo, the ones to act on first. Hiding the ones in use keeps those that will conflict. */
-export function worktreeRows(state: RwState | null, hideInUse: boolean): WtRow[] {
+export function worktreeRows(state: RwState | null, hideInUse: boolean, focus: string | null = null): WtRow[] {
   const rows: WtRow[] = []
   for (const r of Object.values(state?.repos ?? {})) for (const wt of r.worktrees ?? []) rows.push({ repo: r.name, wt })
+  const want = focus ? normPath(focus) : null
   return rows
-    .filter(x => !hideInUse || x.wt.class !== 'ok' || x.wt.forecast?.state === 'conflict')  // in use, but its merge will conflict
+    .filter(x => !want || normPath(x.wt.path) === want)
+    .filter(x => want || !hideInUse || x.wt.class !== 'ok' || x.wt.forecast?.state === 'conflict')  // in use, but its merge will conflict
     .sort((a, b) => CLASS_ORDER.indexOf(a.wt.class) - CLASS_ORDER.indexOf(b.wt.class)
       || a.repo.localeCompare(b.repo) || (a.wt.branch ?? '').localeCompare(b.wt.branch ?? ''))
+}
+
+/** A path as one comparable string: forward slashes, no trailing slash, Windows drive letters in lower case. */
+export function normPath(p: string): string {
+  const t = p.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+  return /^[A-Za-z]:/.test(t) ? t[0].toLowerCase() + t.slice(1) : t
+}
+
+/** The path in `/repowatch worktree <json|path>`; null = none given. Another plugin sends `{"path": "..."}`. */
+export function parseWorktreeArgs(text: string): string | null {
+  const t = text.trim()
+  let path = t
+  if (t.startsWith('{')) {
+    try {
+      const j = JSON.parse(t) as { path?: unknown }
+      path = typeof j.path === 'string' ? j.path : ''
+    } catch {
+      return null
+    }
+  }
+  path = path.trim()
+  return path && !path.startsWith('-') ? path : null
 }
 
 /** The rows a bulk clean-up may take: safe, and not an sdd work item's (sdd removes those). */

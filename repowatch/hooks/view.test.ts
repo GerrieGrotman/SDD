@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { RwGraph, RwPlan, RwRepo, RwResult, RwSummary, RwSyncFix, RwSyncState, RwWorktree, WorktreeClass } from '../types'
-import { parseHistoryArgs, commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory, actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
+import { parseHistoryArgs, commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory, actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows, normPath, parseWorktreeArgs } from './view/model'
 
 const repo = (name: string, flags: string[], extra: Partial<RwRepo> = {}): RwRepo => ({ name, path: `/ws/${name}`, scannedAt: 0, flags, ...extra })
 
@@ -59,6 +59,17 @@ test('worktrees list the ones to act on first, and can hide those in use', () =>
   expect(worktreeRows(state, false).map(r => `${r.repo}:${r.wt.class}`)).toEqual(['a:safe', 'b:safe', 'a:prune', 'a:review', 'a:keep', 'b:ok'])
   expect(worktreeRows(state, true).some(r => r.wt.class === 'ok')).toBe(false)
   expect(worktreeRows(null, false)).toEqual([])
+})
+
+test('a focused worktree is the only row, even one in use, and paths compare across slash styles', () => {
+  const state = { version: 1, generated: 0, repos: { a: { ...repo('a', []), worktrees: [wt('ok', { branch: 'busy' }), wt('safe', { branch: 'y' })] } } }
+  expect(worktreeRows(state, true, '/w/busy').map(r => r.wt.branch)).toEqual(['busy'])
+  expect(worktreeRows(state, true, '/w/busy/').map(r => r.wt.branch)).toEqual(['busy'])
+  expect(worktreeRows(state, false, '/w/none')).toEqual([])
+  expect(normPath('C:\\Work\\x\\')).toBe('c:/Work/x')
+  expect(parseWorktreeArgs(' {"path":"/w/a"} ')).toBe('/w/a')
+  expect(parseWorktreeArgs(' /w/a b ')).toBe('/w/a b')
+  expect([parseWorktreeArgs(''), parseWorktreeArgs('{bad'), parseWorktreeArgs('--all'), parseWorktreeArgs('{"path":3}')]).toEqual([null, null, null, null])
 })
 
 test('a row gets a button only when there is something safe to do, and sdd keeps its own', () => {

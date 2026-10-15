@@ -19,7 +19,8 @@ const SNAP: SddSnapshot = {
   root: '/ws', specRoot: '/ws/docs/spec', flows: { spec: SPEC }, derived: [], done: [],
   items: [{
     id: 92012, type: 'User Story', title: 'Author tags', state: 'Active', project: 'P', flow: 'spec', slug: 'author', created: '2026-10-01T08:50:08Z',
-    repos: {}, gates: { Claimed: '2026-10-01T08:50:08Z' },
+    folder: '/ws/docs/spec/92012-author', repos: { Repo: { path: 'wt/Repo', branch: 'dev/x/92012-author', base: 'main' } },
+    gates: { Claimed: '2026-10-01T08:50:08Z' },
     progress: { at: '2026-10-01T10:00:00Z', flow: 'spec', phase: 'Design', status: 'active' },
     history: [], met: ['Claimed'], url: 'https://dev.azure.com/o/P/_workitems/edit/92012',
   }, {
@@ -38,10 +39,10 @@ const AGENTS = [
 type Cost = { id: number; stage: string; usd: number; session: string; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 type Row = { usd: number; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 type Fake = { registered: string[]; usd: number | null; costs: Cost[]; costFails: boolean; toasts: string[]
-  finishFirst?: boolean; surfaces: string[]; sid: string; spend: Record<string, Row>; spendOther: Record<string, Row> }
+  ran: string[]; finishFirst?: boolean; surfaces: string[]; sid: string; spend: Record<string, Row>; spendOther: Record<string, Row> }
 
 function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents = AGENTS): Fake {
-  const f: Fake = { registered: [], usd: 1, costs: [], costFails: false, toasts: [], sid: 's1', surfaces: ['desktop'], spend: {}, spendOther: {} }
+  const f: Fake = { registered: [], usd: 1, costs: [], costFails: false, toasts: [], ran: [], sid: 's1', surfaces: ['desktop'], spend: {}, spendOther: {} }
   // env.py: `cost` records a turn (and the totals the next `view` reports); anything else is the view
   on('process.run', ((_$: unknown, e: { argv: string[] }) => {
     const done = (exitCode: number, stdout: string, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
@@ -68,7 +69,10 @@ function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents
   on('clock.every' as never, (() => ({ value: { id: 'tick' } })) as never)
   on('ui.open' as never, (() => ({ value: { isPlaced: true } })) as never)
   on('ui.toast' as never, ((_$: unknown, e: unknown) => { f.toasts.push(JSON.stringify(e)); return { value: undefined } }) as never)
-  on('command.run' as never, (() => ({})) as never)  // /sdd is the skill's: the plugin only watches it run
+  on('command.run' as never, ((_$: unknown, e: { command: string; args: string }) => {
+    if (e.command === 'repowatch') f.ran.push(e.args)
+    return {}
+  }) as never)  // /sdd is the skill's: the plugin only watches it run
   on('turn.start' as never, ((_$: unknown, e: { turnId: string }) => ({ turnId: e.turnId })) as never)           // the engine echoes both
   on('session.measure' as never, ((_$: unknown, e: { changed: string[] }) => ({ changed: e.changed })) as never)
   on('prompt.autocomplete' as never, (() => ({ suggestions: [] })) as never)  // the engine's own answer: no rows
@@ -189,6 +193,17 @@ test('desktop: the flow is one picture, a picker under it, and the detail of one
   await ui.select({ key: 'pick-stage', value: 'Review' })
   await until(async () => !!(await ui.find({ key: 'log:Review' })))
   expect(await ui.find({ key: 'log:Review' })).toBeTruthy()
+})
+
+test('desktop: the spanner on a worktree asks repowatch to show that one worktree', async ($: any, on: any) => {
+  const f = fake(on, [])
+  const ui = await mountPane($, f, 'desktop')
+  if (!ui) return
+  const btn = await ui.find({ key: 'open-Repo-repowatch' })
+  expect(btn.props.label).toBe('🔧')
+  await ui.press({ key: 'open-Repo-repowatch' })
+  await until(async () => f.ran.length > 0)
+  expect(f.ran).toEqual(['worktree ' + JSON.stringify({ path: '/ws/docs/spec/92012-author/wt/Repo' })])
 })
 
 // a resize re-draws the pane at its new width: the picture is laid out for it, not scaled from one size

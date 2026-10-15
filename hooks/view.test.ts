@@ -398,6 +398,8 @@ test('the flow picture: one node per stage on a rail, the picked stage outlined,
   expect(p.source.match(/<circle [^>]*r="10"/g)).toHaveLength(7)                     // a node per stage
   expect(p.source.match(/fill-opacity="0.13"/g)).toHaveLength(1)                       // one outline: the picked stage
   expect(p.source).toContain('>waiting on you</text>')
+  expect(p.source).not.toContain('>done</text>')                                       // colour says done and next: no word
+  expect(p.source).not.toContain('>next</text>')
   expect(p.source).toContain('>your turn</text>')                                      // the gate the item waits on
   expect(p.source).toContain('>Requirements agreed</text>')
   expect(p.source).toContain('$1.84')
