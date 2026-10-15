@@ -23,9 +23,10 @@ the user's view; this file is for working on the plugin itself.
 | `scripts/sddlib.py` | Shared helpers, `DEFAULTS` for `.claude/sdd.json`, config upgrade, the output style install |
 | `scripts/adowrite.py`, `proof.py`, `nextpick.py`, `metrics.py` | ADO writes; recorded test runs; next-item rules; metrics.json — logic as plain functions, tested without ADO |
 | `scripts/fakeado.py` | Offline ADO for tests and evals: on when `SDD_FAKE_ADO` names a JSON world file |
-| `hooks/` | `question_guard.py`, `agent_guard.py`, `edit_guard.py`, and `register.tsx` + `view/model.ts` (the sdd view, a mod) |
+| `hooks/` | `question_guard.py`, `agent_guard.py`, `edit_guard.py`, and `register.tsx` + `view/model.ts` (the sdd view, a mod), `worktrees.tsx` + `view/worktrees.ts` (the `/sdd-worktrees` page, hung off `register.tsx` because a plugin names one hooks module) |
 | `agents/` | `investigator` and `skeptic`, the read-only sub-agents |
 | `evals/` | `claude plugin eval` cases; `_fixtures/workspace.py` builds each case's workspace |
+| `repowatch/` | A second, standalone plugin (sdd depends on it, same marketplace): tracks many git repos and worktrees. `scripts/repowatch.py` does the git mechanics and writes `.claude/repowatch/state.json`; `hooks/register.tsx` draws the pane and status line from it, and runs a clean-up only after `plan`, a confirm and `apply` (which re-checks). Has its own `plugin.json` and version |
 | `assets/output-styles/ELI5.md` | The output style installed globally (kept outside `output-styles/` on purpose) |
 
 ## Checks to run
@@ -38,7 +39,10 @@ python scripts/check_evals.py        # needs PyYAML; checks the eval cases, runs
 python hooks/test_question_guard.py
 python hooks/test_agent_guard.py
 python hooks/test_edit_guard.py
-claude plugin test .                 # the view (hooks/view.test.ts)
+python repowatch/scripts/test_repowatch.py   # needs git; real repos in temp folders
+claude plugin test repowatch         # also mounts and presses the pane (hooks/pane.test.ts)
+claude plugin validate repowatch
+claude plugin test .                 # the view and the Worktrees page; it also finds repowatch's tests, whose pane tests stand down (the plugin under test is sdd)
 claude plugin validate .             # the author warning is expected
 ```
 
@@ -63,4 +67,7 @@ to trust the plugin directory, and each case is a paid agent run. A full TypeScr
   `UPGRADE_KEYS` when a person should find them in the file to tune.
 - **Skill text is for a tired reader**: short sentences, active voice, exact paths and commands.
   A skill's `SKILL.md` stays an outline; stage detail goes in the stage's own file.
+- **repowatch deletes nothing on a remote except a stale `sync/<x>-<y>` branch.** `remote_delete_refusal` in
+  `repowatch/scripts/repowatch.py` refuses every other deleting `git push` (and `--mirror`, `--prune`), and
+  `test_remote_deletes` pins it. A new action must not route around `git()` for pushes.
 - **The view never writes**: `register.tsx` reads `env.py view` and posts the user's messages.

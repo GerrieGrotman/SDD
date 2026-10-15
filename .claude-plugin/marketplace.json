@@ -1,6 +1,8 @@
 {
   "name": "sdd",
-  "owner": { "name": "ruadrauflessa" },
+  "owner": {
+    "name": "ruadrauflessa"
+  },
   "metadata": {
     "description": "Spec-driven development on Azure DevOps work items, as one Claude Code plugin."
   },
@@ -9,6 +11,11 @@
       "name": "sdd",
       "source": "./",
       "description": "Spec and bug flows on ADO work items, the ADO spec mirror, impact analysis, visual pages, the question guard and the sdd view pane."
+    },
+    {
+      "name": "repowatch",
+      "source": "./repowatch",
+      "description": "Track many git repos and their worktrees: ahead/behind, dirty files, stale worktrees, in a pane and the status line."
     }
   ]
 }

@@ -103,6 +103,28 @@ export type SddAsk = {
   isOpen: boolean
 }
 
+/** What the Worktrees page reads of repowatch's .claude/repowatch/state.json (the fields it uses). */
+export type SddLiveWorktree = {
+  path: string
+  branch: string | null
+  dirty?: number
+  ahead?: number
+  behind?: number
+  /** Epoch seconds. */
+  lastCommit?: number
+  class: 'safe' | 'review' | 'keep' | 'ok' | 'prune'
+  reasons: string[]
+  unique?: number
+  /** The base it is measured against, and how far apart they are. */
+  baseRef?: string
+  behindBase?: number
+  aheadBase?: number
+  /** Would merging the base in conflict? */
+  forecast?: { state: 'clean' | 'conflict' | 'unavailable' | 'error'; base: string; files?: string[] }
+}
+
+export type SddLiveState = { generated: number; repos: Record<string, { worktrees?: SddLiveWorktree[] }> }
+
 declare module 'claude-code' {
   interface PluginState {
     sdd: {
@@ -125,6 +147,12 @@ declare module 'claude-code' {
       asked: SddAsk | null
       /** The options picked in the view so far, per question text. */
       picks: Record<string, string[]>
+      /** The Worktrees page: repowatch's scan of the worktrees, or null while unread. */
+      wtLive: SddLiveState | null
+      /** Why the Worktrees page cannot show the live facts, or null. */
+      wtError: string | null
+      /** First item of the Worktrees page shown. */
+      wtOffset: number
     }
   }
 }
