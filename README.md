@@ -53,10 +53,12 @@ The sdd view opens by itself the first time a chat takes up a work item. In it:
   is in progress, and turns amber when it waits on you;
 - the review stage (spec: Review, bug: Phase 15) has **Approved**, **Merged** and **Rejected**;
 - a worktree opens in File Explorer or VS Code from its box. The spanner (🔧) opens it in repowatch, on that one worktree (needs repowatch 0.1.1 or newer; older ones just open their normal pane).
-- the pane draws the flow as one vertical picture: a node per stage on a rail, with its state, cost bar,
-  last activity, latest note and gates on its row. It is laid out for the width the pane has, so it follows a
-  resize. Under it a **stage picker** (◀ a dropdown ▶, keys `p` and `n`) chooses the stage whose detail shows
-  below: cost split, Stage log, each gate's story, documents, Approve and feedback. One stage's detail shows at a time;
+- the pane lists the flow's stages as one vertical rail: a small picture of the node and the rail for each stage, joined
+  into one line, and the stage's name as a button. Each row has the same height: name, its state in a word (none for done
+  or next: the colour says it), and the cost. A pane wider than about 60 columns adds a cost bar and the last activity.
+  Press a stage to open its detail under its own row: latest note, cost split, Stage log, each gate's story, documents,
+  Approve and feedback. One stage is open at a time; press the open one to close it. The pane opens on the stage the item
+  is at, and follows the item when it moves on;
 - the view is for the Claude Desktop app. In a terminal, the VS Code extension or a phone it does nothing;
 - a **Work item** dropdown switches the pane to another open item, and after `/sdd ` the prompt box
   offers your open items by id or a word of the title;

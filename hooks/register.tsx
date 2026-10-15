@@ -7,7 +7,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, flowPicture, flowTag, MARK_WORD, stepStage, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, costBar, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
 
@@ -679,7 +679,10 @@ export const register: Register = on => {
     const waiting = first.progress?.status === 'waiting'
     return (
       <Box flexDirection="row" gap={1} width={e.props.bodyColumns}>
-        <Text bold color={tag.open ? C.now : C.work}>{`[${tag.brief}]`}</Text>
+        {/* the tag keeps one line and its full width: the spaces in it do not break */}
+        <Box key="band-tag" flexShrink={0}>
+          <Text bold wrap="truncate-end" color={tag.open ? C.now : C.work}>{`[${tag.brief}]`.replace(/ /g, '\u00a0')}</Text>
+        </Box>
         {/* the long text gives way to the button: it may shrink to nothing and is cut, never pushing the button off the edge */}
         <Box key="band-text" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
           {waiting
@@ -794,16 +797,17 @@ export const register: Register = on => {
     // a pick is kept as 'stage:KEY@AT', AT being the stage the item was at: once the item moves on, the pick lapses
     const [pickedKey, pickedAt] = open?.startsWith('stage:') ? open.slice('stage:'.length).split('@') : [null, null]
     const atKey = defaultStage(rows)
-    const shownKey = pickedAt === atKey && rows.some(r => r.stage.key === pickedKey) ? pickedKey : atKey
+    // 'stage:@AT' is a pick that closed the stage: none is open
+    const shownKey = pickedAt !== atKey ? atKey : pickedKey === '' ? null : rows.some(r => r.stage.key === pickedKey) ? pickedKey : atKey
     const agents = agentRows(await listAgents($))
     const spend = item.spend ?? {}
     agentsBusy = agents.some(a => a.isLive)
     const links = [item.url ? `[ADO ${item.id}](${item.url})` : `ADO ${item.id}`,
       ...Object.values(item.repos ?? {}).filter(r => r.pr).map(r => `[PR ${r.pr!.id}](${r.pr!.url})`)].join('  |  ')
-    // the picture's stage picker: show that stage's detail, with nothing of the last one left open
+    // a press on a stage opens its detail under it, with nothing of the last one left open; on the open stage it closes it
     const pickStage = (key: string | null) => void (async () => {
       if (!key) return
-      await $.state.set(stage, `stage:${key}@${defaultStage(rows)}`)
+      await $.state.set(stage, `stage:${key === shownKey ? '' : key}@${defaultStage(rows)}`)
       await $.state.set(gate, null)
       await $.state.set(doc, null)
       await $.state.set(feedback, null)
@@ -925,39 +929,54 @@ export const register: Register = on => {
           </Box>
         )}
 
-        {flow && (() => {
-          // the picture is the stage list; the picker under it chooses the stage whose detail shows below, one at a time
-          const pic = flowPicture({ flow, item, rows, derived: s.derived, colors: C, pending: pend, spend, selected: shownKey,
-            width: Math.round((e.props.bodyColumns ?? 100) * PX_PER_COLUMN) })
-          const row = rows.find(r => r.stage.key === shownKey)
-          const prevKey = stepStage(rows, shownKey, -1)
-          const nextKey = stepStage(rows, shownKey, 1)
-          const labelOf = (k: string | null) => rows.find(r => r.stage.key === k)?.stage.label ?? ''
-          return (
-            <Box flexDirection="column" gap={1}>
-              <Svg source={pic.source} alt={pic.alt} width={pic.width} height={pic.height} isInteractive />
-              <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
-                <Button key="stage-prev" hotkey="p" plain dimColor={prevKey === shownKey} label={`◀ ${labelOf(prevKey)}`} onPress={() => pickStage(prevKey)} />
-                {Select && (
-                  <Select key="pick-stage" label="Stage" value={shownKey ?? undefined} onSelect={pickStage}
-                    options={rows.map(r => ({ value: r.stage.key, label: `${stageName(r.stage)}${MARK_WORD[r.mark] ? ` · ${MARK_WORD[r.mark]}` : ''}` }))} />
-                )}
-                <Button key="stage-next" hotkey="n" plain dimColor={nextKey === shownKey} label={`${labelOf(nextKey)} ▶`} onPress={() => pickStage(nextKey)} />
-              </Box>
-              {row && (
-                <Box flexDirection="column">
-                  <Box flexDirection="row" gap={1} width="100%">
-                    <Text color={markColor(row.mark)}>{GLYPH[row.mark]}</Text>
-                    <Text bold wrap="truncate-end">{stageName(row.stage)}</Text>
-                    {MARK_WORD[row.mark] && <Text color={markColor(row.mark)}>{MARK_WORD[row.mark]}</Text>}
+        {flow && (
+          // the stage list: a rail picture and a button for each stage, joined into one rail; the picked stage opens under its own row
+          <Box flexDirection="column">
+            {rows.map((r, i) => {
+              const key = r.stage.key
+              const isOpen = key === shownKey
+              const rail = railSlice({ mark: r.mark, prevMark: i > 0 ? rows[i - 1].mark : null, hasNext: i < rows.length - 1, conditional: r.stage.conditional, colors: C })
+              const word = stageWord(flow, item, r)
+              const sum = stageSummary(flow, item, key)
+              const sp = spend[key]
+              const money = sp && (sp.usd > 0 ? moneyText(sp.usd) : spendLine(spend, key) ? 'tokens' : '')
+              const at = shortStamp(sum.lastAt)
+              const wide = (e.props.bodyColumns ?? 100) * PX_PER_COLUMN >= 500
+              const tint = /^#[0-9a-f]{6}$/i.test(C.work) ? `${C.work}22` : undefined
+              const maxUsd = Math.max(0, ...rows.map(x => spend[x.stage.key]?.usd ?? 0))
+              return (
+                <Box key={`stagebox-${key}`} flexDirection="column">
+                  <Box key={`stagerow-${key}`} flexDirection="row" gap={1} alignItems="center" backgroundColor={isOpen ? tint : undefined}>
+                    <Svg source={rail.source} alt={rail.alt} width={rail.width} height={rail.height} />
+                    <Box flexShrink={1} minWidth={0}>
+                      <Button key={`row:${key}`} dimColor={r.mark === 'later'} label={stageName(r.stage)} onPress={() => pickStage(key)} />
+                    </Box>
+                    {word.text && (
+                      <Box flexShrink={1} minWidth={0}>
+                        <Text bold={r.mark === 'waiting'} wrap="truncate-end"
+                          color={word.warn || r.mark === 'waiting' ? C.now : r.mark === 'missed' || r.mark === 'blocked' ? C.revoked : undefined}
+                          dimColor={!(word.warn || ['waiting', 'missed', 'blocked'].includes(r.mark))}>{word.text}</Text>
+                      </Box>
+                    )}
+                    <Box flexGrow={1} />
+                    {wide && sp && sp.usd > 0 && (() => {
+                      const bar = costBar({ usd: sp.usd, max: maxUsd, mark: r.mark, colors: C })
+                      return <Svg source={bar.source} alt={bar.alt} width={bar.width} height={bar.height} />
+                    })()}
+                    {money && <Text dimColor>{money}</Text>}
+                    {wide && at && <Text dimColor>{at}</Text>}
                   </Box>
-                  {stageSummary(flow, item, row.stage.key).note && <Text dimColor wrap="wrap">{stageSummary(flow, item, row.stage.key).note}</Text>}
-                  {drawStageDetail(row)}
+                  {isOpen && (
+                    <Box key={`stagedetail-${key}`} flexDirection="column" marginLeft={2} paddingLeft={2} borderStyle="quote" borderColor={markColor(r.mark) ?? C.line}>
+                      {sum.note && <Text dimColor wrap="wrap">{sum.note}</Text>}
+                      {drawStageDetail(r)}
+                    </Box>
+                  )}
                 </Box>
-              )}
-            </Box>
-          )
-        })()}
+              )
+            })}
+          </Box>
+        )}
 
         {Object.keys(item.repos ?? {}).length > 0 && (
           <Box flexDirection="column">

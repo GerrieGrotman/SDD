@@ -373,137 +373,56 @@ export function shortStamp(at: string | undefined): string {
   return `${two(d.getMonth() + 1)}/${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`
 }
 
-const PIC = { min: 300, max: 960, pad: 12, rail: 26, text: 54, chipH: 20 }
+/** A rail picture is this wide and this high: the rows are as high as the slice, so the slices join into one rail. */
+export const RAIL = { w: 40, h: 46, mid: 23, x: 20 }
 const PIC_FONT = '-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
-// the picture draws on a panel of its own, so it reads on a light and a dark theme
-const PIC_INK = { bg: '#1d2126', edge: '#2c333a', fg: '#e6e9ec', dim: '#8a949e', pick: '#4a7fc4' }
+const PIC_BG = '#1d2126'
 
 function xml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-/** The width a text takes, near enough to place things: an average character is a bit over half the font size. */
-function textPx(text: string, size: number): number {
-  return Math.ceil(text.length * size * 0.56)
+const stageTone = (m: Mark, colors: SddColors): string => ({ done: colors.done, skipped: colors.dim, missed: colors.revoked, active: colors.work, waiting: colors.now,
+  blocked: colors.revoked, abandoned: colors.dim, next: colors.work, later: colors.line })[m]
+
+/** A rail line is solid green behind the work, dashed ahead of it. */
+const behind = (m: Mark): boolean => m === 'done' || m === 'skipped'
+
+/** One stage's piece of the rail: the node, and the line to the stage above and below. Rows as high as the slice join up. */
+export function railSlice(input: { mark: Mark; prevMark: Mark | null; hasNext: boolean; conditional?: boolean; colors: SddColors }): FlowPicture {
+  const { mark, prevMark, hasNext, colors } = input
+  const col = stageTone(mark, colors)
+  const quiet = mark === 'later' || mark === 'next'
+  const line = (y1: number, y2: number, done: boolean) =>
+    `<line x1="${RAIL.x}" y1="${y1}" x2="${RAIL.x}" y2="${y2}" stroke="${done ? colors.done : colors.line}" stroke-width="3"${done ? '' : ' stroke-dasharray="4 4"'}/>`
+  const parts = [
+    prevMark ? line(0, RAIL.mid, behind(prevMark)) : '',
+    hasNext ? line(RAIL.mid, RAIL.h, behind(mark)) : '',
+    mark === 'waiting' || mark === 'active' || mark === 'blocked' ? `<circle cx="${RAIL.x}" cy="${RAIL.mid}" r="14" fill="none" stroke="${col}" stroke-width="2" opacity="0.5"/>` : '',
+    `<circle cx="${RAIL.x}" cy="${RAIL.mid}" r="10" fill="${quiet ? PIC_BG : col}" stroke="${col}" stroke-width="2"${input.conditional || mark === 'skipped' || mark === 'missed' ? ' stroke-dasharray="3 2"' : ''}/>`,
+    `<text x="${RAIL.x}" y="${RAIL.mid + 4}" text-anchor="middle" font-family="${PIC_FONT}" font-size="11" font-weight="700" fill="${quiet ? col : '#ffffff'}">${xml(GLYPH[mark])}</text>`,
+  ]
+  return { source: `<svg xmlns="http://www.w3.org/2000/svg" width="${RAIL.w}" height="${RAIL.h}" viewBox="0 0 ${RAIL.w} ${RAIL.h}">${parts.join('')}</svg>`,
+    alt: MARK_WORD[mark] || 'not reached yet', width: RAIL.w, height: RAIL.h }
 }
 
-/** The width of semi-bold text: wider than the regular average. */
-function boldPx(text: string, size: number): number {
-  return Math.ceil(text.length * size * 0.64)
+/** The small bar that shows what a stage cost against the dearest stage. */
+export function costBar(input: { usd: number; max: number; mark: Mark; colors: SddColors }): FlowPicture {
+  const { usd, max, mark, colors } = input
+  const bw = max > 0 ? Math.max(3, Math.round((usd / max) * 64)) : 0
+  return { source: `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="6" viewBox="0 0 64 6"><rect width="64" height="6" rx="3" fill="${colors.dim}" opacity="0.25"/>`
+    + `<rect width="${bw}" height="6" rx="3" fill="${stageTone(mark, colors)}"/></svg>`, alt: moneyText(usd), width: 64, height: 6 }
 }
 
-/** `text` cut with an ellipsis to fit `max` pixels. */
-function fitText(text: string, max: number, size: number): string {
-  if (textPx(text, size) <= max) return text
-  const keep = Math.max(1, Math.floor(max / (size * 0.56)) - 1)
-  return `${text.slice(0, keep).trimEnd()}…`
+/** The word after a stage's name: its state, and the open-question count. Done and next say nothing: the colour does. */
+export function stageWord(flow: SddFlow, item: SddItem, r: StageRow): { text: string; mark: Mark; warn: boolean } {
+  const badge = questionBadge(flow, item, r.stage.key)
+  return { text: [r.mark === 'done' || r.mark === 'next' ? '' : MARK_WORD[r.mark], badge?.text].filter(Boolean).join(' · '), mark: r.mark, warn: !!badge?.warn }
 }
 
-export function flowPicture(input: { flow: SddFlow; item: SddItem; rows: StageRow[]; derived: string[]; colors: SddColors;
-  pending: { gate: string; key: string } | null; spend: Spend; selected: string | null; width: number }): FlowPicture {
-  const { flow, item, rows, derived, colors, pending, spend, selected } = input
-  const W = Math.max(PIC.min, Math.min(PIC.max, Math.round(Number.isFinite(input.width) ? input.width : PIC.min)))
-  const right = W - PIC.pad
-  const wide = W >= 500
-  const mid = W >= 380
-  const tone = (m: Mark): string => ({ done: colors.done, skipped: colors.dim, missed: colors.revoked, active: colors.work, waiting: colors.now,
-    blocked: colors.revoked, abandoned: colors.dim, next: colors.work, later: colors.line })[m]
-  const maxSpend = Math.max(0, ...rows.map(r => spend[r.stage.key]?.usd ?? 0))
-
-  // lay the rows out first: each row's height depends on how its text and gates wrap at this width
-  type Laid = { r: StageRow; top: number; h: number; chips: { x: number; row: number; chip: GateChip; w: number }[]; chipRows: number; note: string; wordInline: boolean }
-  const laid: Laid[] = []
-  let y = PIC.pad
-  for (const r of rows) {
-    const badge = questionBadge(flow, item, r.stage.key)
-    const word = [r.mark === 'done' || r.mark === 'next' ? '' : MARK_WORD[r.mark], badge?.text].filter(Boolean).join(' · ')
-    const name = r.stage.key === r.stage.label ? r.stage.label : `${r.stage.key.replace('Phase ', '')}  ${r.stage.label}`
-    const rightBlock = (wide ? 70 + 8 : 0) + (mid ? 46 + 8 : 46) + (wide || mid ? 74 : 0)
-    const wordInline = !word || boldPx(name, 14) + 12 + textPx(word, 12) < right - PIC.text - rightBlock
-    const sum = stageSummary(flow, item, r.stage.key)
-    const rawNote = sum.note || (sum.count ? `${sum.count} log ${sum.count === 1 ? 'entry' : 'entries'}` : '')
-    const lead = wordInline || !word ? '' : rawNote ? `${word} · ` : word
-    const note = fitText(`${lead}${rawNote}`, right - PIC.text, 12)
-    const chips: Laid['chips'] = []
-    let cx = PIC.text
-    let crow = 0
-    for (const chip of gateChips(item, r.stage, derived, pending)) {
-      const label = `${chip.gate}${chip.state === 'pending' ? '  your turn' : chip.state === 'revoked' ? '  revoked' : ''}`
-      const w = 18 + textPx(label, 12) + 14
-      if (cx + w > right && cx > PIC.text) { cx = PIC.text; crow++ }
-      chips.push({ x: cx, row: crow, chip, w })
-      cx += w
-    }
-    const chipRows = chips.length ? crow + 1 : 0
-    const h = 12 + 24 + (note ? 18 : 0) + chipRows * PIC.chipH + 10
-    laid.push({ r, top: y, h, chips, chipRows, note, wordInline })
-    y += h
-  }
-  const H = y + PIC.pad
-
-  const parts: string[] = []
-  parts.push(`<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="10" fill="${PIC_INK.bg}" stroke="${PIC_INK.edge}"/>`)
-  laid.forEach((l, i) => {
-    const cy = l.top + 12 + 12
-    const next = laid[i + 1]
-    if (next) {
-      const ahead = l.r.mark !== 'done' && l.r.mark !== 'skipped'
-      parts.push(`<line x1="${PIC.rail}" y1="${cy + 11}" x2="${PIC.rail}" y2="${next.top + 24 - 11}" stroke="${ahead ? colors.line : colors.done}" stroke-width="3"${ahead ? ' stroke-dasharray="4 4"' : ''}/>`)
-    }
-  })
-  laid.forEach(l => {
-    const { r } = l
-    const col = tone(r.mark)
-    const cy = l.top + 24
-    const isPick = r.stage.key === selected
-    const quiet = r.mark === 'later' || r.mark === 'next'
-    const sp = spend[r.stage.key]
-    const sum = stageSummary(flow, item, r.stage.key)
-    const badge = questionBadge(flow, item, r.stage.key)
-    const word = [r.mark === 'done' || r.mark === 'next' ? '' : MARK_WORD[r.mark], badge?.text].filter(Boolean).join(' · ')
-    const tip = [`${r.stage.key === r.stage.label ? r.stage.label : `${r.stage.key} · ${r.stage.label}`}: ${word || 'not reached yet'}`,
-      ...l.chips.map(c => `${c.chip.state === 'passed' ? 'Gate passed' : c.chip.state === 'pending' ? 'Waiting on' : c.chip.state === 'revoked' ? 'Gate revoked' : 'Gate open'}: ${c.chip.gate}`),
-      ...(spendLine(spend, r.stage.key) ? [`Spent ${spendLine(spend, r.stage.key)}`] : []),
-      ...(sum.lastAt ? [`Last activity ${shortStamp(sum.lastAt)}`] : [])].join('\n')
-    parts.push(`<g><title>${xml(tip)}</title>`)
-    if (isPick) parts.push(`<rect x="${PIC.pad / 2}" y="${l.top}" width="${W - PIC.pad}" height="${l.h - 4}" rx="8" fill="${PIC_INK.pick}" fill-opacity="0.13" stroke="${PIC_INK.pick}" stroke-width="1.5"/>`)
-    if (r.mark === 'waiting' || r.mark === 'active' || r.mark === 'blocked') parts.push(`<circle cx="${PIC.rail}" cy="${cy}" r="14" fill="none" stroke="${col}" stroke-width="2" opacity="0.5"/>`)
-    parts.push(`<circle cx="${PIC.rail}" cy="${cy}" r="10" fill="${quiet ? PIC_INK.bg : col}" stroke="${col}" stroke-width="2"${r.stage.conditional || r.mark === 'skipped' || r.mark === 'missed' ? ' stroke-dasharray="3 2"' : ''}/>`)
-    parts.push(`<text x="${PIC.rail}" y="${cy + 4}" text-anchor="middle" font-family="${PIC_FONT}" font-size="11" font-weight="700" fill="${quiet ? col : '#ffffff'}">${xml(GLYPH[r.mark])}</text>`)
-    const name = r.stage.key === r.stage.label ? r.stage.label : `${r.stage.key.replace('Phase ', '')}  ${r.stage.label}`
-    const nameFit = fitText(name, right - PIC.text - (wide ? 200 : mid ? 120 : 60), 14 * 1.14)
-    // the state word follows the name inside the same text, so the gap is the same whatever the font measures
-    const wordFill = badge?.warn || r.mark === 'waiting' ? colors.now : r.mark === 'next' ? colors.work : r.mark === 'missed' || r.mark === 'blocked' ? colors.revoked : PIC_INK.dim
-    const wordSpan = word && l.wordInline ? `<tspan dx="10" font-size="12" font-weight="${r.mark === 'waiting' ? 700 : 400}" fill="${wordFill}">${xml(word)}</tspan>` : ''
-    parts.push(`<text x="${PIC.text}" y="${cy + 5}" font-family="${PIC_FONT}" font-size="14" font-weight="600" fill="${r.mark === 'later' ? PIC_INK.dim : PIC_INK.fg}">${xml(nameFit)}${wordSpan}</text>`)
-    // the right of the first line: cost bar, amount, last activity; less of it as the room shrinks
-    let rx = right
-    const at = shortStamp(sum.lastAt)
-    if (at && wide) { parts.push(`<text x="${rx}" y="${cy + 4}" text-anchor="end" font-family="${PIC_FONT}" font-size="11" fill="${PIC_INK.dim}">${xml(at)}</text>`); rx -= 74 }
-    if (sp && (sp.usd > 0 || spendLine(spend, r.stage.key))) {
-      const money = sp.usd > 0 ? moneyText(sp.usd) : 'tokens'
-      parts.push(`<text x="${rx}" y="${cy + 4}" text-anchor="end" font-family="${PIC_FONT}" font-size="12" fill="${PIC_INK.dim}">${xml(money)}</text>`)
-      rx -= 46 + 8
-      if (wide && maxSpend > 0 && sp.usd > 0) {
-        const bw = Math.max(3, Math.round((sp.usd / maxSpend) * 64))
-        parts.push(`<rect x="${rx - 64}" y="${cy - 3}" width="64" height="6" rx="3" fill="${PIC_INK.dim}" opacity="0.25"/><rect x="${rx - 64}" y="${cy - 3}" width="${bw}" height="6" rx="3" fill="${col}"/>`)
-      }
-    }
-    if (l.note) parts.push(`<text x="${PIC.text}" y="${cy + 24}" font-family="${PIC_FONT}" font-size="12" fill="${PIC_INK.dim}">${xml(l.note)}</text>`)
-    const chipTop = cy + (l.note ? 24 : 6) + 8
-    for (const c of l.chips) {
-      const gy = chipTop + c.row * PIC.chipH + 6
-      const gc = c.chip.state === 'passed' ? colors.done : c.chip.state === 'pending' ? colors.now : c.chip.state === 'revoked' ? colors.revoked : PIC_INK.dim
-      parts.push(`<path d="M${c.x + 6},${gy - 6} l6,6 l-6,6 l-6,-6z" fill="${c.chip.state === 'passed' ? gc : 'none'}" stroke="${gc}" stroke-width="1.6"/>`)
-      const turn = c.chip.state === 'pending' ? 'your turn' : c.chip.state === 'revoked' ? 'revoked' : ''
-      const after = turn ? `<tspan dx="8" font-size="11" font-weight="700" fill="${gc}">${turn}</tspan>` : ''
-      parts.push(`<text x="${c.x + 18}" y="${gy + 4}" font-family="${PIC_FONT}" font-size="12" fill="${c.chip.state === 'open' ? PIC_INK.dim : PIC_INK.fg}">${xml(c.chip.gate)}${after}</text>`)
-    }
-    parts.push('</g>')
-  })
-  const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join('')}</svg>`
-  const alt = `${flow.label}, ${rows.length} stages, top to bottom: ` + rows.map(r => `${r.stage.label}${MARK_WORD[r.mark] ? ` (${MARK_WORD[r.mark]})` : ''}`).join(', ') + '.'
-  return { source, alt, width: W, height: H }
+/** The tooltip-less summary of the flow, for a screen reader: each stage and its state. */
+export function flowAlt(flow: SddFlow, rows: StageRow[]): string {
+  return `${flow.label}, ${rows.length} stages, top to bottom: ` + rows.map(r => `${r.stage.label}${MARK_WORD[r.mark] ? ` (${MARK_WORD[r.mark]})` : ''}`).join(', ') + '.'
 }
 
 // ---------------------------------------------------------------- the agents

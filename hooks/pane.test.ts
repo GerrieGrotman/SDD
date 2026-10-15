@@ -165,36 +165,30 @@ test('no Desktop app attached: the mod registers nothing and records nothing, un
   expect(f.registered).toContain('sdd-worktrees')
 })
 
-test('desktop: the flow is one picture, a picker under it, and the detail of one stage at a time', async ($: any, on: any) => {
+test('desktop: each stage is a button with a rail slice, and the picked stage opens its detail under its own row', async ($: any, on: any) => {
   const ui = await mountPane($, fake(on, []), 'desktop')
   if (!ui) return
-  const svg = await ui.find({ type: 'Svg' })
-  expect(svg).toBeTruthy()
-  expect(svg.props.source).toContain('viewBox')
-  expect(svg.props.width).toBe(800)                                                    // the size is set in pixels, not left to the engine
-  expect(svg.props.height).toBeGreaterThan(100)
-  for (const name of ['Specify', 'Design', 'Review']) expect(svg.props.source).toMatch(new RegExp(`>${name}(</text>|<tspan)`))
-  expect(await ui.find({ key: 'stage:Specify' })).toBe(undefined)                      // no second list of stages under the picture
-  expect(await ui.find({ key: 'log:Design' })).toBeTruthy()                            // the pane opens on the stage the item is at
+  const slices = (await ui.findAll({ type: 'Svg' })).filter((x: any) => x.props.width === 40)
+  expect(slices).toHaveLength(3)                                                       // a rail slice for each stage, all of one size
+  expect(slices.every((x: any) => x.props.height === 46 && x.props.source.includes('viewBox="0 0 40 46"'))).toBe(true)
+  for (const name of ['Specify', 'Design', 'Review']) expect((await ui.find({ key: `row:${name}` })).props.label).toBe(name)
+  expect(await ui.find({ key: 'pick-stage' })).toBe(undefined)                         // no picker row: the stages are the picker
+  expect(await ui.find({ key: 'stage-next' })).toBe(undefined)
+  expect(await ui.find({ key: 'stagedetail-Design' })).toBeTruthy()                    // the pane opens on the stage the item is at
+  expect(await ui.find({ key: 'log:Design' })).toBeTruthy()
   expect(await ui.find({ key: 'log:Specify' })).toBe(undefined)                        // and shows only that one
-  expect((await ui.find({ key: 'stage-prev' })).props.hotkey).toBe('p')
-  expect((await ui.find({ key: 'stage-next' })).props.hotkey).toBe('n')
-  expect((await ui.find({ key: 'pick-stage' })).props.value).toBe('Design')
-  const before = svg.props.source
-  await ui.press({ key: 'stage-next' })
+  await ui.press({ key: 'row:Review' })
   await until(async () => !!(await ui.find({ key: 'log:Review' })))
   expect(await ui.find({ key: 'log:Review' })).toBeTruthy()
   expect(await ui.find({ key: 'log:Design' })).toBe(undefined)                         // one stage's detail at a time
-  expect((await ui.find({ type: 'Svg' })).props.source).not.toBe(before)               // the picture outlines the new pick
-  await ui.press({ key: 'stage-next' })                                                // held at the last stage
-  expect((await ui.find({ key: 'pick-stage' })).props.value).toBe('Review')
-  await ui.press({ key: 'stage-prev' })
-  await ui.press({ key: 'stage-prev' })
+  expect(await ui.find({ key: 'stagedetail-Review' })).toBeTruthy()
+  await ui.press({ key: 'row:Review' })                                                // a press on the open stage closes it
+  await until(async () => !(await ui.find({ key: 'log:Review' })))
+  expect(await ui.find({ key: 'log:Review' })).toBe(undefined)
+  expect(await ui.find({ key: 'log:Design' })).toBe(undefined)                         // none is open
+  await ui.press({ key: 'row:Specify' })
   await until(async () => !!(await ui.find({ key: 'log:Specify' })))
   expect(await ui.find({ key: 'log:Specify' })).toBeTruthy()
-  await ui.select({ key: 'pick-stage', value: 'Review' })
-  await until(async () => !!(await ui.find({ key: 'log:Review' })))
-  expect(await ui.find({ key: 'log:Review' })).toBeTruthy()
 })
 
 test('desktop: the spanner on a worktree asks repowatch to show that one worktree', async ($: any, on: any) => {
@@ -214,7 +208,7 @@ test('desktop: a picked stage lapses when the item moves to another stage, and t
   const item = (SNAP as any).items[0]
   const was = item.progress
   try {
-    await ui.select({ key: 'pick-stage', value: 'Specify' })
+    await ui.press({ key: 'row:Specify' })
     await until(async () => !!(await ui.find({ key: 'log:Specify' })))
     expect(await ui.find({ key: 'log:Specify' })).toBeTruthy()
     item.progress = { ...was, phase: 'Review' }                                          // the flow moves on
@@ -222,9 +216,9 @@ test('desktop: a picked stage lapses when the item moves to another stage, and t
     await until(async () => !!(await ui.find({ key: 'log:Review' })))
     expect(await ui.find({ key: 'log:Review' })).toBeTruthy()                            // the detail followed it
     expect(await ui.find({ key: 'log:Specify' })).toBe(undefined)
-    expect((await ui.find({ key: 'pick-stage' })).props.value).toBe('Review')
+    expect(await ui.find({ key: 'stagedetail-Review' })).toBeTruthy()
     // a pick made now stays while the item stays
-    await ui.select({ key: 'pick-stage', value: 'Design' })
+    await ui.press({ key: 'row:Design' })
     await until(async () => !!(await ui.find({ key: 'log:Design' })))
     await ui.press({ key: 'refresh' })
     await new Promise(r => setTimeout(r, 50))
@@ -234,14 +228,17 @@ test('desktop: a picked stage lapses when the item moves to another stage, and t
   }
 })
 
-// a resize re-draws the pane at its new width: the picture is laid out for it, not scaled from one size
-for (const [cols, width] of [[20, 300], [50, 400], [100, 800], [140, 960]] as const) {
-  test(`desktop: the picture is laid out for the pane's width, ${cols} columns -> ${width} px`, async ($: any, on: any) => {
-    const ui = await mountPane($, fake(on, []), 'desktop', cols)
+// a resize re-draws the pane at its new width: the rail slices stay one size, and the wide pane adds the cost bars and the times
+for (const [cols, bars] of [[20, 0], [50, 0], [61, 0], [63, 3], [100, 3], [140, 3]] as const) {
+  test(`desktop: at ${cols} columns the stage rows have ${bars ? 'cost bars' : 'no cost bars'}`, async ($: any, on: any) => {
+    const f = fake(on, [])
+    f.spend = { Specify: { usd: 0.5, turns: 1, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, Design: { usd: 1, turns: 2, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      Review: { usd: 0.25, turns: 1, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
+    const ui = await mountPane($, f, 'desktop', cols)
     if (!ui) return
-    const source: string = (await ui.find({ type: 'Svg' })).props.source
-    expect(source).toContain(`width="${width}" height=`)
-    expect(source).toContain(`viewBox="0 0 ${width} `)
+    const svgs = await ui.findAll({ type: 'Svg' })
+    expect(svgs.filter((x: any) => x.props.width === 40)).toHaveLength(3)
+    expect(svgs.filter((x: any) => x.props.width === 64)).toHaveLength(bars)
   })
 }
 
@@ -355,9 +352,8 @@ for (const surface of ['desktop'] as const) {
     for (let i = 0; i < 100 && !(await texts(ui)).includes('Spent $2.50'); i++) await new Promise(r => setTimeout(r, 10))
     const t = await texts(ui)
     expect(t).toContain('Spent $2.50 on this item')
-    const rowsText: string = surface === 'desktop' ? (await ui.find({ type: 'Svg' })).props.source : t   // the stage rows: in the picture, or on the cards
-    expect(rowsText).toContain('$2.50')                  // the Design row
-    expect(rowsText).toContain(surface === 'desktop' ? '&lt;$0.01' : '<$0.01')   // the Specify row: a tiny cost still shows
+    expect(t).toContain('$2.50')                         // the Design row
+    expect(t).toContain('<$0.01')                        // the Specify row: a tiny cost still shows
     expect(t).toContain('Context 12%')
     expect(t).not.toContain('$50')
   })
@@ -441,6 +437,13 @@ test('the pane shows the token split for the item, and for the stage it is on', 
 
 test('the band above the prompt: a long text shrinks and is cut, and the button keeps its room', async ($: any, on: any) => {
   const f = fake(on, [])
+  const item = (SNAP as any).items[0]
+  ;(SPEC as any).paths = { full: { label: 'full' } }                                   // a flow with paths: the tag is 'spec · full', with a space in it
+  item.path = 'full'
+  try { await bandCheck($, f) } finally { delete (SPEC as any).paths; delete item.path }
+})
+
+async function bandCheck($: any, f: Fake) {
   if (!(await begin($, f))) return
   const ui = await $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 60, scroll: { offset: 0, bodyRows: 3 }, view: {} } as never,
     requestId: 'band', viewport: { columns: 60, rows: 40 } })
@@ -452,7 +455,10 @@ test('the band above the prompt: a long text shrinks and is cut, and the button 
   expect(text.props.overflow).toBe('hidden')                                           // and is cut, not spilled
   expect(text.props.flexShrink).toBe(1)
   expect((await ui.findAll({ type: 'Text' })).every((t: any) => t.props.wrap !== 'wrap')).toBe(true)
-})
+  expect((await ui.find({ key: 'band-tag' })).props.flexShrink).toBe(0)                // the tag keeps its width
+  const tag = (await ui.findAll({ type: 'Text' })).find((t: any) => /^\[/.test(t.text ?? ''))
+  expect(tag.text).toBe('[spec\u00a0·\u00a0full]')                                      // no plain space to wrap at
+}
 
 test('context: from 80 percent the band says so', async ($: any, on: any) => {
   const f = fake(on, [])

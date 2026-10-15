@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, flowPicture, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, railSlice, costBar, stageWord, flowAlt, RAIL, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -385,75 +385,51 @@ const PIC_ITEM: SddItem = { ...ITEM, gates: { Claimed: '2026-10-01T08:50:08Z', '
     { at: '2026-10-01T12:41:15Z', flow: 'spec', phase: 'Requirements', status: 'done', note: 'approved with two caveats and a very long note that has to be cut to fit the room it has', gates: { passed: ['Requirements agreed'], revoked: [] } },
     { at: '2026-10-01T13:40:00Z', flow: 'spec', phase: 'Design', status: 'waiting', note: 'design.md ready' }] }
 const PIC_SPEND = { Requirements: { usd: 1.05, turns: 4 }, Design: { usd: 1.84, turns: 5, input: 12000, output: 3400, cacheRead: 1_200_000, cacheWrite: 80_000 } }
-const picOf = (width: number, over: Partial<Parameters<typeof flowPicture>[0]> = {}) => {
-  const rows = stageRows(SPEC, PIC_ITEM)
-  return flowPicture({ flow: SPEC, item: PIC_ITEM, rows, derived: SNAP.derived, colors: PIC_COLORS, pending: pendingGate(SPEC, PIC_ITEM, SNAP.derived),
-    spend: PIC_SPEND, selected: 'Design', width, ...over })
-}
+const PIC_ROWS = stageRows(SPEC, PIC_ITEM)
+const slice = (i: number, over: Partial<Parameters<typeof railSlice>[0]> = {}) =>
+  railSlice({ mark: PIC_ROWS[i].mark, prevMark: i > 0 ? PIC_ROWS[i - 1].mark : null, hasNext: i < PIC_ROWS.length - 1, colors: PIC_COLORS, ...over })
 
-test('the flow picture: one node per stage on a rail, the picked stage outlined, the gates and the state words on the rows', () => {
-  const p = picOf(560)
-  expect(p.source.startsWith('<svg xmlns="http://www.w3.org/2000/svg" width="560"')).toBe(true)
-  expect(p.source).toContain(`viewBox="0 0 560 ${p.height}"`)
-  expect(p.source.match(/<circle [^>]*r="10"/g)).toHaveLength(7)                     // a node per stage
-  expect(p.source.match(/fill-opacity="0.13"/g)).toHaveLength(1)                       // one outline: the picked stage
-  expect(p.source).toContain('>waiting on you</tspan>')
-  expect(p.source).toMatch(/Design<tspan dx="10"[^>]*>waiting on you/)                // the word follows its name in the same text, one small gap
-  expect(p.source).toMatch(/Design agreed<tspan dx="8"[^>]*>your turn/)          // and "your turn" follows its gate
-  expect(p.source).not.toContain('>done</tspan>')
-  expect(p.source).not.toContain('>done</text>')                                       // colour says done and next: no word
-  expect(p.source).not.toContain('>next</tspan>')
-  expect(p.source).toContain('>your turn</tspan>')                                      // the gate the item waits on
-  expect(p.source).toContain('>Requirements agreed</text>')
-  expect(p.source).toContain('$1.84')
-  expect(p.source).toContain('stroke-dasharray="4 4"')                                 // the rail ahead of the item is dashed
-  expect(p.alt).toBe('Spec flow, 7 stages, top to bottom: Specify (done), Open Questions (done), Requirements (done), Design (waiting on you), Decompose (next), Implement, Verify.')
-  expect(p.source.length).toBeLessThan(131072)                                         // the Svg element's limit
-  expect(picOf(560, { selected: null }).source).not.toContain('fill-opacity="0.13"')    // nothing picked: no outline
-})
-
-test('the flow picture is laid out for the width it has: bars and times when wide, the essentials when narrow', () => {
-  const wide = picOf(900).source
-  const mid = picOf(420).source
-  const narrow = picOf(320).source
-  expect(wide).toContain('opacity="0.25"')                                             // the cost bar track
-  expect(wide).toMatch(/>\d\d\/\d\d \d\d:\d\d<\/text>/)                                // the last activity time
-  expect(mid).not.toContain('opacity="0.25"')                                          // no bars from here down
-  expect(mid).not.toMatch(/>\d\d\/\d\d \d\d:\d\d<\/text>/)                          // and no times
-  expect(narrow).not.toContain('opacity="0.25"')
-  expect(narrow).toContain('$1.84')                                                    // but the cost stays, in the middle size and the narrow one
-  expect(mid).toContain('$1.84')
-  expect(picOf(100).width).toBe(300)                                                   // held between a floor and a ceiling
-  expect(picOf(5000).width).toBe(960)
-  expect(picOf(Number.NaN).width).toBe(300)
-  // each width has its own height: text wraps to more lines where there is less room
-  expect(picOf(320).height).toBeGreaterThanOrEqual(picOf(900).height)
-})
-
-test('the flow picture keeps everything inside itself, cuts long text with an ellipsis, wraps gates, and escapes text', () => {
-  const long: SddItem = { ...PIC_ITEM, history: [{ at: '2026-10-01T13:40:00Z', flow: 'spec', phase: 'Design', status: 'waiting', note: 'a <very> long & "quoted" note ' + 'that goes on and on '.repeat(30) }] }
-  const flow = { ...SPEC, stages: SPEC.stages.map(st => st.key === 'Design' ? { ...st, passes: ['Gate number one is long', 'Gate number two is long', 'Gate number three is long', 'Gate four'] } : st) }
-  for (const width of [300, 340, 420, 560, 900, 960]) {
-    const p = flowPicture({ flow, item: long, rows: stageRows(flow, long), derived: [], colors: PIC_COLORS, pending: null, spend: PIC_SPEND, selected: 'Design', width })
-    for (const m of p.source.matchAll(/<text x="(\d+)"[^>]*>/g)) expect(Number(m[1])).toBeLessThanOrEqual(width)     // every text starts inside
-    expect(p.source).toContain('…')
-    expect(p.source).toContain('&lt;very&gt;')
-    expect(p.source).toContain('&amp;')
-    expect(p.source).not.toContain('<very>')
+test('every stage has a rail slice of one size, so the slices join into one rail', () => {
+  const marks = PIC_ROWS.map(r => r.mark)
+  expect(marks).toEqual(['done', 'done', 'done', 'waiting', 'next', 'later', 'later'])
+  for (let i = 0; i < PIC_ROWS.length; i++) {
+    const p = slice(i)
+    expect([p.width, p.height]).toEqual([RAIL.w, RAIL.h])
+    expect(p.source).toContain(`width="${RAIL.w}" height="${RAIL.h}"`)
+    expect(p.source.match(/<circle [^>]*r="10"/g)).toHaveLength(1)                       // one node
   }
-  const narrowH = flowPicture({ flow, item: long, rows: stageRows(flow, long), derived: [], colors: PIC_COLORS, pending: null, spend: {}, selected: null, width: 320 }).height
-  const wideH = flowPicture({ flow, item: long, rows: stageRows(flow, long), derived: [], colors: PIC_COLORS, pending: null, spend: {}, selected: null, width: 960 }).height
-  expect(narrowH).toBeGreaterThan(wideH)                                               // four gates take more rows where they cannot sit side by side
+  expect(slice(0).source).not.toContain('y1="0"')                                        // nothing above the first node
+  expect(slice(6).source).not.toContain(`y2="${RAIL.h}"`)                                 // and nothing below the last
+  expect(slice(1).source).toContain(`y1="0" x2="${RAIL.x}" y2="${RAIL.mid}" stroke="#3f9a63"`)   // the rail behind the work is solid green
+  expect(slice(3).source).toContain('stroke-dasharray="4 4"')                             // and dashed ahead of it
+  expect(slice(3).source).toContain('r="14"')                                              // the stage the item waits at has a ring
 })
 
-test('the flow picture shows the open-question count on its stage, and works for a flow of phases', () => {
+test('a stage says its state in a word, but a finished or next stage says nothing: the colour does', () => {
+  const word = (i: number) => stageWord(SPEC, PIC_ITEM, PIC_ROWS[i]).text
+  expect([word(0), word(3), word(4), word(5)]).toEqual(['', 'waiting on you', '', ''])
   const asked: SddItem = { ...PIC_ITEM, spec: { ...PIC_ITEM.spec!, questions_open: 3, questions_total: 5 } }
-  const hasOpen = flowPicture({ flow: SPEC, item: asked, rows: stageRows(SPEC, asked), derived: SNAP.derived, colors: PIC_COLORS, pending: null, spend: {}, selected: null, width: 640 })
-  expect(hasOpen.source).toContain('3 open')
+  expect(stageWord(SPEC, asked, stageRows(SPEC, asked)[1]).text).toContain('3 open')
+  expect(flowAlt(SPEC, PIC_ROWS)).toBe('Spec flow, 7 stages, top to bottom: Specify (done), Open Questions (done), Requirements (done), Design (waiting on you), Decompose (next), Implement, Verify.')
+})
+
+test('a rail slice marks a conditional or skipped stage with a dashed node, and a phase flow works', () => {
+  expect(slice(0, { conditional: true }).source).toMatch(/r="10"[^>]*stroke-dasharray="3 2"/)
+  expect(slice(0).source).not.toMatch(/r="10"[^>]*stroke-dasharray/)
   const bug: SddItem = { ...ITEM, flow: 'bug', progress: { ...ITEM.progress!, phase: 'Phase 6', status: 'active' } }
-  const p = flowPicture({ flow: BUG, item: bug, rows: stageRows(BUG, bug), derived: [], colors: PIC_COLORS, pending: null, spend: {}, selected: 'Phase 6', width: 420 })
-  expect(p.source.match(/<circle [^>]*r="10"/g)).toHaveLength(6)
-  expect(p.source).toContain('>6  step 6<tspan')
+  const rows = stageRows(BUG, bug)
+  expect(rows).toHaveLength(6)
+  const at = rows.findIndex(r => r.mark === 'active')
+  expect(at).toBeGreaterThan(0)
+  expect(railSlice({ mark: 'active', prevMark: rows[at - 1].mark, hasNext: true, colors: PIC_COLORS }).source).toContain('stroke="#4a7fc4"')
+})
+
+test('the cost bar is as long as the stage cost is of the dearest stage, and never empty', () => {
+  const bar = (usd: number) => costBar({ usd, max: 2, mark: 'done', colors: PIC_COLORS })
+  expect(bar(2).source).toContain('<rect width="64" height="6" rx="3" fill="#3f9a63"/>')
+  expect(bar(1).source).toContain('<rect width="32"')
+  expect(bar(0.001).source).toContain('<rect width="3"')
+  expect(bar(1).width).toBe(64)
 })
 
 test('the stage the pane opens on, and the stage before and after', () => {
