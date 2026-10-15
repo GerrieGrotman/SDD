@@ -680,7 +680,8 @@ export const register: Register = on => {
     return (
       <Box flexDirection="row" gap={1} width={e.props.bodyColumns}>
         <Text bold color={tag.open ? C.now : C.work}>{`[${tag.brief}]`}</Text>
-        <Box flexGrow={1} flexShrink={1}>
+        {/* the long text gives way to the button: it may shrink to nothing and is cut, never pushing the button off the edge */}
+        <Box key="band-text" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
           {waiting
             ? <Text color={C.now} wrap="truncate-end">
                 {`${first.id} · ${phaseLabel(s?.flows[first.flow], first)} · waiting on you: ${first.progress?.gate || '—'}`}
@@ -690,6 +691,7 @@ export const register: Register = on => {
         {ctx && contextTone(ctx.percent) !== 'ok' && (
           <Text bold color={contextTone(ctx.percent) === 'high' ? C.revoked : C.now}>{`context ${ctx.percent}%`}</Text>
         )}
+        <Box flexShrink={0}>
         <Button key="band-open" label="Open sdd view" onPress={() => void (async () => {
           await $.state.set(selected, first.id)
           await $.state.set(stage, null)
@@ -699,6 +701,7 @@ export const register: Register = on => {
           await $.state.set(snap, v.out)
           await $.state.set(error, v.why)
         })()} />
+        </Box>
       </Box>
     )
   })
@@ -933,8 +936,6 @@ export const register: Register = on => {
           return (
             <Box flexDirection="column" gap={1}>
               <Svg source={pic.source} alt={pic.alt} width={pic.width} height={pic.height} isInteractive />
-              {/* TEMPORARY: what the pane reports, to size the picture against the real Desktop pane */}
-              <Text dimColor>{`picture ${pic.width}x${pic.height} px · pane ${e.props.bodyColumns} columns`}</Text>
               <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
                 <Button key="stage-prev" hotkey="p" plain dimColor={prevKey === shownKey} label={`◀ ${labelOf(prevKey)}`} onPress={() => pickStage(prevKey)} />
                 {Select && (

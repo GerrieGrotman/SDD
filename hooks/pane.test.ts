@@ -439,6 +439,21 @@ test('the pane shows the token split for the item, and for the stage it is on', 
   expect(await texts(ui)).toContain('Spent $2.00 over 3 turns · in 12k · out 3.4k · cache read 1.2M · cache write 80k')
 })
 
+test('the band above the prompt: a long text shrinks and is cut, and the button keeps its room', async ($: any, on: any) => {
+  const f = fake(on, [])
+  if (!(await begin($, f))) return
+  const ui = await $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 60, scroll: { offset: 0, bodyRows: 3 }, view: {} } as never,
+    requestId: 'band', viewport: { columns: 60, rows: 40 } })
+  for (let i = 0; i < 100 && !(await texts(ui)).includes('Author tags'); i++) await new Promise(r => setTimeout(r, 10))
+  const btn = await ui.find({ key: 'band-open' })
+  expect(btn).toBeTruthy()
+  const text = await ui.find({ key: 'band-text' })
+  expect(text.props.minWidth).toBe(0)                                                  // the text may shrink below its own length
+  expect(text.props.overflow).toBe('hidden')                                           // and is cut, not spilled
+  expect(text.props.flexShrink).toBe(1)
+  expect((await ui.findAll({ type: 'Text' })).every((t: any) => t.props.wrap !== 'wrap')).toBe(true)
+})
+
 test('context: from 80 percent the band says so', async ($: any, on: any) => {
   const f = fake(on, [])
   if (!(await begin($, f))) return
