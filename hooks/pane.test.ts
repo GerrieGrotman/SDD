@@ -178,7 +178,7 @@ test('desktop: each stage is a button with a rail slice, and the picked stage op
   expect(rail.props.width).toBe(6)                                                     // as wide as the slice and its gap
   const bar = await ui.find({ key: 'stagebar-Design' })
   expect(bar.props.backgroundColor).toBeTruthy()                                       // a bar of colour: it stretches to the detail's height
-  expect(bar.props.width).toBe(1)
+  expect(bar.props.width).toBe('6%')                                                  // as thin as the rail in the slices
   expect((await ui.find({ key: 'stagewrap-Design' })).props.alignItems).toBe('stretch')
   expect((await ui.findAll({ type: 'Svg' })).filter((x: any) => x.props.height === 48)).toHaveLength(0)
   const detail = await ui.find({ key: 'stagedetail-Design' })
