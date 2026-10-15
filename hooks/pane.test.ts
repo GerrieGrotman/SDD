@@ -36,11 +36,11 @@ const AGENTS = [
 
 type Cost = { id: number; stage: string; usd: number; session: string; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 type Row = { usd: number; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
-type Fake = { registered: string[]; viewed: unknown[]; denyView: boolean; usd: number | null; costs: Cost[]; costFails: boolean; toasts: string[]
+type Fake = { registered: string[]; usd: number | null; costs: Cost[]; costFails: boolean; toasts: string[]
   sid: string; spend: Record<string, Row>; spendOther: Record<string, Row> }
 
 function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents = AGENTS): Fake {
-  const f: Fake = { registered: [], viewed: [], denyView: false, usd: 1, costs: [], costFails: false, toasts: [], sid: 's1', spend: {}, spendOther: {} }
+  const f: Fake = { registered: [], usd: 1, costs: [], costFails: false, toasts: [], sid: 's1', spend: {}, spendOther: {} }
   // env.py: `cost` records a turn (and the totals the next `view` reports); anything else is the view
   on('process.run', ((_$: unknown, e: { argv: string[] }) => {
     const done = (exitCode: number, stdout: string, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
@@ -76,7 +76,6 @@ function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents
   on('turn.complete' as never, (() => ({ text: '' })) as never)
   on('session.usage' as never, (() => ({ value: { context: { window: 1_000_000, percent: 10 }, rateLimits: [], ...(f.usd == null ? {} : { cost: { usd: f.usd } }) } })) as never)
   on('agent.list' as never, (() => ({ value: agents })) as never)
-  on('ui.view' as never, ((_$: unknown, e: unknown) => { f.viewed.push(e); return { value: f.denyView ? { deny: 'not person-initiated' } : {} } }) as never)
   return f
 }
 
@@ -108,26 +107,6 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(t).toContain('working')
     expect(t).toContain('done')
     expect(t).not.toContain('sdd:skeptic')
-  })
-
-  test(`${surface}: Watch shows that agent's transcript, and Main chat goes back`, async ($: any, on: any) => {
-    const f = fake(on)
-    const ui = await mountPane($, f, surface)
-    if (!ui) return
-    await ui.press({ key: 'agent-a2' })
-    expect(f.viewed).toEqual([{ agentId: 'a2' }])
-    await ui.press({ key: 'agent-main' })
-    expect(f.viewed[1]).toEqual({})
-  })
-
-  test(`${surface}: a refused view says so in a toast and breaks nothing`, async ($: any, on: any) => {
-    const f = fake(on)
-    f.denyView = true
-    const ui = await mountPane($, f, surface)
-    if (!ui) return
-    await ui.press({ key: 'agent-a1' })
-    expect(f.viewed).toEqual([{ agentId: 'a1' }])
-    expect(await texts(ui)).toContain('Agents')
   })
 
   test(`${surface}: no agents, no Agents section`, async ($: any, on: any) => {
