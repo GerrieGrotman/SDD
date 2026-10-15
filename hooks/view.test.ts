@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { agentRows, flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { agentRows, itemOptions, itemSuggestions, flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -372,4 +372,35 @@ test('agent rows: the live ones first, then the newest of the rest, and the plug
   expect(agentRows(list, 2).map(r => r.id)).toEqual(['2', '4'])                       // live ones are never cut for room
   expect(agentRows([])).toEqual([])
   expect(agentRows([a('9', 'Explore', 'running', 'x'.repeat(200))])[0].text.length).toBe(80)
+})
+
+const OTHER: SddItem = { ...ITEM, id: 92100, title: 'Second thing', progress: { ...ITEM.progress!, phase: 'Design', status: 'waiting', gate: 'Design agreed?' } }
+const THIRD: SddItem = { ...ITEM, id: 92200, title: 'Third thing', progress: { ...ITEM.progress!, phase: 'Implement', status: 'active' } }
+const FIRST: SddItem = { ...ITEM, progress: { ...ITEM.progress!, status: 'active' } }
+const MANY: SddSnapshot = { ...SNAP, items: [FIRST, THIRD, OTHER] }
+
+test('the work item dropdown: the ones waiting on you first, then the newest id, each as one line', () => {
+  const o = itemOptions(MANY)
+  expect(o.map(x => x.value)).toEqual(['92100', '92200', '92012'])          // 92100 waits on the person
+  expect(o[0].label).toBe('92100 Second thing · Design · waiting on you')
+  expect(o[1].label).toBe('92200 Third thing · Implement · active')
+  expect(itemOptions({ items: [], flows: {} })).toEqual([])
+  expect(itemOptions({ items: [{ ...ITEM, title: 'x'.repeat(200) }], flows: SNAP.flows })[0].label.length).toBe(90)
+})
+
+test('autocomplete: only after /sdd, by id prefix or a word of the title', () => {
+  const ids = (before: string, token: string) => itemSuggestions(MANY, before, token).map(r => r.text)
+  expect(ids('/sdd ', '92')).toEqual(['92100', '92200', '92012'])
+  expect(ids('/sdd ', '921')).toEqual(['92100'])
+  expect(ids('/sdd ', 'third')).toEqual(['92200'])                          // a word of the title, any case
+  expect(ids('/sdd spec ', '9210')).toEqual(['92100'])                      // after a subcommand
+  expect(ids('/sdd:sdd ', '92200')).toEqual(['92200'])
+  expect(ids('  /sdd-view ', '92')).toHaveLength(3)
+  expect(ids('fix the bug in ', '92')).toEqual([])                          // a number elsewhere in the prompt
+  expect(ids('/sdd 92100 ', '92')).toEqual([])                              // the id is already given
+  expect(ids('/sddx ', '92')).toEqual([])                                   // another command
+  expect(ids('/sdd ', '')).toEqual([])
+  expect(ids('/sdd ', 'nothing matches')).toEqual([])
+  expect(itemSuggestions(MANY, '/sdd ', '92', 2)).toHaveLength(2)           // at most max rows
+  expect(itemSuggestions(MANY, '/sdd ', '921')[0]).toEqual({ text: '92100', label: '92100', description: 'Second thing · Design · waiting on you' })
 })

@@ -6,7 +6,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, agentRows, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import { GLYPH, agentRows, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark } from './view/model'
 import { registerWorktrees, registerWorktreesCommand, worktreesPaneClosed } from './worktrees'
 
@@ -316,6 +316,16 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // ---------------------------------------------------------------- the prompt box
+
+  // after `/sdd ` the prompt box offers this workspace's open work items by id or by a word of the title
+  on('prompt.autocomplete', async ($, e, next) => {
+    const s = (await $.state.get(snap)).value ?? null
+    const start = e.start ?? e.cursor - e.token.length
+    const suggestions = s ? itemSuggestions(s, e.text.slice(0, start), e.token) : []
+    return suggestions.length ? { suggestions } : next(e)
+  })
+
   // ---------------------------------------------------------------- the spinner
 
   // while Claude works: this chat's item, its stage, and what it works toward, after the spinner's word
@@ -393,6 +403,22 @@ export const register: Register = on => {
     }
 
     const item = id != null ? (s.items.find(i => i.id === id) ?? s.done.find(i => i.id === id)) : undefined
+    // a dropdown of the workspace's open work items: picking one makes the pane follow it (the chat's own item is not changed)
+    const Select = 'Select' in t ? t.Select : undefined
+    const options = itemOptions(s)
+    const pick = (value: string) => void (async () => {
+      const to = Number(value)
+      if (!Number.isInteger(to)) return
+      await $.state.set(selected, to)
+      await $.state.set(stage, null)
+      await $.state.set(gate, null)
+      await $.state.set(doc, null)
+      await $.state.set(feedback, null)
+      await sync(to)
+    })()
+    const picker = (isHere: boolean) => Select && options.length > (isHere ? 1 : 0)
+      ? <Select key="pick-item" label="Work item" options={options} value={id != null ? String(id) : undefined} onSelect={pick} />
+      : null
 
     // ---- no work item for this chat yet
     if (!item) {
@@ -404,6 +430,7 @@ export const register: Register = on => {
           </Box>
           <Text wrap="wrap">{id != null ? `Work item ${id} is not in this workspace.` : 'This chat is not working on a work item yet.'}</Text>
           <Text dimColor wrap="wrap">Start one with /sdd &lt;id&gt;, or open one with /sdd-view &lt;id&gt;.</Text>
+          {picker(false)}
         </Box>
       )
     }
@@ -491,6 +518,7 @@ export const register: Register = on => {
             <Box flexGrow={1} flexShrink={1}><Text bold wrap="wrap">{`${item.id} ${item.title}`}</Text></Box>
             <Button key="refresh" label="↻" hotkey="r" onPress={() => void sync(id, true)} />
           </Box>
+          {picker(true)}
           <Box flexDirection="row" gap={1}>
             <Text bold color={C.work}>{`[${tag.flow}]`}</Text>
             {tag.path && <Text bold color={tag.open ? C.now : C.gate}>{`[${tag.path}]`}</Text>}

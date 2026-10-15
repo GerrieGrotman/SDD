@@ -1,5 +1,5 @@
 // What the view shows, worked out from one env.py view snapshot. No $ here: plain functions.
-import type { SddColors, SddFlow, SddItem, SddProgress, SddQuestion, SddStage } from '../../types'
+import type { SddColors, SddFlow, SddItem, SddProgress, SddQuestion, SddSnapshot, SddStage } from '../../types'
 
 // skipped = the user agreed to skip it; missed = never worked and never skipped (the flow jumped it)
 export type Mark = 'done' | 'skipped' | 'missed' | 'active' | 'waiting' | 'blocked' | 'abandoned' | 'next' | 'later'
@@ -499,4 +499,43 @@ export function agentRows(list: AgentInfoLike[], max = 6): AgentRow[] {
   const live = rows.filter(r => r.isLive)
   const rest = rows.filter(r => !r.isLive).reverse().slice(0, Math.max(max - live.length, 0))
   return [...live, ...rest].slice(0, Math.max(max, live.length)).map(({ i: _i, ...r }) => r)
+}
+
+
+// ---------------------------------------------------------------- picking a work item
+
+function cutAt(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+/** The workspace's open work items, the ones waiting on the person first, then the newest id first. */
+function openItems(snap: Pick<SddSnapshot, 'items'>): SddItem[] {
+  const waits = (i: SddItem) => (i.progress?.status === 'waiting' ? 0 : 1)
+  return [...snap.items].sort((a, b) => waits(a) - waits(b) || b.id - a.id)
+}
+
+/** One line for a work item: `92012 Author tags · Design · waiting on you`. */
+function itemLine(flows: Record<string, SddFlow>, item: SddItem): string {
+  const where = phaseLabel(flows[item.flow], item)
+  return [`${item.id} ${item.title}`, where, item.progress ? statusWord(item) : ''].filter(Boolean).join(' · ')
+}
+
+/** The choices of the pane's work item dropdown: value is the id, label the line. */
+export function itemOptions(snap: Pick<SddSnapshot, 'items' | 'flows'>): { value: string; label: string }[] {
+  return openItems(snap).map(i => ({ value: String(i.id), label: cutAt(itemLine(snap.flows, i), 90) }))
+}
+
+/** `/sdd `, `/sdd spec `, `/sdd:sdd bug `, `/sdd-view `: the place a work item id goes. */
+const ID_PLACE = /^\s*\/(?:sdd(?::sdd)?(?:\s+(?:bug|spec|status|done|abandon|impact))?|sdd-view)\s+$/i
+
+/** The rows the prompt box adds below its own while a work item id is typed after /sdd: the open items
+ *  whose id starts with the token, or whose title holds it. Empty anywhere else in the prompt. */
+export function itemSuggestions(snap: Pick<SddSnapshot, 'items' | 'flows'>, before: string, token: string, max = 8):
+  { text: string; label: string; description: string }[] {
+  if (!ID_PLACE.test(before) || !token) return []
+  const t = token.toLowerCase()
+  return openItems(snap)
+    .filter(i => (/^\d+$/.test(t) ? String(i.id).startsWith(t) : i.title.toLowerCase().includes(t)))
+    .slice(0, max)
+    .map(i => ({ text: String(i.id), label: String(i.id), description: cutAt(itemLine(snap.flows, i).slice(String(i.id).length + 1), 80) }))
 }
