@@ -166,3 +166,13 @@ test('what a sync did is told in one line, and a conflict says where to go', () 
   expect(resolveAskText(row)).toContain('Do not push')
   expect(actionArgs({ repo: 'a', wt: wt('safe', { owner: 'sync' }) })).toBe(null)
 })
+
+test('hiding the worktrees in use still shows the ones whose merge will conflict', () => {
+  const state = { version: 1, generated: 0, repos: { a: { ...repo('a', []), worktrees: [
+    wt('ok', { branch: 'quiet' }),
+    wt('ok', { branch: 'clash', forecast: { state: 'conflict', base: 'origin/main', files: ['a.cs'] } }),
+    wt('ok', { branch: 'fine', forecast: { state: 'clean', base: 'origin/main' } }),
+  ] } } }
+  expect(worktreeRows(state, true).map(r => r.wt.branch)).toEqual(['clash'])
+  expect(worktreeRows(state, false).length).toBe(3)
+})

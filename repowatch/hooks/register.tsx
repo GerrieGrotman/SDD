@@ -147,7 +147,9 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const t = $.ui.resolve(e)
+    const { Box, Text, Button } = t
+    const Input = 'Input' in t ? t.Input : undefined
     const s = (await $.state.get(state)).value ?? null
     const why = (await $.state.get(error)).value ?? null
     const only = (await $.state.get(onlyAttention)).value ?? true
@@ -175,9 +177,11 @@ export const register: Register = on => {
       await $.state.set(plans, await makePlans($, argLists))
       await $.state.set(busy, null)
     }
-    const confirm = (todo: RwPlan[]) => async () => {
+    // `reason` is the person's own words for a skipped commit; the plan's default stands when they typed none
+    const confirm = (todo: RwPlan[], reason?: string) => async () => {
       await $.state.set(busy, 'cleaning up')
-      const results = await applyPlans($, todo)
+      const withReason = reason ? todo.map(p => (p.decision ? { ...p, decision: { ...p.decision, reason } } : p)) : todo
+      const results = await applyPlans($, withReason)
       await $.state.set(plans, null)
       const r = await refresh($, false, false)
       if (r.s) await $.state.set(state, r.s)
@@ -249,6 +253,12 @@ export const register: Register = on => {
               {p.level !== 'blocked' && p.restore.length > 0 && <Text dimColor>  To undo: {p.restore.join(' && ')}</Text>}
             </Box>
           ))}
+ {Input && g.run.some(p => p.action === 'sync-skip') && (
+            <Box marginLeft={2}>
+              <Input key="skip-why" placeholder="Why is it not taken? Enter confirms; leave empty for the default" submitLabel="Do not take"
+                onSubmit={v => confirm(g.run, v.trim())()} />
+            </Box>
+          )}
           <Box>
             {g.run.length > 0 && <Button key="confirm" label={g.review ? `Confirm (${g.review} to review)` : 'Confirm'} onPress={confirm(g.run)} />}
             <Text> </Text>

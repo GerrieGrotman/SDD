@@ -97,12 +97,12 @@ export function classLabel(c: WorktreeClass): string {
   return CLASS_LABEL[c]
 }
 
-/** Every worktree of every repo, the ones to act on first. */
+/** Every worktree of every repo, the ones to act on first. Hiding the ones in use keeps those that will conflict. */
 export function worktreeRows(state: RwState | null, hideInUse: boolean): WtRow[] {
   const rows: WtRow[] = []
   for (const r of Object.values(state?.repos ?? {})) for (const wt of r.worktrees ?? []) rows.push({ repo: r.name, wt })
   return rows
-    .filter(x => !hideInUse || x.wt.class !== 'ok')
+    .filter(x => !hideInUse || x.wt.class !== 'ok' || x.wt.forecast?.state === 'conflict')  // in use, but its merge will conflict
     .sort((a, b) => CLASS_ORDER.indexOf(a.wt.class) - CLASS_ORDER.indexOf(b.wt.class)
       || a.repo.localeCompare(b.repo) || (a.wt.branch ?? '').localeCompare(b.wt.branch ?? ''))
 }

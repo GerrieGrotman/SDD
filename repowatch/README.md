@@ -13,6 +13,11 @@ installs with sdd.
   | safe to remove | Clean, nothing only here, and merged into the default branch or its upstream branch was deleted | Remove… |
   | broken | git lists a folder that is gone | Prune |
   | review | Probably done, but a person should look: its upstream was deleted and commits are on no remote (a squash merge?), or nothing was committed for a long time | Review… |
+
+  A squash merge leaves the commits on no remote, so git alone cannot tell. With `az login` and an ADO
+  `origin`, `scan` asks ADO whether a completed pull request came from that branch with exactly this commit
+  as its source; if so the worktree is **safe** and the reason names the PR. `adoLookup` (default on) and
+  `adoLookupCacheSeconds` in `repowatch.json` control it.
   | keep | Uncommitted files, or commits that exist only here | none |
   | in use | Nothing says it is finished | none |
 
@@ -39,12 +44,12 @@ installs with sdd.
     markers, the older branch really in) and pushes and opens the PR. **Abort…** throws the attempt away.
   - **Do not take…** marks one commit as not for the newer branch. A merge cannot leave a commit out, so that
     hop becomes a cherry-pick hop: the wanted commits are cherry-picked oldest first with `-x`. The decision is
-    kept in `.claude/repowatch/sync.json` (with a reason; the pane records "not needed on <branch>", edit the
-    file or use `--reason` for your own words). **Take again…** reverses it. A hop stays a cherry-pick hop
+    kept in `.claude/repowatch/sync.json`, with the reason you type in the confirm panel (empty gives
+    "not needed on <branch>"). **Take again…** reverses it. A hop stays a cherry-pick hop
     while any commit is skipped, because a merge would bring the skipped ones back.
   - The PR needs `az login` and an Azure DevOps `origin`. If the PR cannot be opened the branch is still
-    pushed, and the pane says so. A sync branch that is still on origin blocks a second sync of that hop
-    until its PR is merged and the branch deleted.
+    pushed, and the pane says so. A sync branch whose PR is still open blocks a second sync of that hop. Once
+    that PR is merged the branch is stale: the next **Sync…** deletes it (it asks first) and uses the name again.
 
   `syncPattern`, `syncWindowDays` and `syncMaxFixes` in `repowatch.json` tune it; `repowatch.py sync` reads
   it by hand, and `plan|apply sync-hop|sync-finish|sync-abort|sync-skip|sync-unskip --repo NAME --hop OLDER:NEWER`

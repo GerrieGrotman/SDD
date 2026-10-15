@@ -36,11 +36,20 @@ can ask ADO whether the PR merged and move it to `safe`.
   `.claude/repowatch/journal.jsonl` (branch name and sha, so a deleted branch can be recreated).
 - The sdd view stays read-only (CLAUDE.md). Actions live in repowatch; the sdd Worktrees page links to them.
 
+## Limits that were fixed later
+
+- Squash merges: `scan` asks ADO (`adoLookup`) for a completed PR from a deleted branch whose source commit is
+  the worktree's HEAD, and then classes it `safe`. Cached by branch and sha. Without `az` nothing changes.
+- A sync branch whose PR was merged is stale; the next sync deletes it (local and origin) after a confirm
+  and uses the name again.
+- A skipped commit takes the person's own reason, typed in the pane.
+- "Register a merged bug-flow PR as a pending fix" is not needed: a fix merged into `team/x` shows up as
+  missing on the next hop by itself, grouped by the ADO id in its commit message.
+
 ## Not built
 
-- Asking ADO whether a PR merged (squash merges stay in `review`), and registering a merged bug-flow PR as a pending fix.
-- A custom reason typed in the pane when skipping a commit.
-
+- GitHub as a provider (ADO only, by decision).
+- A check that the sdd view's plan for a work item's base matches a team branch that was renamed.
 
 ## Branch sync (steps 4 and 5)
 

@@ -200,6 +200,7 @@ def test_worktrees():
         run_cli(ws, "scan", "--fetch", "--fetch-batch", "10")
         state = json.loads(run_cli(ws, "status", "--json"))
         by = {Path(w["path"]).name: w for w in state["repos"]["app"]["worktrees"]}
+        assert by["squash"]["prCheck"]["state"] == "unavailable", by["squash"]  # no az here: nothing is guessed
         got = {k: v["class"] for k, v in by.items()}
         assert got == {"merged": "safe", "merged2": "safe", "new": "ok", "unique": "keep", "dirty": "keep",
                        "pushed": "ok", "squash": "review", "lost": "prune", "app": "safe"}, got
@@ -209,6 +210,46 @@ def test_worktrees():
         flags = state["repos"]["app"]["flags"]
         assert "removable-worktree" in flags and "old-worktree" in flags and "broken-worktree" in flags, flags
         assert state["summary"]["removable"] == 4 and state["summary"]["toReview"] == 1, state["summary"]
+
+        # ADO says the squashed branch's pull request was completed with this very commit: now it is safe
+        squash_sha = by["squash"]["sha"]
+        (ws / ".claude" / "repowatch.json").write_text(json.dumps({"adoLookupCacheSeconds": 0}))  # ask again at once
+        fake = tmp / "prs.json"
+        fake.write_text(json.dumps({"feat/squash": [{"pullRequestId": 321, "status": "completed",
+                                                     "lastMergeSourceCommit": {"commitId": squash_sha}}]}))
+        os.environ["REPOWATCH_FAKE_PRS"] = str(fake)
+        try:
+            run_cli(ws, "scan", "--only", "app")
+            sq = {Path(w["path"]).name: w for w in json.loads(run_cli(ws, "status", "--json"))["repos"]["app"]["worktrees"]}["squash"]
+            assert sq["class"] == "safe" and "321" in sq["reasons"][0] and sq["prCheck"]["state"] == "completed", sq
+            # a commit made after the PR is not covered by it
+            fake.write_text(json.dumps({"feat/squash": [{"pullRequestId": 321, "status": "completed",
+                                                         "lastMergeSourceCommit": {"commitId": "0" * 40}}]}))
+            run_cli(ws, "scan", "--only", "app")
+            sq = {Path(w["path"]).name: w for w in json.loads(run_cli(ws, "status", "--json"))["repos"]["app"]["worktrees"]}["squash"]
+            assert sq["class"] == "safe", "the earlier answer is cached for this commit"
+            # ...a new commit changes the sha, so the cache does not apply
+            commit(wts / "squash", "later.txt")
+            run_cli(ws, "scan", "--only", "app")
+            sq = {Path(w["path"]).name: w for w in json.loads(run_cli(ws, "status", "--json"))["repos"]["app"]["worktrees"]}["squash"]
+            assert sq["class"] == "review" and "later commits" in sq["reasons"][-1] and sq["prCheck"]["state"] == "other", sq
+            # and a branch with no local worktree: deleting it is safe when its PR was completed
+            sh(["git", "checkout", "-q", "-b", "feat/sq2"], app)
+            commit(app, "sq2.txt")
+            sq2 = git_out(app, "rev-parse", "HEAD")
+            sh(["git", "push", "-q", "-u", "origin", "feat/sq2"], app)
+            sh(["git", "checkout", "-q", "main"], app)
+            sh(["git", "push", "-q", "origin", "--delete", "feat/sq2"], app)
+            sh(["git", "fetch", "-q", "--prune"], app)
+            assert cli(ws, "plan", "delete-branch", "--repo", "app", "--branch", "feat/sq2")[1]["level"] == "review"
+            fake.write_text(json.dumps({"feat/sq2": [{"pullRequestId": 322, "status": "completed",
+                                                      "lastMergeSourceCommit": {"commitId": sq2}}]}))
+            plan = cli(ws, "plan", "delete-branch", "--repo", "app", "--branch", "feat/sq2")[1]
+            assert plan["level"] == "safe" and "322" in plan["reasons"][0], plan
+            sh(["git", "branch", "-D", "feat/sq2"], app)
+        finally:
+            del os.environ["REPOWATCH_FAKE_PRS"]
+            run_cli(ws, "scan", "--only", "app")
 
         # a plan changes nothing
         rc, plan = cli(ws, "plan", "remove-worktree", "--repo", "app", "--path", str(wts / "merged"), "--delete-branch")
@@ -498,6 +539,29 @@ def test_sync_actions():
         assert plan["level"] == "blocked" and "on origin already" in plan["blocked"][0], plan
         # not a hop
         assert cli(ws, "plan", "sync-hop", "--repo", "app", "--hop", "team/0.0.2:team/0.0.1")[1]["level"] == "blocked"
+
+        # once its pull request is merged the sync branch is stale: a new sync deletes it first and goes again
+        sh(["git", "checkout", "-q", "team/0.0.2"], app)
+        sh(["git", "merge", "-q", "--no-ff", "origin/sync/0.0.1-0.0.2", "-m", "Merged PR 1: sync"], app)
+        sh(["git", "push", "-q", "origin", "team/0.0.2"], app)
+        sh(["git", "checkout", "-q", "team/0.0.1"], app)
+        commit(app, "late.txt", "l\n", "Late fix ADO 7777")
+        sh(["git", "push", "-q", "origin", "team/0.0.1"], app)
+        sh(["git", "checkout", "-q", "main"], app)
+        sh(["git", "fetch", "-q"], app)
+        run_cli(ws, "sync", "--only", "app")
+        h = json.loads(run_cli(ws, "status", "--json"))["sync"]["repos"]["app"]["hops"][0]
+        assert h["staleSync"] == "sync/0.0.1-0.0.2" and "pushed" not in h and h["missing"] == 1, h
+        rc, plan = cli(ws, "plan", "sync-hop", "--repo", "app", "--hop", hop)
+        assert plan["level"] == "review" and any(st[:4] == ["git", "push", "origin", "--delete"] for st in plan["steps"]), plan
+        assert any("was merged" in r for r in plan["reasons"]), plan["reasons"]
+        pr_file.unlink()
+        rc, res = cli(ws, "apply", "sync-hop", "--repo", "app", "--hop", hop, "--allow-review")
+        assert rc == 0 and res["state"] == "pr" and pr_file.exists(), res
+        sh(["git", "fetch", "-q"], app)
+        assert git_out(app, "rev-list", "--count", "origin/team/0.0.2..origin/sync/0.0.1-0.0.2") == "2"  # the late fix + the merge
+        h = json.loads(run_cli(ws, "status", "--json"))["sync"]["repos"]["app"]["hops"][0]
+        assert h["pushed"] == "sync/0.0.1-0.0.2" and "staleSync" not in h, h
 
         # a conflicting hop: review level, left for someone to resolve, finished after they do
         pr_file.unlink()

@@ -27,6 +27,11 @@ patch is already there under another sha counts as applied; one you marked "do n
 .claude/repowatch/sync.json counts as skipped. It also forecasts whether merging the older branch into
 the newer one would conflict. Written to .claude/repowatch/sync-state.json and merged into `status --json`.
 
+Squash merges: git cannot see that a squash-merged branch is merged, so such a worktree (upstream
+deleted, commits on no remote) is first classed "review". With `adoLookup` on, `scan` asks ADO for a
+completed pull request from that branch whose source commit is the worktree's HEAD; if there is one the
+worktree is "safe". The answer is cached by branch and sha; with no `az` login nothing changes.
+
 Branch sync actions: `sync-hop` makes sync/<older version>-<newer version> from the newer branch in a
 worktree under .claude/repowatch/sync/, merges the older branch in (or, once a commit was skipped,
 cherry-picks the wanted commits oldest first with -x), pushes that branch and opens an ADO pull request
@@ -71,6 +76,8 @@ DEFAULTS = {
     "syncPattern": "team/*",   # the branches whose fixes carry forward, old to new; one trailing *
     "syncWindowDays": 180,     # commits older than this are not listed
     "syncMaxFixes": 200,       # fixes listed per hop
+    "adoLookup": True,         # ask ADO whether a deleted branch's pull request was completed (squash merges)
+    "adoLookupCacheSeconds": 3600,  # how long "no completed PR" is remembered; "no az login" is asked again after 5 minutes
 }
 JOURNAL_REL = Path(".claude") / "repowatch" / "journal.jsonl"
 SYNC_STATE_REL = Path(".claude") / "repowatch" / "sync-state.json"
@@ -426,6 +433,15 @@ def worktree_facts(repo, wt, default, gone, cfg, now, prev=None):
     info["fresh"] = is_fresh(repo, wt["branch"])
     info["defaultBranch"] = default
     info["class"], info["reasons"] = classify(info, cfg, now)
+    if info["class"] == "review" and info.get("gone") and info.get("unique") and cfg.get("adoLookup") \
+            and info.get("sha") and wt["branch"]:
+        # a squash merge leaves the commits on no remote: ask ADO whether the branch's PR was completed
+        pr = completed_pr(repo, wt["branch"], info["sha"], (prev or {}).get("prCheck"), now, cfg["adoLookupCacheSeconds"])
+        info["prCheck"] = pr
+        if pr["state"] == "completed":
+            info["class"], info["reasons"] = "safe", ["its pull request %s was completed (a squash merge)" % pr["id"]]
+        elif pr["state"] == "other":
+            info["reasons"] = info["reasons"] + ["a pull request from it was completed, but later commits are on no remote"]
     return info
 
 
@@ -674,7 +690,10 @@ def plan_for(action, repo, args, cfg, now, root=None):
             plan["atRisk"] = out.splitlines() if rc == 0 else []
         merged = bool(default) and git(["merge-base", "--is-ancestor", br, "origin/" + default], repo)[0] == 0
         is_gone = br in gone
-        if n and is_gone:
+        pr = completed_pr(repo, br, sha, None, now) if (n and is_gone and cfg.get("adoLookup")) else None
+        if pr and pr["state"] == "completed":
+            plan["level"], plan["reasons"] = "safe", ["its pull request %s was completed (a squash merge)" % pr["id"]]
+        elif n and is_gone:
             plan["level"] = "review"
             plan["reasons"] = ["its upstream branch was deleted and %d commit%s are on no remote (a squash merge?)" % (n, "" if n == 1 else "s")]
         elif n:
@@ -917,8 +936,11 @@ def sync_repo(name, path, cfg, now, prev, decisions, root=None):
         wt = sync_worktree_path(root, name, older, newer) if root else None
         if wt is not None and wt.is_dir():
             hop["inProgress"] = {"path": posix(wt), "branch": sync_branch_name(older, newer), "state": sync_state_of(wt)}
-        if rev(path, "refs/remotes/origin/" + sync_branch_name(older, newer)):
-            hop["pushed"] = sync_branch_name(older, newer)
+        rtip = rev(path, "refs/remotes/origin/" + sync_branch_name(older, newer))
+        if rtip:
+            # still on origin: its PR is open, unless it was merged already, then the branch is just stale
+            merged = git(["merge-base", "--is-ancestor", rtip, "origin/" + newer], path)[0] == 0
+            hop["staleSync" if merged else "pushed"] = sync_branch_name(older, newer)
         if hop["missing"]:
             ysha = rev(path, "refs/remotes/origin/" + newer)
             hop["forecast"] = forecast(path, ysha, "origin/" + older, (before.get((older, newer)) or {}).get("forecast"))
@@ -991,22 +1013,61 @@ def parse_remote(url):
 
 
 def ado_call(method, url, body=None):
-    az = shutil.which("az") or shutil.which("az.cmd")
-    if not az:
-        raise RuntimeError("Azure CLI (az) not found. Install it and run: az login")
-    r = subprocess.run([az, "account", "get-access-token", "--resource", ADO_RESOURCE, "--query", "accessToken", "-o", "tsv"],
-                       capture_output=True, text=True)
-    if r.returncode != 0 or not r.stdout.strip():
-        raise RuntimeError("could not get an ADO token from az. Run: az login")
+    if not _TOKEN.get("v") or time.time() - _TOKEN.get("at", 0) > 1800:
+        az = shutil.which("az") or shutil.which("az.cmd")
+        if not az:
+            raise RuntimeError("Azure CLI (az) not found. Install it and run: az login")
+        r = subprocess.run([az, "account", "get-access-token", "--resource", ADO_RESOURCE, "--query", "accessToken", "-o", "tsv"],
+                           capture_output=True, text=True)
+        if r.returncode != 0 or not r.stdout.strip():
+            raise RuntimeError("could not get an ADO token from az. Run: az login")
+        _TOKEN.update(v=r.stdout.strip(), at=time.time())
     data = None if body is None else json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, method=method, headers={
-        "Authorization": "Bearer " + r.stdout.strip(), "Content-Type": "application/json", "Accept": "application/json"})
+        "Authorization": "Bearer " + _TOKEN["v"], "Content-Type": "application/json", "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
             raw = resp.read()
             return json.loads(raw) if raw else None
     except urllib.error.HTTPError as e:
         raise RuntimeError("ADO %s -> HTTP %d: %s" % (method, e.code, e.read().decode("utf-8", "replace")[:400]))
+
+
+_TOKEN = {}
+
+
+def completed_pr(repo_path, branch, sha, prev, now, ttl=3600):
+    """Was a pull request from `branch` completed with `sha` as its source tip? One of
+    {state: completed|other|none|unavailable, id, url, at, branch, sha}. `other` = a completed PR exists
+    but its source was not this commit (later commits). Cached by branch and sha; REPOWATCH_FAKE_PRS=<file>
+    ({branch: [pull request, ...]}) stands in for ADO in tests."""
+    if prev and prev.get("sha") == sha and prev.get("branch") == branch:
+        age = now - prev.get("at", 0)
+        if prev.get("state") == "completed" or age < (min(ttl, 300) if prev.get("state") == "unavailable" else ttl):
+            return prev
+    res = {"branch": branch, "sha": sha, "at": now, "state": "unavailable"}
+    try:
+        fake = os.environ.get("REPOWATCH_FAKE_PRS")
+        if fake:
+            prs = _read_json(Path(fake)).get(branch, [])
+            web = "https://dev.azure.com/o/p/_git/r/pullrequest/"
+        else:
+            rc, out, _ = git(["config", "--get", "remote.origin.url"], repo_path)
+            parts = parse_remote(out) if rc == 0 else None
+            if not parts:
+                return res
+            q = urllib.request.quote
+            base = "https://dev.azure.com/%s/%s/" % (q(parts[0]), q(parts[1]))
+            api = "%s_apis/git/repositories/%s/pullrequests" % (base, q(parts[2]))
+            prs = (ado_call("GET", "%s?searchCriteria.sourceRefName=%s&searchCriteria.status=completed&$top=10&api-version=7.1"
+                            % (api, q("refs/heads/" + branch, safe=""))) or {}).get("value", [])
+            web = "%s_git/%s/pullrequest/" % (base, q(parts[2]))
+    except Exception:
+        return res
+    exact = [p for p in prs if (p.get("lastMergeSourceCommit") or {}).get("commitId") == sha]
+    if exact:
+        return dict(res, state="completed", id=exact[0]["pullRequestId"], url=web + str(exact[0]["pullRequestId"]))
+    return dict(res, state="other" if prs else "none")
 
 
 def create_pr(repo_path, source, target, title, description):
@@ -1130,10 +1191,20 @@ def plan_sync(plan, repo, args, cfg, now, root):
     if action == "sync-hop":
         if exists:
             plan["blocked"].append("a sync of this hop is in progress at %s: finish or abort it" % posix(wt))
-        if rev(repo, "refs/heads/" + branch):
-            plan["blocked"].append("branch %s exists in this repo already" % branch)
-        if rev(repo, "refs/remotes/origin/" + branch):
-            plan["blocked"].append("branch %s is on origin already: its pull request is the next step" % branch)
+        # a sync branch whose PR was merged is stale: it is deleted first, so the name can be used again
+        cleanup = []
+        ltip, rtip = rev(repo, "refs/heads/" + branch), rev(repo, "refs/remotes/origin/" + branch)
+        merged = lambda tip: git(["merge-base", "--is-ancestor", tip, "origin/" + newer], repo)[0] == 0
+        if rtip:
+            if merged(rtip):
+                cleanup.append(["git", "push", "origin", "--delete", branch])
+            else:
+                plan["blocked"].append("branch %s is on origin already: its pull request is the next step" % branch)
+        if ltip:
+            if merged(ltip):
+                cleanup.append(["git", "branch", "-D", branch])
+            else:
+                plan["blocked"].append("branch %s exists in this repo with work that %s does not have" % (branch, newer))
         if not missing:
             plan["blocked"].append("%s has everything %s has" % (newer, older))
         if plan["blocked"]:
@@ -1145,6 +1216,10 @@ def plan_sync(plan, repo, args, cfg, now, root):
         if mode == "cherry-pick":
             plan["reasons"].append("%d commit%s skipped, so the wanted commits are cherry-picked, oldest first" % (len(skipped), "" if len(skipped) == 1 else "s"))
         plan["level"] = "safe"
+        plan["cleanup"] = cleanup
+        if cleanup:
+            plan["level"] = "review"
+            plan["reasons"].append("the earlier %s was merged: it is deleted first so the name can be used again" % branch)
         if fc["state"] == "conflict":
             plan["level"] = "review"
             plan["reasons"].append("it will conflict in %s: the worktree is left for someone to resolve" % ", ".join(fc.get("files", [])[:5]))
@@ -1155,8 +1230,8 @@ def plan_sync(plan, repo, args, cfg, now, root):
             plan["reasons"].append("a cherry-pick can still conflict where a merge would not")
         pick = (["git", "cherry-pick", "-x", "%d commits" % len(missing)] if mode == "cherry-pick"
                 else ["git", "merge", "--no-ff", "origin/" + older])
-        plan["steps"] = [["git", "fetch", "--no-tags", "origin", older, newer],
-                         ["git", "worktree", "add", "-b", branch, plan["path"], "origin/" + newer], pick] + push
+        plan["steps"] = [["git", "fetch", "--no-tags", "origin", older, newer]] + cleanup + [
+            ["git", "worktree", "add", "-b", branch, plan["path"], "origin/" + newer], pick] + push
         return plan
 
     # sync-finish
@@ -1240,6 +1315,10 @@ def apply_sync(root, cfg, repo, args, plan, now):
     rc, _, err = git(["fetch", "--no-tags", "origin", older, newer], repo, timeout=cfg["fetchTimeout"])
     if rc != 0:
         return {"error": "fetch failed: %s" % (err or "exit %d" % rc)}
+    for step in plan.get("cleanup", []):
+        rc, _, err = git(step[1:], repo, timeout=120)
+        if rc != 0:
+            return {"error": "%s failed: %s" % (" ".join(step), err or "exit %d" % rc)}
     wt.parent.mkdir(parents=True, exist_ok=True)
     rc, _, err = git(["worktree", "add", "-b", branch, str(wt), "origin/" + newer], repo, timeout=120)
     if rc != 0:
