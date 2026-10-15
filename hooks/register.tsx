@@ -990,8 +990,8 @@ export const register: Register = on => {
                     <Box key={`stagewrap-${key}`} flexDirection="row" alignItems="stretch">
                       {/* the rail runs on beside the detail: a bar of colour as tall as the detail, where the slices' line would be (a picture cannot stretch) */}
                       <Box key={`stagerail-${key}`} width={6} flexShrink={0} flexDirection="row">
-                        {/* 3 px wide (6% of the 48 px rail column, a whole percentage: the engine refuses others), centred on the slices' rail (20 px in): a text column is 8 px, so these are percentages (the engine refuses px). A try: if Desktop ignores them the bar is gone again, and the 1-column bar comes back */}
-                        <Box width="38%" flexShrink={0} />
+                        {/* a bar 3 px wide, its middle 20 px in like the slices' rail: whole percentages of the 48 px column (the engine refuses px and fractions), a 39% gap and a 6% bar. If Desktop ignored them the bar would be gone, and a 1-column bar comes back */}
+                        <Box key={`stagegap-${key}`} width="39%" flexShrink={0} />
                         <Box key={`stagebar-${key}`} width="6%" flexShrink={0} backgroundColor={r.mark === 'done' || r.mark === 'skipped' ? C.done : C.line} />
                       </Box>
                       {/* no border: a frame would run over the rail */}
