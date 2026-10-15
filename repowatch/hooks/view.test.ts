@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
-import type { RwPlan, RwRepo, RwSummary, RwWorktree, WorktreeClass } from '../types'
-import { actionArgs, ago, baseText, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
+import type { RwPlan, RwRepo, RwSummary, RwSyncFix, RwSyncState, RwWorktree, WorktreeClass } from '../types'
+import { actionArgs, ago, baseText, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
 
 const repo = (name: string, flags: string[], extra: Partial<RwRepo> = {}): RwRepo => ({ name, path: `/ws/${name}`, scannedAt: 0, flags, ...extra })
 
@@ -116,4 +116,32 @@ test('undo and the ask for a merge say what they do', () => {
   expect(undoLabel({ id: '17', at: 1, action: 'delete-branch', repo: 'a', path: null, branch: 'old' })).toBe('Undo: deleted branch old (a)')
   const row = { repo: 'a', wt: wt('ok', { branch: 'f', baseRef: 'origin/main', forecast: { state: 'conflict' as const, base: 'origin/main', files: ['x.cs'] } }) }
   expect(mergeAskText(row)).toContain('merge origin/main in and resolve the conflicts in x.cs')
+})
+
+const fix = (key: string, state: RwSyncFix['state'], extra: Partial<RwSyncFix> = {}): RwSyncFix =>
+  ({ key, workItems: [], title: `fix ${key}`, state, commits: [{ sha: 'a', time: 0, author: 'x', subject: 's', state: state === 'partial' ? 'missing' : state === 'applied' ? 'applied' : state, workItems: [] }], ...extra })
+const SYNC: RwSyncState = { generated: 1, summary: { repos: 2, hopsPending: 2, fixesPending: 3, conflictHops: 1 }, repos: {
+  b: { branches: ['team/1', 'team/2'], hops: [{ from: 'team/1', to: 'team/2', missing: 2, skipped: 0, fixes: [fix('ADO 1', 'missing'), fix('ADO 2', 'missing')] }] },
+  a: { branches: ['team/1', 'team/2', 'team/3'], hops: [
+    { from: 'team/1', to: 'team/2', missing: 1, skipped: 1, fixes: [fix('ADO 9', 'missing'), fix('x', 'skipped')], forecast: { state: 'conflict', base: 'origin/team/1', files: ['a'] } },
+    { from: 'team/2', to: 'team/3', missing: 0, skipped: 0, fixes: [] },
+  ] },
+} }
+
+test('hops with fixes missing come first, conflicting ones before the rest', () => {
+  expect(hopRows(SYNC, true).map(hopKey)).toEqual(['a:team/1', 'b:team/1'])
+  expect(hopRows(SYNC, false).map(hopKey)).toEqual(['a:team/1', 'b:team/1', 'a:team/2'])
+  expect(hopRows(undefined, true)).toEqual([])
+})
+
+test('a hop and a fix say what is still open', () => {
+  expect(hopLine(SYNC.repos.b.hops[0])).toBe('2 commits in 2 fixes')
+  expect(hopLine(SYNC.repos.a.hops[0])).toBe('1 commit in 1 fix, 1 skipped')
+  expect(hopLine(SYNC.repos.a.hops[1])).toBe('up to date')
+  expect(hopLine({ from: 'a', to: 'b', error: 'git cherry failed' })).toBe('git cherry failed')
+  expect(fixGlyph(fix('k', 'partial'))).toBe('◐')
+  expect(fixLine(fix('k', 'missing', { workItems: [4471, 4472], title: 'Fix the thing' }))).toBe('ADO 4471, 4472  Fix the thing')
+  const two = fix('k', 'partial', { commits: [{ sha: 'a', time: 0, author: 'x', subject: 's', state: 'missing', workItems: [] }, { sha: 'b', time: 0, author: 'x', subject: 's', state: 'applied', workItems: [] }] })
+  expect(fixLine(two)).toContain('(1 of 2 commits open)')
+  expect(statusText({ repos: 4, attention: 0, behind: 0, dirty: 0, unpushed: 0, worktrees: 0, removable: 0, toReview: 0, conflicts: 0, errors: 0 }, SYNC.summary)).toBe('repos 4 · 2 to sync')
 })

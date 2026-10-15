@@ -12,6 +12,11 @@ What is built, and what is decided but not built yet. Update this when a decisio
 - Step 3: merge-conflict forecast (cached by sha, sdd's base read from `workitem.json`), behind-base counts,
   the toast, "Ask Claude to merge", a Delete… button for gone branches, and `undo` from the journal.
 
+- Step 4: `repowatch.py sync` and the Sync view: the team chain by version, missing and applied commits per
+  hop, fixes grouped by ADO id, skipped commits read from `.claude/repowatch/sync.json`, a merge forecast per hop.
+  One difference from the sketch below: fixes are listed per hop, not as one grid, because with one hop at a
+  time a fix is only a candidate for the next hop once it has landed on the one before.
+
 Squash merges: git cannot see that a squash-merged branch is merged. Such a worktree is classed `review`
 (its upstream is gone and its commits are on no remote), and the plan lists those commits. A later step
 can ask ADO whether the PR merged and move it to `safe`.
@@ -28,8 +33,7 @@ can ask ADO whether the PR merged and move it to `safe`.
 
 ## Steps still to build
 
-4. Branch sync, read-only: the matrix below.
-5. Branch sync actions and the conflict hand-off to Claude.
+5. Branch sync actions (skip, sync hop, resolve) and the conflict hand-off to Claude.
 
 ## Branch sync (steps 4 and 5)
 

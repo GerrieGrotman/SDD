@@ -5,6 +5,7 @@
     python repowatch.py plan  remove-worktree|prune-worktrees|delete-branch --repo NAME [--path P] [--branch B] [--delete-branch]
     python repowatch.py apply <same arguments> [--allow-review]
     python repowatch.py plan|apply undo --repo NAME --id ID      (ID from `status --json` "undoable")
+    python repowatch.py sync [--only NAME ...] [--json]
 
 `scan` reads each repo's local facts (branch, ahead/behind, dirty files, stashes, worktrees) and
 writes them to <workspace>/.claude/repowatch/state.json. With --fetch it also fetches the repos that
@@ -16,6 +17,13 @@ Merge-conflict forecast: for each worktree (and each diverged repo) `scan` asks 
 checkout, no change. The base is the work item's base from sdd's workitem.json, else the default
 branch. Results are cached by the two shas, so they are only recomputed when a branch moves.
 Needs git 2.38; older git says "unavailable".
+
+Branch sync (read-only): in each repo with two or more `team/*` branches on origin (`syncPattern`),
+`sync` sorts them by version (0.0.2 before 0.0.10) and, for each hop from one to the next newer one,
+lists the commits the newer one lacks, grouped into fixes by the ADO id in the message. A commit whose
+patch is already there under another sha counts as applied; one you marked "do not take" in
+.claude/repowatch/sync.json counts as skipped. It also forecasts whether merging the older branch into
+the newer one would conflict. Written to .claude/repowatch/sync-state.json and merged into `status --json`.
 
 `plan` shows what a clean-up would do and what it checks first. `apply` checks again against the
 live repo, runs it, and writes .claude/repowatch/journal.jsonl (with the sha, so a deleted branch can
@@ -47,8 +55,13 @@ DEFAULTS = {
     "fetchTimeout": 120,  # seconds before one fetch is given up
     "staleFetchHours": 24,
     "staleWorktreeDays": 30,
+    "syncPattern": "team/*",   # the branches whose fixes carry forward, old to new; one trailing *
+    "syncWindowDays": 180,     # commits older than this are not listed
+    "syncMaxFixes": 200,       # fixes listed per hop
 }
 JOURNAL_REL = Path(".claude") / "repowatch" / "journal.jsonl"
+SYNC_STATE_REL = Path(".claude") / "repowatch" / "sync-state.json"
+SYNC_DECISIONS_REL = Path(".claude") / "repowatch" / "sync.json"
 SKIP_DIRS = {".claude", "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build", "bin", "obj"}
 
 
@@ -732,6 +745,175 @@ def run_action(root, cfg, args, apply):
     return 0 if result["ok"] else 2
 
 
+# --- branch sync: what each older team branch has that the next newer one lacks ----------------
+
+def version_key(name):
+    """Sort key so that team/0.0.2 comes before team/0.0.10."""
+    rest = name.split("/", 1)[1] if "/" in name else name
+    return [(0, int(t)) if t.isdigit() else (1, t) for t in re.findall(r"\d+|[A-Za-z]+", rest)]
+
+
+def sync_prefix(cfg):
+    p = cfg["syncPattern"]
+    return p[:-1] if p.endswith("*") else p.rstrip("/") + "/"
+
+
+def sync_branches(path, cfg):
+    """The origin branches that match the sync pattern, oldest version first."""
+    prefix = sync_prefix(cfg)
+    rc, out, _ = git(["for-each-ref", "--format=%(refname)", "refs/remotes/origin/" + prefix], path)
+    names = []
+    if rc == 0:
+        for line in out.splitlines():
+            n = line[len("refs/remotes/origin/"):]
+            if n and not n.endswith("/HEAD"):
+                names.append(n)
+    return sorted(names, key=version_key)
+
+
+WORK_ITEM = re.compile(r"AB#(\d+)|\bADO\s+(\d+)", re.I)
+RELATED = re.compile(r"Related work items?:?([^\n]*)", re.I)
+MERGED_PR = re.compile(r"^Merged PR (\d+)", re.I)
+
+
+def work_items(subject, body):
+    """ADO ids named in a commit message: AB#n, ADO n, or the `Related work items: #n, #m` line."""
+    ids = []
+    for m in WORK_ITEM.finditer(subject + "\n" + body):
+        ids.append(int(m.group(1) or m.group(2)))
+    for m in RELATED.finditer(body):
+        ids.extend(int(x) for x in re.findall(r"#?(\d+)", m.group(1)))
+    return sorted(set(ids))
+
+
+def read_decisions(root):
+    return _read_json(root / SYNC_DECISIONS_REL)
+
+
+def hop_commits(path, older, newer, cfg, now, skipped):
+    """[(commit dict)] newest first: the commits `older` has that `newer` lacks, each applied, skipped or missing."""
+    rc, out, _ = git(["cherry", "origin/" + newer, "origin/" + older], path, timeout=120)
+    if rc != 0:
+        return None, 0
+    marks = {}
+    for line in out.splitlines():
+        if len(line) >= 42 and line[0] in "+-":
+            marks[line[2:].strip()] = line[0]
+    fmt = "%H%x1f%ct%x1f%an%x1f%s%x1f%b%x1e"
+    rc, out, _ = git(["log", "--no-merges", "--format=" + fmt, "origin/%s" % older, "--not", "origin/%s" % newer], path, timeout=120)
+    commits, outside = [], 0
+    cutoff = now - cfg["syncWindowDays"] * 86400
+    for rec in (out.split("\x1e") if rc == 0 else []):
+        parts = rec.strip("\n").split("\x1f")
+        if len(parts) < 5 or parts[0] not in marks:
+            continue
+        sha, ct, author, subject, body = parts[0], int(parts[1] or 0), parts[2], parts[3], parts[4]
+        if ct < cutoff:
+            outside += 1
+            continue
+        state = "applied" if marks[sha] == "-" else "missing"
+        c = {"sha": sha, "time": ct, "author": author, "subject": subject, "state": state,
+             "workItems": work_items(subject, body)}
+        pr = MERGED_PR.match(subject)
+        if pr:
+            c["pr"] = int(pr.group(1))
+        if state == "missing" and sha in skipped:
+            c["state"], c["reason"] = "skipped", skipped[sha]
+        commits.append(c)
+    return commits, outside
+
+
+def group_fixes(commits, limit):
+    """Commits grouped into fixes by work item (else by PR, else alone), the ones not fully applied."""
+    groups, order = {}, []
+    for c in commits:
+        key = ("ADO %d" % c["workItems"][0]) if c["workItems"] else ("PR %d" % c["pr"] if c.get("pr") else c["sha"][:8])
+        if key not in groups:
+            groups[key] = {"key": key, "workItems": c["workItems"], "title": c["subject"], "commits": []}
+            order.append(key)
+        groups[key]["commits"].append(c)
+    fixes = []
+    for key in order:
+        g = groups[key]
+        g["workItems"] = sorted({w for c in g["commits"] for w in c["workItems"]})
+        g["title"] = g["commits"][-1]["subject"]  # the oldest commit is the fix itself
+        st = {c["state"] for c in g["commits"]}
+        g["state"] = "applied" if st == {"applied"} else "skipped" if st == {"skipped"} else \
+            "missing" if st == {"missing"} else "partial"
+        if g["state"] != "applied":
+            fixes.append(g)
+    return fixes[:limit], len(fixes) > limit
+
+
+def sync_repo(name, path, cfg, now, prev, decisions):
+    """The sync facts of one repo, or None when it has fewer than two matching branches."""
+    names = sync_branches(path, cfg)
+    if len(names) < 2:
+        return None
+    hops, before = [], {(h["from"], h["to"]): h for h in (prev or {}).get("hops", [])}
+    for older, newer in zip(names, names[1:]):
+        skipped = ((decisions.get(name) or {}).get("%s>%s" % (older, newer)) or {}).get("skipped") or {}
+        commits, outside = hop_commits(path, older, newer, cfg, now, skipped)
+        hop = {"from": older, "to": newer}
+        if commits is None:
+            hop["error"] = "git cherry failed"
+            hops.append(hop)
+            continue
+        fixes, cut = group_fixes(commits, cfg["syncMaxFixes"])
+        count = lambda st: sum(1 for c in commits if c["state"] == st)
+        hop.update(missing=count("missing"), applied=count("applied"), skipped=count("skipped"),
+                   outsideWindow=outside, fixes=fixes, truncated=cut,
+                   mode="cherry-pick" if skipped else "merge")
+        if hop["missing"]:
+            ysha = rev(path, "refs/remotes/origin/" + newer)
+            hop["forecast"] = forecast(path, ysha, "origin/" + older, (before.get((older, newer)) or {}).get("forecast"))
+        hops.append(hop)
+    return {"branches": names, "hops": hops}
+
+
+def sync_summary(repos):
+    hops = [h for r in repos.values() for h in r["hops"]]
+    return {"repos": len(repos),
+            "hopsPending": sum(1 for h in hops if h.get("missing")),
+            "fixesPending": sum(len(h.get("fixes", [])) for h in hops if h.get("missing")),
+            "conflictHops": sum(1 for h in hops if (h.get("forecast") or {}).get("state") == "conflict")}
+
+
+def cmd_sync(a):
+    root = find_workspace()
+    cfg = load_config(root)
+    now = int(time.time())
+    old = _read_json(root / SYNC_STATE_REL)
+    known = old.get("repos") if isinstance(old.get("repos"), dict) else {}
+    decisions = read_decisions(root)
+    repos = [(n, p) for n, p in discover(root, cfg) if not a.only or n in a.only]
+    with ThreadPoolExecutor(max_workers=max(1, cfg["workers"])) as ex:
+        results = list(ex.map(lambda np_: (np_[0], sync_repo(np_[0], np_[1], cfg, now, known.get(np_[0]), decisions)), repos))
+    for name, res in results:
+        if res is None:
+            known.pop(name, None)
+        else:
+            known[name] = res
+    if not a.only:
+        live = {n for n, _ in repos}
+        for n in list(known):
+            if n not in live:
+                del known[n]
+    state = {"version": VERSION, "generated": now, "repos": known, "summary": sync_summary(known)}
+    path = root / SYNC_STATE_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(state, indent=1, sort_keys=True), encoding="utf-8")
+    os.replace(str(tmp), str(path))
+    if a.json:
+        print(json.dumps(state["summary"]))
+    else:
+        s = state["summary"]
+        print("%d repos with a team chain: %d hops pending (%d fixes), %d would conflict"
+              % (s["repos"], s["hopsPending"], s["fixesPending"], s["conflictHops"]))
+    return 0
+
+
 # --- commands ------------------------------------------------------------------------------------
 
 def cmd_scan(a):
@@ -783,6 +965,9 @@ def cmd_status(a):
     root = find_workspace()
     state = read_state(root)
     if a.json:
+        sync = _read_json(root / SYNC_STATE_REL)
+        if sync.get("repos") is not None:
+            state["sync"] = {"generated": sync.get("generated", 0), "repos": sync["repos"], "summary": sync.get("summary", {})}
         print(json.dumps(state))
         return 0
     repos = sorted(state["repos"].values(), key=lambda r: (-len(r.get("flags", [])), r["name"]))
@@ -815,6 +1000,10 @@ def main(argv=None):
     s = sp.add_parser("status")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
+    s = sp.add_parser("sync")
+    s.add_argument("--only", nargs="*", default=[])
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_sync)
     for name, apply in (("plan", False), ("apply", True)):
         s = sp.add_parser(name)
         s.add_argument("action", choices=ACTIONS)

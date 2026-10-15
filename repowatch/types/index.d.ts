@@ -38,6 +38,50 @@ export type RwForecast = {
   error?: string
 }
 
+export type RwSyncCommit = {
+  sha: string
+  time: number
+  author: string
+  subject: string
+  /** missing: the newer branch lacks it. applied: it has it (same sha or same patch). skipped: you marked it "do not take". */
+  state: 'missing' | 'applied' | 'skipped'
+  workItems: number[]
+  reason?: string
+  pr?: number
+}
+
+/** The commits of one ADO work item (else one PR, else one commit) that a hop has not carried over in full. */
+export type RwSyncFix = {
+  key: string
+  workItems: number[]
+  title: string
+  state: 'missing' | 'partial' | 'skipped' | 'applied'
+  commits: RwSyncCommit[]
+}
+
+/** From one team branch to the next newer one. */
+export type RwSyncHop = {
+  from: string
+  to: string
+  missing?: number
+  applied?: number
+  skipped?: number
+  outsideWindow?: number
+  fixes?: RwSyncFix[]
+  truncated?: boolean
+  /** merge, or cherry-pick once a commit was marked "do not take". */
+  mode?: 'merge' | 'cherry-pick'
+  /** Would merging `from` into `to` conflict? */
+  forecast?: RwForecast
+  error?: string
+}
+
+export type RwSyncState = {
+  generated: number
+  repos: Record<string, { branches: string[]; hops: RwSyncHop[] }>
+  summary: { repos: number; hopsPending: number; fixesPending: number; conflictHops: number }
+}
+
 /** A finished clean-up that can be put back. */
 export type RwUndo = { id: string; at: number; action: string; repo: string; path: string | null; branch: string | null }
 
@@ -114,6 +158,8 @@ export type RwState = {
   root?: string
   summary?: RwSummary
   undoable?: RwUndo[]
+  /** Branch sync, from `repowatch.py sync`; absent until it has run. */
+  sync?: RwSyncState
   repos: Record<string, RwRepo>
 }
 
@@ -131,7 +177,7 @@ declare module 'claude-code' {
       /** A scan, fetch or clean-up is running. */
       busy: string | null
       /** What the pane lists: the repos, or every worktree. */
-      view: 'repos' | 'worktrees'
+      view: 'repos' | 'worktrees' | 'sync'
       /** Plans waiting for the person's confirm; null = none. */
       plans: RwPlan[] | null
     }

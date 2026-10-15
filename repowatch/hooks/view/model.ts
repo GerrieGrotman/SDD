@@ -1,5 +1,5 @@
 // Pure helpers for the repowatch pane: sorting, wording, paging. No engine calls, so view.test.ts can run them.
-import type { RwForecast, RwPlan, RwRepo, RwState, RwSummary, RwUndo, RwWorktree, WorktreeClass } from '../../types'
+import type { RwForecast, RwPlan, RwRepo, RwState, RwSummary, RwSyncFix, RwSyncHop, RwSyncState, RwUndo, RwWorktree, WorktreeClass } from '../../types'
 
 /** What each flag means, in the order a person should care about it. */
 export const FLAGS: Array<{ flag: string; label: string; urgent: boolean }> = [
@@ -50,11 +50,12 @@ export function isUrgent(flag: string): boolean {
 }
 
 /** The status line: empty when everything is fine, so the line stays clear. */
-export function statusText(s: RwSummary | undefined): string | undefined {
+export function statusText(s: RwSummary | undefined, sync?: RwSyncState['summary']): string | undefined {
   if (!s || s.repos === 0) return undefined
   const parts: string[] = []
   if (s.errors) parts.push(`${s.errors} unreadable`)
   if (s.conflicts) parts.push(`${s.conflicts} will conflict`)
+  if (sync?.hopsPending) parts.push(`${sync.hopsPending} to sync`)
   if (s.behind) parts.push(`${s.behind} behind`)
   if (s.dirty) parts.push(`${s.dirty} dirty`)
   if (s.unpushed) parts.push(`${s.unpushed} unpushed`)
@@ -207,4 +208,43 @@ export function undoArgs(u: RwUndo): string[] {
 export function undoLabel(u: RwUndo): string {
   const what = u.action === 'delete-branch' ? 'deleted branch' : 'removed worktree'
   return `Undo: ${what} ${u.branch ?? u.path ?? ''} (${u.repo})`
+}
+
+// ---- branch sync
+
+export type HopRow = { repo: string; hop: RwSyncHop }
+
+/** The hops to show: the ones with fixes missing first (conflicting ones before the rest), then, if asked, the rest. */
+export function hopRows(sync: RwSyncState | undefined, onlyPending: boolean): HopRow[] {
+  const rows: HopRow[] = []
+  for (const [repo, r] of Object.entries(sync?.repos ?? {})) for (const hop of r.hops) rows.push({ repo, hop })
+  const rank = (h: RwSyncHop) => (h.forecast?.state === 'conflict' ? 0 : h.missing ? 1 : 2)
+  return rows
+    .filter(x => !onlyPending || !!x.hop.missing || !!x.hop.error)
+    .sort((a, b) => rank(a.hop) - rank(b.hop) || (b.hop.missing ?? 0) - (a.hop.missing ?? 0) || a.repo.localeCompare(b.repo) || a.hop.from.localeCompare(b.hop.from))
+}
+
+export function hopKey(r: HopRow): string {
+  return `${r.repo}:${r.hop.from}`
+}
+
+/** "4 commits in 3 fixes, 1 skipped"; "up to date" when the newer branch has everything. */
+export function hopLine(h: RwSyncHop): string {
+  if (h.error) return h.error
+  const fixes = (h.fixes ?? []).filter(f => f.state !== 'skipped').length
+  const parts: string[] = []
+  if (h.missing) parts.push(`${h.missing} commit${h.missing === 1 ? '' : 's'} in ${fixes} fix${fixes === 1 ? '' : 'es'}`)
+  if (h.skipped) parts.push(`${h.skipped} skipped`)
+  return parts.length ? parts.join(', ') : 'up to date'
+}
+
+export function fixGlyph(f: RwSyncFix): string {
+  return { missing: '○', partial: '◐', skipped: '↷', applied: '✓' }[f.state]
+}
+
+/** A fix's one line: its work items (or key), its title, and how many commits are still open. */
+export function fixLine(f: RwSyncFix): string {
+  const open = f.commits.filter(c => c.state === 'missing').length
+  const ids = f.workItems.length ? `ADO ${f.workItems.join(', ')}` : f.key
+  return `${ids}  ${f.title.slice(0, 70)}${f.commits.length > 1 ? `  (${open} of ${f.commits.length} commits open)` : ''}`
 }

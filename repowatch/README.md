@@ -24,6 +24,12 @@ installs with sdd.
   the same check. Results are cached by the two shas, so only a branch that moved is recomputed. A toast
   fires when a branch turns to "will conflict"; the row's button asks Claude to do the merge. Needs git
   2.38 or later; older git shows nothing.
+- **Sync view** (`/repowatch sync`): for each repo with two or more `team/*` branches on origin, the branches
+  sorted by version (`0.0.2` before `0.0.10`) and, for each hop to the next newer one, the commits the
+  newer one lacks, grouped into fixes by ADO id (`AB#n`, `ADO n`, or `Related work items: #n`). A commit
+  whose patch is already there under another sha counts as applied. The hop also says whether merging the
+  older branch in would conflict. Read-only for now. `syncPattern`, `syncWindowDays` and `syncMaxFixes`
+  in `repowatch.json` tune it; `repowatch.py sync` runs it by hand.
 - **Background scan**: local facts every minute; every fifth scan also fetches the four repos fetched
   longest ago, so dozens of repos are covered without a stall. Nothing is pulled, merged or deleted.
 

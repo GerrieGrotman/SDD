@@ -343,6 +343,93 @@ def test_forecast():
         assert "forecast" not in by["conflict"] and by["conflict"]["behindBase"] == 0, by["conflict"]
 
 
+def test_sync():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        gitcfg = tmp / "gitconfig"
+        gitcfg.write_text("[user]\n\tname = Dev\n\temail = dev@x.co\n[init]\n\tdefaultBranch = main\n")
+        os.environ["GIT_CONFIG_GLOBAL"] = str(gitcfg)
+        ws, origins = tmp / "ws", tmp / "origins"
+        for d in (ws, origins, ws / ".claude"):
+            d.mkdir()
+        (ws / ".claude" / "repowatch.json").write_text("{}")
+        app = make_repo(ws, origins, "app")
+        make_repo(ws, origins, "solo")  # a repo with no team chain
+
+        def branch_from(name, base):
+            sh(["git", "checkout", "-q", "-b", name, base], app)
+            sh(["git", "push", "-q", "-u", "origin", name], app)
+
+        sh(["git", "checkout", "-q", "-b", "team/0.0.1"], app)
+        commit(app, "shared.txt", "one\n")
+        sh(["git", "push", "-q", "-u", "origin", "team/0.0.1"], app)
+        branch_from("team/0.0.2", "team/0.0.1")
+        branch_from("team/0.0.10", "team/0.0.2")
+        sh(["git", "checkout", "-q", "team/0.0.2"], app)
+        commit(app, "shared.txt", "two\n", "own change on 0.0.2")  # makes the hop conflict later
+        sh(["git", "push", "-q", "origin", "team/0.0.2"], app)
+
+        # fixes on the oldest branch
+        sh(["git", "checkout", "-q", "team/0.0.1"], app)
+        commit(app, "a1.txt", "1\n", "Fix the thing\n\nRelated work items: #4471, #4472")
+        commit(app, "a2.txt", "2\n", "More of the thing AB#4471")
+        commit(app, "b.txt", "b\n", "Other fix ADO 5000")
+        commit(app, "c.txt", "c\n", "No id at all")
+        commit(app, "shared.txt", "fixed\n", "Fix shared ADO 6000")
+        sh(["git", "push", "-q", "origin", "team/0.0.1"], app)
+        shas = {m: git_out(app, "log", "--format=%H", "-1", "--grep", m) for m in ("ADO 5000", "No id at all", "ADO 6000")}
+        # ADO 5000 was already taken to 0.0.2 by cherry-pick: a different sha, the same patch
+        sh(["git", "checkout", "-q", "team/0.0.2"], app)
+        sh(["git", "cherry-pick", shas["ADO 5000"]], app)
+        sh(["git", "push", "-q", "origin", "team/0.0.2"], app)
+        sh(["git", "checkout", "-q", "main"], app)
+        sh(["git", "fetch", "-q"], app)
+
+        run_cli(ws, "sync")
+        sync = json.loads(run_cli(ws, "status", "--json"))["sync"]
+        assert list(sync["repos"]) == ["app"], sync["repos"].keys()  # solo has no chain
+        r = sync["repos"]["app"]
+        assert r["branches"] == ["team/0.0.1", "team/0.0.2", "team/0.0.10"], r["branches"]
+        h1, h2 = r["hops"]
+        assert (h1["from"], h1["to"]) == ("team/0.0.1", "team/0.0.2") and (h2["from"], h2["to"]) == ("team/0.0.2", "team/0.0.10")
+        assert h1["missing"] == 4 and h1["applied"] == 1 and h1["skipped"] == 0, h1
+        keys = [f["key"] for f in h1["fixes"]]
+        assert {"ADO 6000", "ADO 4471"} <= set(keys) and len(keys) == 3, keys
+        by = {f["key"]: f for f in h1["fixes"]}
+        assert len(by["ADO 4471"]["commits"]) == 2 and by["ADO 4471"]["workItems"] == [4471, 4472], by["ADO 4471"]
+        assert by["ADO 4471"]["title"] == "Fix the thing", by["ADO 4471"]["title"]
+        assert "ADO 5000" not in by, "an applied fix is not listed"
+        assert any(f["title"] == "No id at all" for f in h1["fixes"])
+        assert h1["mode"] == "merge" and h1["forecast"]["state"] == "conflict" and h1["forecast"]["files"] == ["shared.txt"], h1
+        # 0.0.10 was cut before 0.0.2 gained two commits, so that hop has work too (and merges cleanly)
+        assert h2["missing"] == 2 and h2["forecast"]["state"] == "clean", h2
+        assert {f["key"] for f in h2["fixes"]} == {"ADO 5000", h2["fixes"][1]["key"]}
+        assert sync["summary"] == {"repos": 1, "hopsPending": 2, "fixesPending": 5, "conflictHops": 1}, sync["summary"]
+
+        # a commit marked "do not take" is skipped and the hop becomes a cherry-pick hop
+        (ws / ".claude" / "repowatch" / "sync.json").write_text(json.dumps(
+            {"app": {"team/0.0.1>team/0.0.2": {"skipped": {shas["No id at all"]: "belongs to 0.0.1 only"}}}}))
+        run_cli(ws, "sync")
+        h1 = json.loads(run_cli(ws, "status", "--json"))["sync"]["repos"]["app"]["hops"][0]
+        assert h1["missing"] == 3 and h1["skipped"] == 1 and h1["mode"] == "cherry-pick", h1
+        skipped = [f for f in h1["fixes"] if f["state"] == "skipped"]
+        assert len(skipped) == 1 and skipped[0]["commits"][0]["reason"] == "belongs to 0.0.1 only", skipped
+
+        # once the older branch is merged into the newer one, nothing is missing
+        sh(["git", "checkout", "-q", "team/0.0.2"], app)
+        sh(["git", "merge", "-q", "-X", "theirs", "origin/team/0.0.1", "-m", "sync"], app)
+        sh(["git", "push", "-q", "origin", "team/0.0.2"], app)
+        run_cli(ws, "sync")
+        sync = json.loads(run_cli(ws, "status", "--json"))["sync"]
+        assert sync["repos"]["app"]["hops"][0]["missing"] == 0 and sync["summary"]["hopsPending"] == 1, sync["summary"]
+
+        # version order, not text order
+        assert sorted(["team/0.0.10", "team/0.0.2", "team/0.1.0", "team/0.0.1"], key=rw.version_key) == \
+            ["team/0.0.1", "team/0.0.2", "team/0.0.10", "team/0.1.0"]
+        assert rw.work_items("x ADO 12", "Related work items: #7, #8") == [7, 8, 12]
+        assert rw.work_items("Merged PR 5: t", "") == []
+
+
 def git_out(repo, *args):
     return sh(["git"] + list(args), repo).stdout.strip()
 
@@ -352,6 +439,7 @@ def main():
     test_scan()
     test_worktrees()
     test_forecast()
+    test_sync()
     print("ok")
 
 

@@ -8,7 +8,8 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { RwPlan, RwResult, RwState } from '../types'
 import {
   actionArgs, ago, baseText, branchText, bulkRows, classLabel, conflictToast, dedupePrune, flagLabel, forecastText, isUrgent,
-  mergeAskText, page, planArgs, planGist, sddRemoveText, statusText, stepText, undoArgs, undoLabel, visibleRepos, worktreeRows,
+  fixGlyph, fixLine, hopKey, hopLine, hopRows, mergeAskText, page, planArgs, planGist, sddRemoveText, statusText, stepText,
+  undoArgs, undoLabel, visibleRepos, worktreeRows,
 } from './view/model'
 
 const PANE = 'repowatch'
@@ -56,9 +57,10 @@ async function load($: EngineInterface): Promise<RwState | null> {
 type Sweep = { s: RwState | null; why: string | null }
 
 /** Scans (and sometimes fetches), then reads the state back. The hooks store the result: $.state is theirs. */
-async function refresh($: EngineInterface, fetch: boolean): Promise<Sweep> {
+async function refresh($: EngineInterface, fetch: boolean, withSync: boolean = fetch): Promise<Sweep> {
   try {
     await run($, fetch ? ['scan', '--fetch', '--json'] : ['scan', '--json'], fetch ? 300_000 : 120_000)
+    if (withSync) await run($, ['sync', '--json'], 300_000)
     return { s: await load($), why: null }
   } catch (err) {
     return { s: null, why: String(err instanceof Error ? err.message : err) }
@@ -105,8 +107,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'repowatch',
-      description: 'Show the git repos of this workspace in a pane; "worktrees" lists every worktree, "scan" or "fetch" refreshes',
-      argumentHint: '[worktrees|scan|fetch]',
+      description: 'Show the git repos of this workspace in a pane; "worktrees" lists every worktree, "sync" the team branch sync, "scan" or "fetch" refreshes',
+      argumentHint: '[worktrees|sync|scan|fetch]',
     })
     const sync = async (fetch: boolean) => {
       const before = (await $.state.get(state)).value ?? null
@@ -115,7 +117,7 @@ export const register: Register = on => {
       if (toast) $.ui.toast(toast)
       if (r.s) await $.state.set(state, r.s)
       await $.state.set(error, r.why)
-      $.ui.status(statusText(r.s?.summary))
+      $.ui.status(statusText(r.s?.summary, r.s?.sync?.summary))
     }
     void sync(false)
     $.clock.every(SCAN_EVERY_MS, () => {
@@ -128,8 +130,8 @@ export const register: Register = on => {
   on('command.run', { command: 'repowatch' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
     await $.ui.open({ id: PANE, title: 'repowatch', closeOnEscape: true, columns: 110 })
-    if (arg === 'worktrees') {
-      await $.state.set(view, 'worktrees')
+    if (arg === 'worktrees' || arg === 'sync') {
+      await $.state.set(view, arg)
       await $.state.set(offset, 0)
     }
     if (arg === 'scan' || arg === 'fetch') {
@@ -138,7 +140,7 @@ export const register: Register = on => {
       if (r.s) await $.state.set(state, r.s)
       await $.state.set(error, r.why)
       await $.state.set(busy, null)
-      $.ui.status(statusText(r.s?.summary))
+      $.ui.status(statusText(r.s?.summary, r.s?.sync?.summary))
     }
     return { text: 'repowatch opened.' }
   })
@@ -158,13 +160,13 @@ export const register: Register = on => {
     // what the presses do; they run after the drawing, so they may write
     const sync = async (fetch: boolean, label: string) => {
       await $.state.set(busy, label)
-      const r = await refresh($, fetch)
+      const r = await refresh($, fetch, fetch || label === 'sync')
       const toast = conflictToast(s, r.s)
       if (toast) $.ui.toast(toast)
       if (r.s) await $.state.set(state, r.s)
       await $.state.set(error, r.why)
       await $.state.set(busy, null)
-      $.ui.status(statusText(r.s?.summary))
+      $.ui.status(statusText(r.s?.summary, r.s?.sync?.summary))
     }
     // a button asks for the plan; nothing runs until the person confirms it
     const propose = (argLists: string[][]) => async () => {
@@ -176,11 +178,11 @@ export const register: Register = on => {
       await $.state.set(busy, 'cleaning up')
       const results = await applyPlans($, todo)
       await $.state.set(plans, null)
-      const r = await refresh($, false)
+      const r = await refresh($, false, false)
       if (r.s) await $.state.set(state, r.s)
       await $.state.set(error, r.why)
       await $.state.set(busy, null)
-      $.ui.status(statusText(r.s?.summary))
+      $.ui.status(statusText(r.s?.summary, r.s?.sync?.summary))
       $.ui.toast(resultText(results))
     }
 
@@ -194,6 +196,11 @@ export const register: Register = on => {
           <Text> </Text>
           <Button key="worktrees" label={mode === 'worktrees' ? '[Worktrees]' : 'Worktrees'} onPress={async () => {
             await $.state.set(view, 'worktrees')
+            await $.state.set(offset, 0)
+          }} />
+          <Text> </Text>
+          <Button key="sync" label={mode === 'sync' ? '[Sync]' : 'Sync'} onPress={async () => {
+            await $.state.set(view, 'sync')
             await $.state.set(offset, 0)
           }} />
           <Text>   </Text>
@@ -249,6 +256,57 @@ export const register: Register = on => {
         </Box>
       )
     })()
+
+    // ---- the team branches: what each older one has that the next newer one lacks (read-only)
+    if (mode === 'sync') {
+      const sy = s.sync
+      const rows = hopRows(sy, only)
+      const p = page(rows, from, Math.max(2, Math.floor(size / 2)))
+      return (
+        <Box flexDirection="column">
+          {header}
+          {sy ? (
+            <Text dimColor>
+              {sy.summary.repos} repos with a team chain · {sy.summary.hopsPending} hops to sync · {sy.summary.fixesPending} fixes · {sy.summary.conflictHops} would conflict · read {ago(sy.generated, now)}
+            </Text>
+          ) : <Text dimColor>Branch sync has not been read yet.</Text>}
+          <Button key="refresh-sync" label="Refresh sync" onPress={() => sync(false, 'sync')} />
+          {sy && p.rows.length === 0 && <Text color={COLORS.ok}>{only ? 'Every team branch has what the older ones have.' : 'No repo has two team branches.'}</Text>}
+          {p.rows.map(r => {
+            const key = hopKey(r)
+            const isOpen = opened === key
+            const conflict = forecastText(r.hop.forecast)
+            return (
+              <Box key={key} flexDirection="column">
+                <Box>
+                  <Button key={`hop-${key}`} label={`${isOpen ? '▾' : '▸'} ${r.repo}  ${r.hop.from} → ${r.hop.to}`}
+                    onPress={() => $.state.set(open, isOpen ? null : key)} />
+                  <Text color={r.hop.missing ? COLORS.warn : COLORS.dim}>  {hopLine(r.hop)}  </Text>
+                  {r.hop.mode === 'cherry-pick' && <Text dimColor>cherry-pick hop  </Text>}
+                </Box>
+                {conflict && <Text color={COLORS.urgent}>      {conflict}</Text>}
+                {isOpen && (r.hop.fixes ?? []).map(f => (
+                  <Box key={`${key}-${f.key}`} flexDirection="column" marginLeft={4}>
+                    <Text color={f.state === 'skipped' ? COLORS.dim : COLORS.warn}>{fixGlyph(f)} {fixLine(f)}</Text>
+                    {f.commits.filter(c => c.state === 'skipped').map(c => <Text key={c.sha} dimColor>    skipped {c.sha.slice(0, 8)}: {c.reason ?? 'no reason given'}</Text>)}
+                  </Box>
+                ))}
+                {isOpen && r.hop.truncated && <Text dimColor>    more fixes than are listed</Text>}
+                {isOpen && (r.hop.outsideWindow ?? 0) > 0 && <Text dimColor>    {r.hop.outsideWindow} older commits are outside the window</Text>}
+              </Box>
+            )
+          })}
+          {p.total > p.rows.length && (
+            <Box>
+              <Text dimColor>{p.from}-{p.to} of {p.total}  </Text>
+              {from > 0 && <Button key="prev" label="Prev" onPress={() => $.state.set(offset, Math.max(0, from - p.rows.length))} />}
+              <Text> </Text>
+              {p.to < p.total && <Button key="next" label="Next" onPress={() => $.state.set(offset, from + p.rows.length)} />}
+            </Box>
+          )}
+        </Box>
+      )
+    }
 
     // ---- every worktree, the ones to act on first
     if (mode === 'worktrees') {
