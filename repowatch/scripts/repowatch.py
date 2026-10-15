@@ -6,6 +6,8 @@
     python repowatch.py apply <same arguments> [--allow-review]
     python repowatch.py plan|apply undo --repo NAME --id ID      (ID from `status --json` "undoable")
     python repowatch.py sync [--only NAME ...] [--json]
+    python repowatch.py graph --repo NAME --ref REF [--ref BASE] [--limit N] [--first-parent]
+    python repowatch.py show  --repo NAME --sha SHA
     python repowatch.py plan|apply sync-hop|sync-finish|sync-abort --repo NAME --hop OLDER:NEWER
     python repowatch.py plan|apply sync-skip|sync-unskip --repo NAME --hop OLDER:NEWER --sha SHA [--reason TEXT]
 
@@ -19,6 +21,11 @@ Merge-conflict forecast: for each worktree (and each diverged repo) `scan` asks 
 checkout, no change. The base is the work item's base from sdd's workitem.json, else the default
 branch. Results are cached by the two shas, so they are only recomputed when a branch moves.
 Needs git 2.38; older git says "unavailable".
+
+History graph (read-only): `graph` draws a branch's history the way `git log --graph` does and returns it as
+rows, each with git's own lane drawing, the commit's fields and its branch/tag labels. With a second ref (the
+base) the rows also say which commits are only on the branch, only on the base, or on both. `show` returns
+one commit's message and the files it changed.
 
 Branch sync (read-only): in each repo with two or more `team/*` branches on origin (`syncPattern`),
 `sync` sorts them by version (0.0.2 before 0.0.10) and, for each hop from one to the next newer one,
@@ -1367,6 +1374,121 @@ def apply_sync(root, cfg, repo, args, plan, now):
     return finish_sync(repo, plan)
 
 
+# --- history graph ---------------------------------------------------------------------------------
+
+GRAPH_FIELDS = "%H%x1f%P%x1f%an%x1f%ct%x1f%D%x1f%s"
+SHA_RE = re.compile(r"^[0-9a-f]{7,64}$")
+
+
+def parse_decorations(text, remotes):
+    """[{name, kind}] from %D: 'HEAD -> main, origin/main, tag: v1'. kind: head, local, remote, tag."""
+    refs = []
+    for part in [p.strip() for p in text.split(",") if p.strip()]:
+        if part.startswith("HEAD -> "):
+            refs.append({"name": "HEAD", "kind": "head"})
+            refs.append({"name": part[len("HEAD -> "):], "kind": "local"})
+        elif part == "HEAD":
+            refs.append({"name": "HEAD", "kind": "head"})
+        elif part.startswith("tag: "):
+            refs.append({"name": part[5:], "kind": "tag"})
+        elif part.split("/", 1)[0] in remotes and "/" in part:
+            refs.append({"name": part, "kind": "remote"})
+        else:
+            refs.append({"name": part, "kind": "local"})
+    return refs
+
+
+def parse_graph(text, remotes):
+    """Rows from `git log --graph --format=%x01<fields>`: a commit row has its fields, a connector row only `graph`."""
+    rows = []
+    for line in text.splitlines():
+        if "\x01" in line:
+            graph, rest = line.split("\x01", 1)
+            f = rest.split("\x1f")
+            if len(f) < 6:
+                continue
+            rows.append({"graph": graph.rstrip(), "sha": f[0], "parents": f[1].split(), "author": f[2],
+                         "time": int(f[3]) if f[3].isdigit() else 0, "refs": parse_decorations(f[4], remotes),
+                         "subject": f[5]})
+        elif line.strip():
+            rows.append({"graph": line.rstrip()})
+    return rows
+
+
+def good_ref(path, ref):
+    """The commit a ref names, or '' — a name that starts with '-' is never handed to git."""
+    if not ref or ref.startswith("-"):
+        return ""
+    return rev(path, ref + "^{commit}")
+
+
+def graph_for(path, refs, limit, first_parent):
+    """{rows, more, refs}: the history of refs[0], and with refs[1] (the base) which side each commit is on."""
+    if not refs or len(refs) > 4:
+        return {"error": "give one to four refs"}
+    for r in refs:
+        if not good_ref(path, r):
+            return {"error": "no such branch or commit: %s" % r}
+    limit = max(5, min(int(limit), 500))
+    remotes = set(git(["remote"], path)[1].split())
+    args = ["log", "--graph", "--no-color", "--date-order", "--format=%x01" + GRAPH_FIELDS, "-n", str(limit + 1)]
+    if first_parent:
+        args.append("--first-parent")
+    rc, out, err = git(args + list(refs) + ["--"], path, timeout=120)
+    if rc != 0:
+        return {"error": err or "git log failed"}
+    rows = parse_graph(out, remotes)
+    more = False
+    commits = [i for i, r in enumerate(rows) if "sha" in r]
+    if len(commits) > limit:
+        more = True
+        rows = rows[:commits[limit]]
+    ahead, behind = set(), set()
+    if len(refs) >= 2:
+        for ours, theirs, into in ((refs[0], refs[1], ahead), (refs[1], refs[0], behind)):
+            rc, out, _ = git(["rev-list", "--max-count=5000", ours, "--not", theirs, "--"], path, timeout=120)
+            if rc == 0:
+                into.update(out.split())
+    for r in rows:
+        if "sha" in r:
+            r["merge"] = len(r["parents"]) > 1
+            r["side"] = "branch" if r["sha"] in ahead else "base" if r["sha"] in behind else "both"
+    return {"rows": rows, "more": more, "refs": list(refs)}
+
+
+def show_commit(path, sha):
+    if not SHA_RE.match(sha or ""):
+        return {"error": "not a commit id: %s" % sha}
+    rc, out, err = git(["show", "--no-color", "--stat=100", "--format=%B", "-n", "1", sha, "--"], path, timeout=60)
+    if rc != 0:
+        return {"error": err or "git show failed"}
+    lines = out.strip("\n").splitlines()
+    return {"sha": sha, "text": "\n".join(lines[:60]), "cut": len(lines) > 60}
+
+
+def cmd_graph(a):
+    root = find_workspace()
+    repo = find_repo(root, load_config(root), a.repo)
+    if repo is None:
+        print(json.dumps({"error": "no repo named %s" % a.repo}))
+        return 2
+    res = graph_for(repo, a.ref or [], a.limit, a.first_parent)
+    res.update(repo=a.repo, limit=a.limit, firstParent=a.first_parent)
+    print(json.dumps(res))
+    return 2 if "error" in res else 0
+
+
+def cmd_show(a):
+    root = find_workspace()
+    repo = find_repo(root, load_config(root), a.repo)
+    if repo is None:
+        print(json.dumps({"error": "no repo named %s" % a.repo}))
+        return 2
+    res = show_commit(repo, a.sha)
+    print(json.dumps(res))
+    return 2 if "error" in res else 0
+
+
 # --- commands ------------------------------------------------------------------------------------
 
 def cmd_scan(a):
@@ -1453,6 +1575,16 @@ def main(argv=None):
     s = sp.add_parser("status")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
+    s = sp.add_parser("graph")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--ref", action="append", help="the branch, then (optionally) its base")
+    s.add_argument("--limit", type=int, default=40)
+    s.add_argument("--first-parent", action="store_true")
+    s.set_defaults(fn=cmd_graph)
+    s = sp.add_parser("show")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--sha", required=True)
+    s.set_defaults(fn=cmd_show)
     s = sp.add_parser("sync")
     s.add_argument("--only", nargs="*", default=[])
     s.add_argument("--json", action="store_true")

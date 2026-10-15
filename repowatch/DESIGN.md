@@ -22,6 +22,11 @@ What is built, and what is decided but not built yet. Update this when a decisio
   (a prompt filled for the person to send, not a slash command). A branch sync's worktree is labelled `sync`
   and cannot be removed from the Worktrees view.
 
+- History: `repowatch.py graph` and `show` (read-only) and the History view. git's own `--graph` drawing is parsed,
+  not redrawn, so merges and octopus lanes are right by construction; the pane colours the lanes and marks each
+  commit as branch-only, base-only or shared. A message about something the person pressed goes in `note`, not
+  `error`, because the background refresh rewrites `error` on every tick and would wipe it.
+
 Squash merges: git cannot see that a squash-merged branch is merged. Such a worktree is classed `review`
 (its upstream is gone and its commits are on no remote), and the plan lists those commits. A later step
 can ask ADO whether the PR merged and move it to `safe`.

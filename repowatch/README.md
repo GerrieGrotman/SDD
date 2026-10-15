@@ -54,6 +54,14 @@ installs with sdd.
   `syncPattern`, `syncWindowDays` and `syncMaxFixes` in `repowatch.json` tune it; `repowatch.py sync` reads
   it by hand, and `plan|apply sync-hop|sync-finish|sync-abort|sync-skip|sync-unskip --repo NAME --hop OLDER:NEWER`
   does the actions.
+- **History** (a **History** button on a repo, a worktree and a sync hop): the branch's history drawn the way
+  `git log --graph` draws it, with the lanes in colour, `HEAD`, branch, remote and tag labels, and merge commits
+  as `◆`. With a base (a worktree's base, the default branch, or the older team branch of a hop) each commit is
+  coloured by where it is: green only on the branch, blue only on the base, grey on both, so the fork point and
+  what is unmerged stand out. Press a commit id for its message and the files it changed. **Without base**,
+  **First parent only** and **Show 40 more** change what is drawn; **‹ Back** returns to where you were. It only
+  reads. `repowatch.py graph --repo NAME --ref BRANCH [--ref BASE] [--limit N] [--first-parent]` and
+  `show --repo NAME --sha SHA` do it by hand; refs that start with `-` are refused.
 - **Background scan**: local facts every minute; every fifth scan also fetches the four repos fetched
   longest ago, so dozens of repos are covered without a stall. Nothing is pulled, merged or deleted.
 

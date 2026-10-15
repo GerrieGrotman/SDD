@@ -1,5 +1,5 @@
 // Pure helpers for the repowatch pane: sorting, wording, paging. No engine calls, so view.test.ts can run them.
-import type { RwForecast, RwPlan, RwRepo, RwResult, RwState, RwSummary, RwSyncFix, RwSyncHop, RwSyncState, RwUndo, RwWorktree, WorktreeClass } from '../../types'
+import type { RwForecast, RwGraph, RwGraphRow, RwPlan, RwRepo, RwResult, RwState, RwSummary, RwSyncFix, RwSyncHop, RwSyncState, RwUndo, RwWorktree, WorktreeClass } from '../../types'
 
 /** What each flag means, in the order a person should care about it. */
 export const FLAGS: Array<{ flag: string; label: string; urgent: boolean }> = [
@@ -271,4 +271,75 @@ export function resultLine(r: RwResult): string {
   if (r.state === 'pr') return `PR ${r.pr?.id ?? '?'} opened for ${r.branch ?? 'the sync branch'}`
   if (r.state === 'conflict') return `Conflicts${r.files?.length ? ` in ${r.files.join(', ')}` : ''}: resolve them in ${r.worktree ?? 'the sync worktree'}`
   return 'done'
+}
+
+// ---- history graph
+
+export type GraphTarget = { repo: string; refs: string[]; title: string }
+
+/** The arguments of `repowatch.py graph`. A ref goes in `--ref=<value>` so it can never be read as an option. */
+export function graphArgs(g: { repo: string; refs: string[]; withBase: boolean; limit: number; firstParent: boolean }): string[] {
+  const refs = g.withBase ? g.refs : g.refs.slice(0, 1)
+  return ['graph', '--repo', g.repo, ...refs.map(r => `--ref=${r}`), '--limit', String(g.limit), ...(g.firstParent ? ['--first-parent'] : [])]
+}
+
+/** A worktree's history against its base (the base sdd recorded, else the default branch). */
+export function worktreeHistory(row: WtRow): GraphTarget | null {
+  const w = row.wt
+  const branch = w.branch ?? (w.detached ? w.head : null)
+  if (!branch || w.missing) return null
+  return { repo: row.repo, refs: w.baseRef ? [branch, w.baseRef] : [branch], title: `${row.repo} · ${w.branch ?? w.head}${w.baseRef ? ` against ${w.baseRef}` : ''}` }
+}
+
+/** A repo's current branch against its default branch (just the one when they are the same). */
+export function repoHistory(r: RwRepo): GraphTarget | null {
+  const branch = r.branch ?? (r.detached ? 'HEAD' : null)
+  if (!branch) return null
+  const base = r.defaultBranch && r.defaultBranch !== branch && !r.detached ? `origin/${r.defaultBranch}` : null
+  return { repo: r.name, refs: base ? [branch, base] : [branch], title: `${r.name} · ${branch}${base ? ` against ${base}` : ''}` }
+}
+
+/** The two team branches of a hop: the newer one first, the older one as its base. */
+export function hopHistory(repo: string, hop: RwSyncHop): GraphTarget {
+  return { repo, refs: [`origin/${hop.to}`, `origin/${hop.from}`], title: `${repo} · ${hop.from} → ${hop.to}` }
+}
+
+export const LANES = 6
+const GLYPH: Record<string, string> = { '|': '│', '\\': '╲', '/': '╱', '_': '─', '-': '─' }
+
+export type GraphSeg = { text: string; lane: number }
+
+/** One row's lane drawing as runs of one colour: git's `*`, `|`, `\`, `/` in box characters, the lane from the column. */
+export function graphSegments(row: RwGraphRow, width: number): GraphSeg[] {
+  const segs: GraphSeg[] = []
+  const padded = row.graph.padEnd(width, ' ')
+  for (let i = 0; i < padded.length; i++) {
+    const c = padded[i]
+    const text = c === '*' ? (row.merge ? '◆' : '●') : GLYPH[c] ?? c
+    const lane = c === ' ' ? -1 : Math.floor(i / 2) % LANES
+    const last = segs[segs.length - 1]
+    if (last && last.lane === lane) last.text += text
+    else segs.push({ text, lane })
+  }
+  return segs
+}
+
+export function graphWidth(rows: RwGraphRow[]): number {
+  return rows.reduce((w, r) => Math.max(w, r.graph.length), 0) + 1
+}
+
+const KIND_ORDER = ['head', 'local', 'remote', 'tag']
+
+/** "HEAD", "main", "origin/main", "v1": the labels on a commit, the checked-out one and branches first. */
+export function refNames(row: RwGraphRow): Array<{ name: string; kind: string }> {
+  return [...(row.refs ?? [])].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind))
+}
+
+export function commitMeta(row: RwGraphRow, nowSeconds: number): string {
+  return `${row.author ?? ''} · ${ago(row.time, nowSeconds)}`
+}
+
+/** What the legend says each colour of a commit means, for a branch with a base. */
+export function sideLegend(g: RwGraph): string {
+  return g.withBase && g.refs.length > 1 ? `green: only on ${g.refs[0]} · blue: only on ${g.refs[1]} · grey: on both` : ''
 }

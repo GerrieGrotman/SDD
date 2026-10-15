@@ -5,26 +5,35 @@
 // confirmed: `repowatch.py plan` builds it from the live repo, `repowatch.py apply` checks again.
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { RwPlan, RwResult, RwState } from '../types'
+import type { RwGraph, RwPlan, RwResult, RwState } from '../types'
 import {
   actionArgs, ago, baseText, branchText, bulkRows, classLabel, conflictToast, dedupePrune, flagLabel, forecastText, isUrgent,
   fixGlyph, fixLine, hopKey, hopLine, hopRows, mergeAskText, page, planArgs, planGist, resolveAskText, resultLine, sddRemoveText,
   statusText, stepText, syncArgs, undoArgs, undoLabel, visibleRepos, worktreeRows,
+  commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory,
 } from './view/model'
+import type { GraphTarget } from './view/model'
 
 const PANE = 'repowatch'
 const state = { plugin: 'repowatch', key: 'state' } as const
 const error = { plugin: 'repowatch', key: 'error' } as const
+const note = { plugin: 'repowatch', key: 'note' } as const
 const onlyAttention = { plugin: 'repowatch', key: 'onlyAttention' } as const
 const offset = { plugin: 'repowatch', key: 'offset' } as const
 const open = { plugin: 'repowatch', key: 'open' } as const
 const busy = { plugin: 'repowatch', key: 'busy' } as const
 const view = { plugin: 'repowatch', key: 'view' } as const
 const plans = { plugin: 'repowatch', key: 'plans' } as const
+const graph = { plugin: 'repowatch', key: 'graph' } as const
+const commit = { plugin: 'repowatch', key: 'commit' } as const
 
 const SCAN_EVERY_MS = 60_000
 const FETCH_EVERY_SCANS = 5
 const COLORS = { urgent: '#c0503f', warn: '#c98a12', ok: '#3f9a63', dim: '#7b8794' }
+const LANE_COLORS = ['#4a7fc4', '#3f9a63', '#c98a12', '#8a73c9', '#c0503f', '#2aa5a5']
+const SIDE_COLOR = { branch: '#3f9a63', base: '#4a7fc4', both: undefined } as const
+const REF_COLOR: Record<string, string> = { head: '#c98a12', local: '#3f9a63', remote: '#4a7fc4', tag: '#8a73c9' }
+const GRAPH_STEP = 40
 const CLASS_COLOR: Record<string, string> = { safe: COLORS.ok, prune: COLORS.warn, review: COLORS.warn, keep: COLORS.urgent, ok: COLORS.dim }
 
 let python = 'python'  // module state: lost on reload, which is fine
@@ -95,6 +104,20 @@ async function applyPlans($: EngineInterface, todo: RwPlan[]): Promise<RwResult[
   return out
 }
 
+/** The history of some refs, read-only. A refusal (no such branch) comes back as the error it is. */
+async function loadGraph($: EngineInterface, g: { repo: string; refs: string[]; withBase: boolean; limit: number; firstParent: boolean }): Promise<{ rows: RwGraph['rows']; more: boolean }> {
+  const out = JSON.parse(await run($, graphArgs(g), 120_000)) as { rows?: RwGraph['rows']; more?: boolean; error?: string }
+  if (out.error || !out.rows) throw new Error(out.error ?? 'no history')
+  return { rows: out.rows, more: !!out.more }
+}
+
+/** One commit's message and changed files, read-only. */
+async function loadCommit($: EngineInterface, repo: string, sha: string): Promise<{ sha: string; text: string }> {
+  const out = JSON.parse(await run($, ['show', '--repo', repo, '--sha', sha], 60_000)) as { text?: string; error?: string }
+  if (out.error || out.text == null) throw new Error(out.error ?? 'no such commit')
+  return { sha, text: out.text }
+}
+
 function resultText(rs: RwResult[]): string {
   const ok = rs.filter(r => r.ok).length
   const bad = rs.filter(r => !r.ok)
@@ -152,12 +175,15 @@ export const register: Register = on => {
     const Input = 'Input' in t ? t.Input : undefined
     const s = (await $.state.get(state)).value ?? null
     const why = (await $.state.get(error)).value ?? null
+    const said = (await $.state.get(note)).value ?? null
     const only = (await $.state.get(onlyAttention)).value ?? true
     const from = (await $.state.get(offset)).value ?? 0
     const opened = (await $.state.get(open)).value ?? null
     const working = (await $.state.get(busy)).value ?? null
     const mode = (await $.state.get(view)).value ?? 'repos'
     const pending = (await $.state.get(plans)).value ?? null
+    const g = (await $.state.get(graph)).value ?? null
+    const shown = (await $.state.get(commit)).value ?? null
     const now = Math.floor(Date.now() / 1000)
 
     // what the presses do; they run after the drawing, so they may write
@@ -178,6 +204,48 @@ export const register: Register = on => {
       await $.state.set(busy, null)
     }
     // `reason` is the person's own words for a skipped commit; the plan's default stands when they typed none
+    // a History button: read the history of some refs and switch to it; Back returns to where it was opened
+    const openGraph = (target: GraphTarget | null) => async () => {
+      if (!target) return
+      const next = { repo: target.repo, refs: target.refs, withBase: target.refs.length > 1, firstParent: false, limit: GRAPH_STEP }
+      await $.state.set(busy, 'reading history')
+      try {
+        const r = await loadGraph($, next)
+        await $.state.set(graph, { ...next, ...r, title: target.title, back: mode === 'graph' ? 'repos' : mode })
+        await $.state.set(commit, null)
+        await $.state.set(view, 'graph')
+        await $.state.set(offset, 0)
+        await $.state.set(note, null)
+      } catch (err) {
+        await $.state.set(note, String(err instanceof Error ? err.message : err))
+      }
+      await $.state.set(busy, null)
+    }
+    // the same history with another setting (more rows, first parent only, without the base)
+    const regraph = (patch: Partial<Pick<RwGraph, 'withBase' | 'firstParent' | 'limit'>>) => async () => {
+      if (!g) return
+      const next = { ...g, ...patch }
+      await $.state.set(busy, 'reading history')
+      try {
+        const r = await loadGraph($, next)
+        await $.state.set(graph, { ...next, ...r })
+        await $.state.set(note, null)
+      } catch (err) {
+        await $.state.set(note, String(err instanceof Error ? err.message : err))
+      }
+      await $.state.set(busy, null)
+    }
+    const showCommit = (repo: string, sha: string) => async () => {
+      if (shown?.sha === sha) {
+        await $.state.set(commit, null)
+        return
+      }
+      try {
+        await $.state.set(commit, await loadCommit($, repo, sha))
+      } catch (err) {
+        await $.state.set(note, String(err instanceof Error ? err.message : err))
+      }
+    }
     const confirm = (todo: RwPlan[], reason?: string) => async () => {
       await $.state.set(busy, 'cleaning up')
       const withReason = reason ? todo.map(p => (p.decision ? { ...p, decision: { ...p.decision, reason } } : p)) : todo
@@ -220,6 +288,7 @@ export const register: Register = on => {
         </Box>
         {working && <Text color={COLORS.warn}>{working === 'fetch' ? 'Fetching…' : working === 'scan' ? 'Scanning…' : `${working[0].toUpperCase()}${working.slice(1)}…`}</Text>}
         {why && <Text color={COLORS.urgent}>{why}</Text>}
+        {said && <Text color={COLORS.urgent}>{said}</Text>}
       </Box>
     )
 
@@ -268,6 +337,49 @@ export const register: Register = on => {
       )
     })()
 
+    // ---- the history of a branch, drawn as git draws it (read-only)
+    if (mode === 'graph' && g) {
+      const width = graphWidth(g.rows)
+      const legend = sideLegend(g)
+      return (
+        <Box flexDirection="column">
+          {header}
+          <Box>
+            <Button key="graph-back" label="‹ Back" onPress={async () => {
+              await $.state.set(note, null)
+              await $.state.set(view, g.back)
+            }} />
+            <Text bold>  {g.title}</Text>
+          </Box>
+          <Box>
+            {g.refs.length > 1 && <Button key="graph-base" label={g.withBase ? 'Without base' : 'With base'} onPress={regraph({ withBase: !g.withBase })} />}
+            <Text> </Text>
+            <Button key="graph-fp" label={g.firstParent ? 'All parents' : 'First parent only'} onPress={regraph({ firstParent: !g.firstParent })} />
+          </Box>
+          {legend && <Text dimColor>{legend}</Text>}
+          {g.rows.map((r, i) => (
+            <Box key={`g${i}`} flexDirection="column">
+              <Box>
+                {graphSegments(r, width).map((seg, j) => (
+                  <Text key={`s${j}`} color={seg.lane >= 0 ? LANE_COLORS[seg.lane] : undefined}>{seg.text}</Text>
+                ))}
+                {r.sha && <Button key={`c-${r.sha.slice(0, 7)}`} label={r.sha.slice(0, 7)} onPress={showCommit(g.repo, r.sha)} />}
+                {r.sha && refNames(r).map(x => <Text key={`${r.sha}-${x.name}`} color={REF_COLOR[x.kind]} bold={x.kind === 'head'}> [{x.name}]</Text>)}
+                {r.sha && <Text color={SIDE_COLOR[r.side ?? 'both']} dimColor={r.side === 'both'}> {(r.subject ?? '').slice(0, 72)}</Text>}
+                {r.sha && <Text dimColor>  {commitMeta(r, now)}</Text>}
+              </Box>
+              {r.sha && shown?.sha === r.sha && (
+                <Box flexDirection="column" marginLeft={width + 2}>
+                  {shown.text.split('\n').slice(0, 30).map((line, k) => <Text key={`d${k}`} dimColor>{line}</Text>)}
+                </Box>
+              )}
+            </Box>
+          ))}
+          {g.more && <Button key="graph-more" label={`Show ${GRAPH_STEP} more`} onPress={regraph({ limit: g.limit + GRAPH_STEP })} />}
+        </Box>
+      )
+    }
+
     // ---- the team branches: what each older one has that the next newer one lacks (read-only)
     if (mode === 'sync') {
       const sy = s.sync
@@ -295,6 +407,7 @@ export const register: Register = on => {
                     onPress={() => $.state.set(open, isOpen ? null : key)} />
                   <Text color={r.hop.missing ? COLORS.warn : COLORS.dim}>  {hopLine(r.hop)}  </Text>
                   {r.hop.mode === 'cherry-pick' && <Text dimColor>cherry-pick hop  </Text>}
+                  <Button key={`hist-${key}`} label="History" onPress={openGraph(hopHistory(r.repo, r.hop))} />
                 </Box>
                 {conflict && <Text color={COLORS.urgent}>      {conflict}</Text>}
                 {r.hop.inProgress ? (
@@ -372,6 +485,7 @@ export const register: Register = on => {
                   <Text>{r.repo} · {w.branch ?? '(detached)'}  </Text>
                   {w.owner === 'sdd' && <Text dimColor>sdd {w.workItem ?? ''}  </Text>}
                   {w.owner === 'sync' && <Text dimColor>branch sync  </Text>}
+                  <Button key={`hist-${w.path}`} label="History" onPress={openGraph(worktreeHistory(r))} />
                   {args && !pending && (
                     <Button key={`act-${w.path}`} label={w.class === 'prune' ? 'Prune' : w.class === 'review' ? 'Review…' : 'Remove…'} onPress={propose([args])} />
                   )}
@@ -429,7 +543,10 @@ export const register: Register = on => {
               </Box>
               {isOpen && (
                 <Box flexDirection="column" marginLeft={3}>
-                  <Text dimColor>{r.path}</Text>
+                  <Box>
+                    <Text dimColor>{r.path}  </Text>
+                    {repoHistory(r) && <Button key={`hist-${r.name}`} label="History" onPress={openGraph(repoHistory(r))} />}
+                  </Box>
                   <Text dimColor>
                     default {r.defaultBranch ?? '?'} · fetched {ago(r.lastFetch, now)} · {r.dirty ?? 0} uncommitted · {r.stashes ?? 0} stashes · {r.branches ?? 0} branches
                   </Text>

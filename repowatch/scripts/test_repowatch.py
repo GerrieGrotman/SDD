@@ -681,6 +681,95 @@ def test_sync_actions():
         assert rw.no_ids("fix #12 and #3") == "fix 12 and 3"
 
 
+def test_graph():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        gitcfg = tmp / "gitconfig"
+        gitcfg.write_text("[user]\n\tname = Dev\n\temail = dev@x.co\n[init]\n\tdefaultBranch = main\n")
+        os.environ["GIT_CONFIG_GLOBAL"] = str(gitcfg)
+        ws, origins = tmp / "ws", tmp / "origins"
+        for d in (ws, origins, ws / ".claude"):
+            d.mkdir()
+        (ws / ".claude" / "repowatch.json").write_text("{}")
+        app = make_repo(ws, origins, "app")  # main: one commit, pushed
+        commit(app, "m2.txt", "x\n", "main two")
+        sh(["git", "tag", "v1"], app)
+        sh(["git", "checkout", "-q", "-b", "feat/x"], app)
+        commit(app, "f1.txt", "x\n", "feature one\n\nA body line")
+        commit(app, "f2.txt", "x\n", "feature two")
+        sh(["git", "checkout", "-q", "main"], app)
+        commit(app, "m3.txt", "x\n", "main three")
+        sh(["git", "merge", "-q", "--no-ff", "feat/x", "-m", "Merge feat/x"], app)
+        commit(app, "m4.txt", "x\n", "main four")
+        sh(["git", "push", "-q", "origin", "main"], app)
+        sh(["git", "checkout", "-q", "-b", "feat/y", "main~3"], app)  # cut from "main two"
+        commit(app, "y1.txt", "x\n", "y one")
+        sh(["git", "checkout", "-q", "main"], app)
+
+        def graph(*args):
+            r = subprocess.run([PY, str(HERE / "repowatch.py"), "graph", "--repo", "app"] + list(args), cwd=str(ws),
+                               capture_output=True, text=True)
+            return r.returncode, (json.loads(r.stdout) if r.stdout.strip() else {})
+
+        # main's own history: a merge commit, its two parents, branch and tag labels, git's lane drawing
+        rc, g = graph("--ref", "main")
+        assert rc == 0 and not g["more"], g
+        commits = [r for r in g["rows"] if "sha" in r]
+        subjects = [r["subject"] for r in commits]
+        assert subjects[0] == "main four" and "Merge feat/x" in subjects and subjects[-1].startswith("add a.txt"), subjects
+        merge = [r for r in commits if r["merge"]][0]
+        assert merge["subject"] == "Merge feat/x" and len(merge["parents"]) == 2, merge
+        assert any(not r.get("sha") for r in g["rows"]), "connector rows are kept"
+        assert all(r["graph"].lstrip().startswith(("*", "|", "\\", "/")) or r["graph"] == "" for r in g["rows"])
+        assert commits[0]["graph"].startswith("*"), commits[0]["graph"]
+        top = commits[0]["refs"]
+        assert {"name": "HEAD", "kind": "head"} in top and {"name": "main", "kind": "local"} in top and \
+            {"name": "origin/main", "kind": "remote"} in top, top
+        assert {"name": "v1", "kind": "tag"} in [x for r in commits for x in r["refs"]]
+        assert {r["side"] for r in commits} == {"both"}  # one ref: no sides
+
+        # a branch against its base: which commits are only on the branch, only on the base, on both
+        rc, g = graph("--ref", "feat/y", "--ref", "main")
+        sides = {r["subject"]: r["side"] for r in g["rows"] if "sha" in r}
+        assert sides["y one"] == "branch" and sides["main four"] == "base" and sides["Merge feat/x"] == "base", sides
+        assert sides["main two"] == "both", sides
+        rc, g = graph("--ref", "main", "--ref", "feat/y")
+        sides = {r["subject"]: r["side"] for r in g["rows"] if "sha" in r}
+        assert sides["main four"] == "branch" and sides["y one"] == "base", sides
+
+        # a limit, first-parent
+        rc, g = graph("--ref", "main", "--limit", "5")
+        assert g["more"] and len([r for r in g["rows"] if "sha" in r]) == 5, g["more"]
+        rc, g = graph("--ref", "main", "--first-parent")
+        fp = [r["subject"] for r in g["rows"] if "sha" in r]
+        assert "feature one" not in fp and "Merge feat/x" in fp, fp
+        rc, g = graph("--ref", "main")
+        assert "feature one" in [r["subject"] for r in g["rows"] if "sha" in r]
+
+        # refs that are not refs, or look like options, never reach git as an argument
+        for bad in ("nope", "--all", "-n1", "--output=/tmp/x", ""):
+            rc, g = graph("--ref=" + bad)  # the = form hands the value over whole, so the script's own check is what runs
+            assert rc == 2 and "error" in g, (bad, g)
+        assert graph("--ref", "main", "--ref=--exec=x")[0] == 2
+        assert graph("--ref", "--all")[0] == 2  # argparse stops this one before the script
+        assert subprocess.run([PY, str(HERE / "repowatch.py"), "graph", "--repo", "nope", "--ref", "main"], cwd=str(ws),
+                              capture_output=True, text=True).returncode == 2
+
+        # show: one commit's message and the files it changed; only a commit id is accepted
+        sha = [r["sha"] for r in commits if r["subject"] == "main four"][0]
+        r = subprocess.run([PY, str(HERE / "repowatch.py"), "show", "--repo", "app", "--sha", sha], cwd=str(ws), capture_output=True, text=True)
+        out = json.loads(r.stdout)
+        assert r.returncode == 0 and "main four" in out["text"] and "m4.txt" in out["text"], out
+        for bad in ("--help", "HEAD", "main", "zzzz"):
+            r = subprocess.run([PY, str(HERE / "repowatch.py"), "show", "--repo", "app", "--sha", bad], cwd=str(ws), capture_output=True, text=True)
+            assert r.returncode == 2, (bad, r.stdout)
+        # the graph command changes nothing: same refs, same state before and after
+        assert git_out(app, "status", "--porcelain") == ""
+        assert rw.parse_decorations("HEAD -> main, origin/main, tag: v1, feat/x", {"origin"}) == [
+            {"name": "HEAD", "kind": "head"}, {"name": "main", "kind": "local"}, {"name": "origin/main", "kind": "remote"},
+            {"name": "v1", "kind": "tag"}, {"name": "feat/x", "kind": "local"}]
+
+
 def posix_path(p):
     return str(p).replace("\\", "/")
 
@@ -697,6 +786,7 @@ def main():
     test_forecast()
     test_sync()
     test_sync_actions()
+    test_graph()
     print("ok")
 
 

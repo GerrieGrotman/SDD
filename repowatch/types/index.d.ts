@@ -86,6 +86,37 @@ export type RwSyncState = {
   summary: { repos: number; hopsPending: number; fixesPending: number; conflictHops: number }
 }
 
+/** One line of `git log --graph`: a commit with its fields, or only the connecting lines of the drawing. */
+export type RwGraphRow = {
+  /** git's own lane drawing for the line: `* | `, `|\\`, `|/` ... */
+  graph: string
+  sha?: string
+  parents?: string[]
+  author?: string
+  /** Epoch seconds. */
+  time?: number
+  refs?: Array<{ name: string; kind: 'head' | 'local' | 'remote' | 'tag' }>
+  subject?: string
+  merge?: boolean
+  /** With a base: only on the branch, only on the base, or on both. */
+  side?: 'branch' | 'base' | 'both'
+}
+
+/** The history the pane shows, and how to ask for it again. */
+export type RwGraph = {
+  repo: string
+  title: string
+  /** The branch first, then (optionally) its base. */
+  refs: string[]
+  withBase: boolean
+  firstParent: boolean
+  limit: number
+  rows: RwGraphRow[]
+  more: boolean
+  /** The view the Back button returns to. */
+  back: 'repos' | 'worktrees' | 'sync'
+}
+
 /** A finished clean-up that can be put back. */
 export type RwUndo = { id: string; at: number; action: string; repo: string; path: string | null; branch: string | null }
 
@@ -189,6 +220,8 @@ declare module 'claude-code' {
     repowatch: {
       state: RwState | null
       error: string | null
+      /** What the last thing the person pressed said when it could not be done (the background refresh never clears it). */
+      note: string | null
       /** Show only repos that need attention. */
       onlyAttention: boolean
       /** First row of the page shown. */
@@ -198,9 +231,13 @@ declare module 'claude-code' {
       /** A scan, fetch or clean-up is running. */
       busy: string | null
       /** What the pane lists: the repos, or every worktree. */
-      view: 'repos' | 'worktrees' | 'sync'
+      view: 'repos' | 'worktrees' | 'sync' | 'graph'
       /** Plans waiting for the person's confirm; null = none. */
       plans: RwPlan[] | null
+      /** The history graph being shown, or null. */
+      graph: RwGraph | null
+      /** The commit whose details are open in the graph, and what `show` said about it. */
+      commit: { sha: string; text: string } | null
     }
   }
 }

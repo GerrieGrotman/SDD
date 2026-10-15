@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
-import type { RwPlan, RwRepo, RwResult, RwSummary, RwSyncFix, RwSyncState, RwWorktree, WorktreeClass } from '../types'
-import { actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
+import type { RwGraph, RwPlan, RwRepo, RwResult, RwSummary, RwSyncFix, RwSyncState, RwWorktree, WorktreeClass } from '../types'
+import { commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory, actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
 
 const repo = (name: string, flags: string[], extra: Partial<RwRepo> = {}): RwRepo => ({ name, path: `/ws/${name}`, scannedAt: 0, flags, ...extra })
 
@@ -175,4 +175,44 @@ test('hiding the worktrees in use still shows the ones whose merge will conflict
   ] } } }
   expect(worktreeRows(state, true).map(r => r.wt.branch)).toEqual(['clash'])
   expect(worktreeRows(state, false).length).toBe(3)
+})
+
+test('a history is asked for with refs that cannot be read as options', () => {
+  const g = { repo: 'app', refs: ['feat/x', 'origin/main'], withBase: true, limit: 40, firstParent: false }
+  expect(graphArgs(g)).toEqual(['graph', '--repo', 'app', '--ref=feat/x', '--ref=origin/main', '--limit', '40'])
+  expect(graphArgs({ ...g, withBase: false, firstParent: true })).toEqual(['graph', '--repo', 'app', '--ref=feat/x', '--limit', '40', '--first-parent'])
+  expect(graphArgs({ ...g, refs: ['--all'] })).toEqual(['graph', '--repo', 'app', '--ref=--all', '--limit', '40'])
+})
+
+test('each place a history opens from names the branch and what it is measured against', () => {
+  expect(worktreeHistory({ repo: 'a', wt: wt('ok', { branch: 'feat/x', baseRef: 'origin/team/1' }) })).toEqual(
+    { repo: 'a', refs: ['feat/x', 'origin/team/1'], title: 'a · feat/x against origin/team/1' })
+  expect(worktreeHistory({ repo: 'a', wt: wt('ok', { branch: 'feat/x' }) })?.refs).toEqual(['feat/x'])
+  expect(worktreeHistory({ repo: 'a', wt: wt('prune', { missing: true }) })).toBe(null)
+  expect(repoHistory({ ...repo('a', []), branch: 'dev', defaultBranch: 'main' })?.refs).toEqual(['dev', 'origin/main'])
+  expect(repoHistory({ ...repo('a', []), branch: 'main', defaultBranch: 'main' })?.refs).toEqual(['main'])
+  expect(repoHistory({ ...repo('a', []), branch: null, detached: true, defaultBranch: 'main' })?.refs).toEqual(['HEAD'])
+  expect(hopHistory('a', { from: 'team/0.0.1', to: 'team/0.0.2' })).toEqual(
+    { repo: 'a', refs: ['origin/team/0.0.2', 'origin/team/0.0.1'], title: 'a · team/0.0.1 → team/0.0.2' })
+})
+
+test('git\'s lane drawing becomes box characters in coloured runs', () => {
+  const c = { graph: '* | ', sha: 'a', merge: false }
+  expect(graphSegments(c, 6)).toEqual([{ text: '●', lane: 0 }, { text: ' ', lane: -1 }, { text: '│', lane: 1 }, { text: '   ', lane: -1 }])
+  expect(graphSegments({ graph: '*', merge: true }, 2)).toEqual([{ text: '◆', lane: 0 }, { text: ' ', lane: -1 }])
+  expect(graphSegments({ graph: '|\\ ' }, 3)).toEqual([{ text: '│╲', lane: 0 }, { text: ' ', lane: -1 }])
+  expect(graphSegments({ graph: '| |/' }, 4).map(s => s.text).join('')).toBe('│ │╱')
+  expect(graphWidth([{ graph: '* |' }, { graph: '|\\ ' }])).toBe(4)
+  // far lanes wrap round the palette
+  expect(graphSegments({ graph: '| | | | | | | ' }, 14).map(s => s.lane).filter(l => l >= 0)).toEqual([0, 1, 2, 3, 4, 5, 0])
+})
+
+test('labels, meta and the legend read plainly', () => {
+  const row = { graph: '*', author: 'Ann', time: 1000 - 7200, refs: [{ name: 'v1', kind: 'tag' as const }, { name: 'origin/main', kind: 'remote' as const },
+    { name: 'main', kind: 'local' as const }, { name: 'HEAD', kind: 'head' as const }] }
+  expect(refNames(row).map(r => r.name)).toEqual(['HEAD', 'main', 'origin/main', 'v1'])
+  expect(commitMeta(row, 1000)).toBe('Ann · 2h ago')
+  const g: RwGraph = { repo: 'a', title: 't', refs: ['feat/x', 'origin/main'], withBase: true, firstParent: false, limit: 40, rows: [], more: false, back: 'repos' }
+  expect(sideLegend(g)).toBe('green: only on feat/x · blue: only on origin/main · grey: on both')
+  expect(sideLegend({ ...g, withBase: false })).toBe('')
 })
