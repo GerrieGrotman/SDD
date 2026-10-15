@@ -374,7 +374,7 @@ export function shortStamp(at: string | undefined): string {
 }
 
 /** A rail picture is this wide and this high: the rows are as high as the slice, so the slices join into one rail. */
-export const RAIL = { w: 40, h: 46, mid: 23, x: 20 }
+export const RAIL = { w: 40, h: 46, mid: 23, x: 20, gap: 6 }
 const PIC_FONT = '-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
 const PIC_BG = '#1d2126'
 
@@ -388,16 +388,25 @@ const stageTone = (m: Mark, colors: SddColors): string => ({ done: colors.done, 
 /** A rail line is solid green behind the work, dashed ahead of it. */
 const behind = (m: Mark): boolean => m === 'done' || m === 'skipped'
 
+/** The colour of the bar beside an open stage's detail: green behind the work, the stage's own colour while it is worked on or
+ *  waits on the person (yellow for waiting), grey for what is ahead. */
+export function railBarColor(mark: Mark, colors: SddColors): string {
+  return behind(mark) ? colors.done : mark === 'waiting' || mark === 'active' || mark === 'blocked' ? stageTone(mark, colors) : colors.line
+}
+
 /** One stage's piece of the rail: the node, and the line to the stage above and below. Rows as high as the slice join up. */
-export function railSlice(input: { mark: Mark; prevMark: Mark | null; hasNext: boolean; conditional?: boolean; colors: SddColors }): FlowPicture {
+export function railSlice(input: { mark: Mark; prevMark: Mark | null; hasNext: boolean; conditional?: boolean; colors: SddColors;
+  open?: boolean; prevOpen?: boolean }): FlowPicture {
   const { mark, prevMark, hasNext, colors } = input
   const col = stageTone(mark, colors)
   const quiet = mark === 'later' || mark === 'next'
   const line = (y1: number, y2: number, done: boolean) =>
     `<line x1="${RAIL.x}" y1="${y1}" x2="${RAIL.x}" y2="${y2}" stroke="${done ? colors.done : colors.line}" stroke-width="3"${done ? '' : ' stroke-dasharray="4 4"'}/>`
+  // beside an open stage's detail the rail is the bar of colour, which cannot line up to the pixel: the slices stop short of it, so a gap hides the difference
+  const solid = (y1: number, y2: number, color: string) => `<line x1="${RAIL.x}" y1="${y1}" x2="${RAIL.x}" y2="${y2}" stroke="${color}" stroke-width="3"/>`
   const parts = [
-    prevMark ? line(0, RAIL.mid, behind(prevMark)) : '',
-    hasNext ? line(RAIL.mid, RAIL.h, behind(mark)) : '',
+    prevMark ? (input.prevOpen ? solid(RAIL.gap, RAIL.mid, railBarColor(prevMark, colors)) : line(0, RAIL.mid, behind(prevMark))) : '',
+    hasNext ? (input.open ? solid(RAIL.mid, RAIL.h - RAIL.gap, railBarColor(mark, colors)) : line(RAIL.mid, RAIL.h, behind(mark))) : '',
     mark === 'waiting' || mark === 'active' || mark === 'blocked' ? `<circle cx="${RAIL.x}" cy="${RAIL.mid}" r="14" fill="none" stroke="${col}" stroke-width="2" opacity="0.5"/>` : '',
     `<circle cx="${RAIL.x}" cy="${RAIL.mid}" r="10" fill="${quiet ? PIC_BG : col}" stroke="${col}" stroke-width="2"${input.conditional || mark === 'skipped' || mark === 'missed' ? ' stroke-dasharray="3 2"' : ''}/>`,
     `<text x="${RAIL.x}" y="${RAIL.mid + 4}" text-anchor="middle" font-family="${PIC_FONT}" font-size="11" font-weight="700" fill="${quiet ? col : '#ffffff'}">${xml(GLYPH[mark])}</text>`,

@@ -182,6 +182,12 @@ test('desktop: each stage is a button with a rail slice, and the picked stage op
   expect((await ui.find({ key: 'stagegap-Design' })).props.width).toBe('39%')          // the bar's middle: (39% + 3%) of 48 px = 20 px, the slices' rail
   expect(bar.props.width).toBe('6%')                                                  // as thin as the rail in the slices
   expect((await ui.find({ key: 'stagewrap-Design' })).props.alignItems).toBe('stretch')
+  const waitingBar = bar.props.backgroundColor
+  await ui.press({ key: 'row:Specify' })                                               // a finished stage's bar is another colour
+  await until(async () => !!(await ui.find({ key: 'stagebar-Specify' })))
+  expect((await ui.find({ key: 'stagebar-Specify' })).props.backgroundColor).not.toBe(waitingBar)
+  await ui.press({ key: 'row:Design' })
+  await until(async () => !!(await ui.find({ key: 'stagebar-Design' })))
   expect((await ui.findAll({ type: 'Svg' })).filter((x: any) => x.props.height === 48)).toHaveLength(0)
   const detail = await ui.find({ key: 'stagedetail-Design' })
   expect(detail).toBeTruthy()                                                          // the pane opens on the stage the item is at
