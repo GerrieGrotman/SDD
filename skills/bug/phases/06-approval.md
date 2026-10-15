@@ -9,7 +9,7 @@ the right code. What is still missing is permission to touch anything in that wo
 
 Build the `sdd:visual` **bug** page (`visuals/bug.html`) from the summary below, pass it as a
 `--ref` on the waiting checkpoint and send it. The summary below goes **on the page, not in chat** —
-the chat gets one line naming the page and the Links block, then ask with `AskUserQuestion` — "Approve — write the failing test" / "Needs changes" — and **wait for that explicit approval**. Do not edit a file or write a test
+the chat gets one line naming the page, then the Links block, then — directly after it, with no gap — ask with `AskUserQuestion` — "Approve — write the failing test" / "Needs changes" — and **wait for that explicit approval**. Do not edit a file or write a test
 until the user says go. If they ask for changes, revise and re-present.
 
 Write each line in the house style — one idea per sentence, active voice, small words. One or two

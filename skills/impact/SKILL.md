@@ -11,7 +11,7 @@ sync is what keeps the local specs complete. So every report says which scopes i
 ## Decision briefs — links before every question (mandatory)
 
 Before any question to the user, run `env.py refs --id <id> --ref <ref> ...` (or the waiting
-checkpoint, which requires `--ref`), paste its "Links" block in the chat above the question (never a link inside the question or its options), send the files it
+checkpoint, which requires `--ref`), paste its "Links" block in the chat directly above the question, with no gap (never a link inside the question or its options), send the files it
 lists with `SendUserFile` (`display: "render"`) when that tool exists, and quote any code lines
 marked "not pushed". Build the `sdd:visual` **impact** page first (`visuals/impact.html`, or
 `visuals/impact-all.html`) and pass it as a `--ref`. Full rule: "Decision briefs" in `${CLAUDE_PLUGIN_ROOT}/skills/sdd/references/flow-rules.md`. No links, no question.

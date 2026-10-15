@@ -13,9 +13,10 @@ start Requirements until this stage is done.
 2. **List and explain first. Ask nothing yet.** Build an `sdd:visual` page
    (`visuals/open-questions.html`) that lists every open question, where it came from (work item gap
    or impact gap), and the situation: what the requirement says, what is unclear, and what each
-   answer would change. Send it, paste the Links block (see "Decision briefs"), and open the chat
-   with a short intro: how many questions there are, and that you will ask them one at a time. Only
-   then ask the first one.
+   answer would change. Send it, and open the chat
+   with a short intro: how many questions there are, and that you will ask them one at a time. Then
+   paste the Links block (see "Decision briefs") and ask the first one directly after it, with
+   nothing in between.
 3. **Ask one question at a time** with `AskUserQuestion`: one question per call, never batched. Offer
    the likely answers as options when there are any (the built-in "Other" takes anything else), and
    **always end with the option "Continue with this open"**. Checkpoint each ask:

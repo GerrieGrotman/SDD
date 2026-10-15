@@ -129,7 +129,7 @@ Run it after changing a script.
 - **PreToolUse on `AskUserQuestion`** — blocks the question unless this turn ran `env.py refs` or a
   `--status waiting` checkpoint, or the chat already shows a Links block (the chat text is not always
   in the transcript yet when the hook runs, so the script run is the reliable signal), and blocks any question whose
-  text or options contain a link: links go in the chat above the question, never inside it.
+  text or options contain a link: links go in the chat directly above the question (no gap), never inside it.
 - **Stop** — when a turn ends with a plain-text question, sends the agent back to ask it with
   `AskUserQuestion` and its Links block. It fires once per turn, so it can never loop.
 
