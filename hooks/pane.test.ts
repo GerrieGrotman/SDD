@@ -175,13 +175,16 @@ test('desktop: each stage is a button with a rail slice, and the picked stage op
   expect(await ui.find({ key: 'pick-stage' })).toBe(undefined)                         // no picker row: the stages are the picker
   expect(await ui.find({ key: 'stage-next' })).toBe(undefined)
   const rail = await ui.find({ key: 'stagerail-Design' })                              // the rail runs on beside the open detail
-  expect(rail.props.position).toBe('absolute')
-  expect([rail.props.top, rail.props.bottom, rail.props.left, rail.props.overflow]).toEqual([0, 0, 0, 'hidden'])
-  expect((await ui.findAll({ type: 'Svg' })).filter((x: any) => x.props.height === 48)).toHaveLength(20)
+  expect(rail.props.width).toBe(6)                                                     // as wide as the slice and its gap
+  const bar = await ui.find({ key: 'stagebar-Design' })
+  expect(bar.props.backgroundColor).toBeTruthy()                                       // a bar of colour: it stretches to the detail's height
+  expect(bar.props.width).toBe(1)
+  expect((await ui.find({ key: 'stagewrap-Design' })).props.alignItems).toBe('stretch')
+  expect((await ui.findAll({ type: 'Svg' })).filter((x: any) => x.props.height === 48)).toHaveLength(0)
   const detail = await ui.find({ key: 'stagedetail-Design' })
   expect(detail).toBeTruthy()                                                          // the pane opens on the stage the item is at
   expect(detail.props.borderStyle).toBe(undefined)                                     // no frame: it would run over the rail
-  expect(detail.props.marginLeft).toBeGreaterThanOrEqual(6)                            // it starts right of the 40 px rail slice
+  expect(detail.props.minWidth).toBe(0)
   expect((await ui.find({ key: 'stagerow-Design' })).props.paddingRight).toBeGreaterThanOrEqual(1)   // the cost and time keep room on the right
   expect(await ui.find({ key: 'log:Design' })).toBeTruthy()
   expect(await ui.find({ key: 'log:Specify' })).toBe(undefined)                        // and shows only that one
