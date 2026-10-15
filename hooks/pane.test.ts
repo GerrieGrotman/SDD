@@ -332,6 +332,19 @@ test('cost: a chat that never ran /sdd belongs to the first item its scripts nam
   expect(f.costs.map(c => c.id)).toEqual([92100])                                          // the first one named
 })
 
+test('desktop: an item with no cost recorded says so, and the line goes once a turn is recorded', async ($: any, on: any) => {
+  const f = fake(on, [])
+  if (!(await begin($, f))) return
+  const ui = await $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'Pane', props: { title: 'sdd', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never,
+    requestId: 'sdd-view', viewport: { columns: 100, rows: 40 } })
+  for (let i = 0; i < 100 && !(await texts(ui)).includes('Author tags'); i++) await new Promise(r => setTimeout(r, 10))
+  expect(await texts(ui)).toContain('No cost recorded for this item yet')
+  await turn($, f, 1.5)
+  for (let i = 0; i < 100 && (await texts(ui)).includes('No cost recorded'); i++) await new Promise(r => setTimeout(r, 10))
+  expect(await texts(ui)).not.toContain('No cost recorded')
+  expect(await texts(ui)).toContain('Spent $')
+})
+
 test('cost: a failed record says so once, and the turn goes on', async ($: any, on: any) => {
   const f = fake(on, [])
   f.costFails = true
