@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { flowMap, flowTag, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -337,4 +337,25 @@ test('the Worktrees page asks repowatch for a line\'s history: its branch agains
   const [unseen] = joinWorktrees([wtItem(2, 'C:/ws/.claude/worktrees/2-b')], null)
   expect(unseen.repoName).toBe('Repo')
   expect(historyRefs(unseen)).toEqual(['dev/x/2', 'origin/team/0.0.1'])
+})
+
+test('the spinner note names the item, its stage and the next gate or the task count', () => {
+  const at = (phase: string, status: 'active' | 'waiting' | 'done', gates: Record<string, string> = {}, spec = ITEM.spec): SddItem =>
+    ({ ...ITEM, gates, spec, progress: { ...ITEM.progress!, phase, status } })
+  expect(spinnerNote(SPEC, at('Design', 'active', { Claimed: 'x', 'Requirements agreed': 'x' }), SNAP.derived)).toBe(' · 92012 Design · gate: Design agreed')
+  expect(spinnerNote(SPEC, at('Implement (task 3/7)', 'active', {}, { ...ITEM.spec!, tasks_done: 3, tasks_total: 7 }), SNAP.derived)).toBe(' · 92012 Implement · task 3/7')
+  expect(spinnerNote(SPEC, at('Implement', 'active', {}, { ...ITEM.spec!, tasks_total: 0 }), SNAP.derived)).toBe(' · 92012 Implement')
+  expect(spinnerNote(SPEC, at('Design', 'done'), SNAP.derived)).toBe(null)            // nothing to say about a finished item
+  expect(spinnerNote(undefined, at('Design', 'active'), SNAP.derived)).toBe(null)     // an old snapshot without flows
+  expect(spinnerNote(SPEC, at('somewhere else', 'active'), SNAP.derived)).toBe(null)  // a phase the flow does not have
+})
+
+test('your turn: told once per wait, and not while the item works', () => {
+  const waiting = yourTurn(SPEC, ITEM)
+  expect(waiting?.text).toBe('92012 Verify: your turn. PR status')
+  expect(yourTurn(SPEC, { ...ITEM })?.key).toBe(waiting?.key)                                                  // the same wait: the same key
+  expect(yourTurn(SPEC, { ...ITEM, progress: { ...ITEM.progress!, at: '2026-10-02T09:00:00Z' } })?.key).not.toBe(waiting?.key)  // a new wait
+  expect(yourTurn(SPEC, { ...ITEM, progress: { ...ITEM.progress!, status: 'active' } })).toBe(null)
+  expect(yourTurn(SPEC, { ...ITEM, progress: { ...ITEM.progress!, gate: '' } })?.text).toBe('92012 Verify: your turn. a decision')
+  expect(yourTurn(SPEC, { ...ITEM, progress: { ...ITEM.progress!, gate: 'x'.repeat(400) } })!.text.length).toBe(200)
 })

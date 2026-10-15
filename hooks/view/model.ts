@@ -153,6 +153,29 @@ export function statusWord(item: SddItem): string {
   return p.status
 }
 
+/** The note after the spinner's word while Claude works: the item, its stage, and what it works toward
+ *  (the next gate a person decides, or the task count while it implements). Null when there is nothing to say. */
+export function spinnerNote(flow: SddFlow | undefined, item: SddItem, derived: string[]): string | null {
+  const p = item.progress
+  if (!flow || !p || ['done', 'abandoned'].includes(p.status)) return null
+  const stage = flow.stages.find(s => s.key === phaseKey(flow, p.phase))
+  if (!stage) return null
+  const gate = decidedGates(stage, derived).find(g => !item.gates?.[g])
+  const total = item.spec?.tasks_total ?? 0
+  const goal = gate ? `gate: ${gate}` : stage.key === 'Implement' && total ? `task ${item.spec?.tasks_done ?? 0}/${total}` : ''
+  return ` · ${item.id} ${stage.label}${goal ? ` · ${goal}` : ''}`
+}
+
+/** The item waits on the person: the text for a notification, and a key that is the same for the whole wait,
+ *  so the person is told once. Null while the item does not wait. */
+export function yourTurn(flow: SddFlow | undefined, item: SddItem): { key: string; text: string } | null {
+  const p = item.progress
+  if (p?.status !== 'waiting') return null
+  const stage = flow?.stages.find(s => s.key === phaseKey(flow, p.phase))
+  const what = p.gate || 'a decision'
+  return { key: `${item.id}|${p.at}|${what}`, text: `${item.id} ${stage?.label ?? p.phase}: your turn. ${what}`.slice(0, 200) }
+}
+
 export function phaseLabel(flow: SddFlow | undefined, item: SddItem): string {
   const p = item.progress
   if (!p) return ''

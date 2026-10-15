@@ -6,7 +6,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, statusWord, when } from './view/model'
+import { GLYPH, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { Mark } from './view/model'
 import { registerWorktrees, registerWorktreesCommand, worktreesPaneClosed } from './worktrees'
 
@@ -58,6 +58,7 @@ function stageName(st: SddStage): string {
 let python = 'python'  // module state: lost on reload, which is fine
 let isOpen = false
 let isWorkspace = false
+let notified = ''  // the wait the person was last notified of; lost on reload, which at worst tells them once more
 // An open AskUserQuestion call's way to take an answer from the view, by tool_use_id. Lost on a
 // reload; the view then says to answer in the chat.
 const answering = new Map<string, (answers: Record<string, string>) => void>()
@@ -266,8 +267,32 @@ export const register: Register = on => {
       const v = await loadView($, (await $.state.get(selected)).value ?? null, (await $.state.get(snap)).value ?? null, (await $.state.get(place)).value ?? null)
       await $.state.set(snap, v.out)
       await $.state.set(error, v.why)
+      // this chat's item waits on the person: one system notification per wait, for a person who looked away
+      const own = (await $.state.get(mine)).value ?? null
+      const item = v.out?.items.find(i => i.id === own)
+      const turn = item ? yourTurn(v.out?.flows[item.flow], item) : null
+      if (turn && turn.key !== notified) {
+        notified = turn.key
+        try {
+          await $.ui.notify(turn.text)
+        } catch {
+          // no window to notify, or the app refused: the band and the pane already say it
+        }
+      }
     }
     return next(e)
+  })
+
+  // ---------------------------------------------------------------- the spinner
+
+  // while Claude works: this chat's item, its stage, and what it works toward, after the spinner's word
+  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    const s = (await $.state.get(snap)).value ?? null
+    const own = (await $.state.get(mine)).value ?? null
+    const item = s?.items.find(i => i.id === own)
+    const note = item && s ? spinnerNote(s.flows[item.flow], item, s.derived) : null
+    if (!note) return next(e)
+    return next({ ...e, props: { ...e.props, suffix: `${e.props.suffix ?? ''}${note}` } })
   })
 
   // ---------------------------------------------------------------- band above the prompt
