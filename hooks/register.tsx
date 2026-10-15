@@ -7,7 +7,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, costBar, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, railLine, costBar, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
 
@@ -748,7 +748,8 @@ export const register: Register = on => {
     // a dropdown of the workspace's open work items: picking one makes the pane follow it (the chat's own item is not changed)
     const Select = 'Select' in t ? t.Select : undefined
     const { Svg } = t
-    const options = itemOptions(s, item)
+    // the label is cut to the room the pane has, so the dropdown does not run off its right edge
+    const options = itemOptions(s, item, Math.max(30, Math.min(90, (cols ?? 100) - 24)))
     const pick = (value: string) => void (async () => {
       const to = Number(value)
       if (!Number.isInteger(to)) return
@@ -975,10 +976,19 @@ export const register: Register = on => {
                     {wide && at && <Text dimColor>{at}</Text>}
                   </Box>
                   {isOpen && (
-                    // no border: the rail is drawn in the slices, and a frame would run over it; the detail starts where the buttons do
-                    <Box key={`stagedetail-${key}`} flexDirection="column" marginLeft={6} marginBottom={1}>
-                      {sum.note && <Text dimColor wrap="wrap">{sum.note}</Text>}
-                      {drawStageDetail(r)}
+                    <Box key={`stagewrap-${key}`} flexDirection="column">
+                      {/* the rail runs on beside the detail: tiles of line, laid over the left edge and cut to the detail's height */}
+                      <Box key={`stagerail-${key}`} position="absolute" top={0} bottom={0} left={0} width={5} overflow="hidden" flexDirection="column">
+                        {Array.from({ length: 20 }, (_, n) => {
+                          const line = railLine({ mark: r.mark, colors: C })
+                          return <Svg key={`rail-${key}-${n}`} source={line.source} alt={line.alt} width={line.width} height={line.height} />
+                        })}
+                      </Box>
+                      {/* no border: a frame would run over the rail; the detail starts where the buttons do */}
+                      <Box key={`stagedetail-${key}`} flexDirection="column" marginLeft={6} marginBottom={1}>
+                        {sum.note && <Text dimColor wrap="wrap">{sum.note}</Text>}
+                        {drawStageDetail(r)}
+                      </Box>
                     </Box>
                   )}
                 </Box>

@@ -168,12 +168,16 @@ test('no Desktop app attached: the mod registers nothing and records nothing, un
 test('desktop: each stage is a button with a rail slice, and the picked stage opens its detail under its own row', async ($: any, on: any) => {
   const ui = await mountPane($, fake(on, []), 'desktop')
   if (!ui) return
-  const slices = (await ui.findAll({ type: 'Svg' })).filter((x: any) => x.props.width === 40)
+  const slices = (await ui.findAll({ type: 'Svg' })).filter((x: any) => x.props.width === 40 && x.props.height === 46)
   expect(slices).toHaveLength(3)                                                       // a rail slice for each stage, all of one size
   expect(slices.every((x: any) => x.props.height === 46 && x.props.source.includes('viewBox="0 0 40 46"'))).toBe(true)
   for (const name of ['Specify', 'Design', 'Review']) expect((await ui.find({ key: `row:${name}` })).props.label).toBe(name)
   expect(await ui.find({ key: 'pick-stage' })).toBe(undefined)                         // no picker row: the stages are the picker
   expect(await ui.find({ key: 'stage-next' })).toBe(undefined)
+  const rail = await ui.find({ key: 'stagerail-Design' })                              // the rail runs on beside the open detail
+  expect(rail.props.position).toBe('absolute')
+  expect([rail.props.top, rail.props.bottom, rail.props.left, rail.props.overflow]).toEqual([0, 0, 0, 'hidden'])
+  expect((await ui.findAll({ type: 'Svg' })).filter((x: any) => x.props.height === 48)).toHaveLength(20)
   const detail = await ui.find({ key: 'stagedetail-Design' })
   expect(detail).toBeTruthy()                                                          // the pane opens on the stage the item is at
   expect(detail.props.borderStyle).toBe(undefined)                                     // no frame: it would run over the rail
@@ -194,6 +198,24 @@ test('desktop: each stage is a button with a rail slice, and the picked stage op
   await until(async () => !!(await ui.find({ key: 'log:Specify' })))
   expect(await ui.find({ key: 'log:Specify' })).toBeTruthy()
 })
+
+for (const [cols, most] of [[40, 30], [60, 36], [100, 76]] as const) {
+  test(`desktop: at ${cols} columns the work item dropdown labels are cut to ${most} characters`, async ($: any, on: any) => {
+    const item = (SNAP as any).items[0]
+    const was = item.title
+    item.title = 'A very long title for a work item that would run off the edge of the pane'
+    try {
+      const ui = await mountPane($, fake(on, []), 'desktop', cols)
+      if (!ui) return
+      const sel = await ui.find({ key: 'pick-item' })
+      const labels = sel.props.options.map((o: any) => o.label)
+      expect(labels.every((l: string) => l.length <= most)).toBe(true)
+      expect(labels.some((l: string) => l.length === most)).toBe(true)                  // and the long one is cut, not left alone
+    } finally {
+      item.title = was
+    }
+  })
+}
 
 test('desktop: the spanner on a worktree asks repowatch to show that one worktree', async ($: any, on: any) => {
   const f = fake(on, [])
@@ -241,7 +263,7 @@ for (const [cols, bars] of [[20, 0], [50, 0], [61, 0], [63, 3], [100, 3], [140, 
     const ui = await mountPane($, f, 'desktop', cols)
     if (!ui) return
     const svgs = await ui.findAll({ type: 'Svg' })
-    expect(svgs.filter((x: any) => x.props.width === 40)).toHaveLength(3)
+    expect(svgs.filter((x: any) => x.props.width === 40 && x.props.height === 46)).toHaveLength(3)
     expect(svgs.filter((x: any) => x.props.width === 64)).toHaveLength(bars)
   })
 }
