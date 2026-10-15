@@ -6,7 +6,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowTag, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, statusWord, when } from './view/model'
+import { GLYPH, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, statusWord, when } from './view/model'
 import type { Mark } from './view/model'
 
 const PANE = 'sdd-view'
@@ -48,7 +48,6 @@ function lighten(color: string | undefined): string | undefined {
 function markColor(m: Mark): string | undefined {
   return { done: C.done, skipped: C.dim, missed: C.revoked, active: C.work, waiting: C.now, blocked: C.revoked, abandoned: C.dim, next: C.work, later: undefined }[m]
 }
-const GLYPH: Record<Mark, string> = { done: '✓', skipped: '↷', missed: '!', active: '●', waiting: '●', blocked: '✕', abandoned: '–', next: '○', later: '·' }
 
 function stageName(st: SddStage): string {
   return st.key === st.label ? st.label : `${st.key.replace('Phase ', '')}  ${st.label}`
@@ -366,6 +365,8 @@ export const register: Register = on => {
     const canOpen = e.surface !== 'mobile' && !!item.folder && !item.removed
     const hasInput = 'Input' in t
     const Input = hasInput ? t.Input : undefined
+    // the flow map is a drawing: only an app that has Svg shows it; the stage rows below say the same in text
+    const Svg = 'Svg' in t ? t.Svg : undefined
     const rows = flow ? stageRows(flow, item) : []
     const links = [item.url ? `[ADO ${item.id}](${item.url})` : `ADO ${item.id}`,
       ...Object.values(item.repos ?? {}).filter(r => r.pr).map(r => `[PR ${r.pr!.id}](${r.pr!.url})`)].join('  |  ')
@@ -456,6 +457,11 @@ export const register: Register = on => {
           return missed.length > 0 && (
             <Text color={C.revoked} wrap="wrap">{`Never worked and not skipped by you: ${missed.join(', ')}.`}</Text>
           )
+        })()}
+
+        {flow && Svg && (() => {
+          const map = flowMap(flow, item, rows, s.derived, C, pend)
+          return <Svg source={map.source} alt={map.alt} isInteractive />
         })()}
 
         {flow && (

@@ -1,10 +1,13 @@
 // What the view shows, worked out from one env.py view snapshot. No $ here: plain functions.
-import type { SddFlow, SddItem, SddProgress, SddQuestion, SddStage } from '../../types'
+import type { SddColors, SddFlow, SddItem, SddProgress, SddQuestion, SddStage } from '../../types'
 
 // skipped = the user agreed to skip it; missed = never worked and never skipped (the flow jumped it)
 export type Mark = 'done' | 'skipped' | 'missed' | 'active' | 'waiting' | 'blocked' | 'abandoned' | 'next' | 'later'
 
 export type StageRow = { stage: SddStage; mark: Mark }
+
+/** One glyph per mark, so the terminal and a colour-blind reader get the same word the colour gives. */
+export const GLYPH: Record<Mark, string> = { done: '✓', skipped: '↷', missed: '!', active: '●', waiting: '●', blocked: '✕', abandoned: '–', next: '○', later: '·' }
 
 
 /** Which flow an item runs, and for a flow with paths (the spec flow) which one the user chose.
@@ -292,4 +295,150 @@ export function approveAnswers(questions: SddQuestion[], option: string): Record
  *  as the go-ahead option of that stage's gate question. */
 export function approveMessage(id: number, key: string): string {
   return `sdd approve for ${id}, stage ${key}`
+}
+
+
+// ---------------------------------------------------------------- the flow map
+// The stages of a flow as one drawing: a snake of boxes four to a row, an arrow from each stage to the
+// next, a diamond on a stage that holds a gate, and a dashed arrow back along `reworkTo`. It is an SVG
+// string for the apps that draw one. It carries its own colours (boxes with ink on them), so it reads on a
+// light and a dark theme, and it only shows: the stage rows below it stay the buttons.
+
+export type FlowMap = { source: string; alt: string; width: number; height: number }
+
+const MARK_WORD: Record<Mark, string> = { done: 'done', skipped: 'skipped', missed: 'never worked', active: 'working', waiting: 'waiting on you',
+  blocked: 'blocked', abandoned: 'abandoned', next: 'next', later: '' }
+
+const BOX = { cols: 4, w: 126, h: 46, gapX: 22, gapY: 44, pad: 14, lane: 14, gutter: 6 }
+const FONT = '-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
+
+function esc(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function cut(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+/** White or near-black, whichever reads on `color`. Not a hex colour: white. */
+function ink(color: string): string {
+  const m = /^#([0-9a-f]{6})/i.exec(color)
+  if (!m) return '#ffffff'
+  const n = parseInt(m[1], 16)
+  const lin = (v: number) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4 }
+  const lum = 0.2126 * lin(n >> 16) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255)
+  return lum > 0.4 ? '#14181d' : '#ffffff'
+}
+
+/** The box, the ink and the line of one mark. `later` is a quiet box, `next` has the work colour on its edge. */
+function markStyle(mark: Mark, c: SddColors): { fill: string; stroke: string; ink: string; dash?: string; } {
+  const quiet = '#2f3640'
+  switch (mark) {
+    case 'done': return { fill: c.done, stroke: c.done, ink: ink(c.done) }
+    case 'skipped': return { fill: c.dim, stroke: c.dim, ink: ink(c.dim), dash: '4 3' }
+    case 'missed': return { fill: c.revoked, stroke: c.revoked, ink: ink(c.revoked), dash: '4 3' }
+    case 'active': return { fill: c.work, stroke: c.work, ink: ink(c.work) }
+    case 'waiting': return { fill: c.now, stroke: c.now, ink: ink(c.now) }
+    case 'blocked': return { fill: c.revoked, stroke: c.revoked, ink: ink(c.revoked) }
+    case 'abandoned': return { fill: c.dim, stroke: c.dim, ink: ink(c.dim) }
+    case 'next': return { fill: quiet, stroke: c.work, ink: '#ffffff' }
+    case 'later': return { fill: '#39414b', stroke: c.line, ink: '#b4bec9' }
+  }
+}
+
+/** Where stage `i` sits: boxes run left to right on the first row, right to left on the next, so the
+ *  arrow between two rows is a short drop. */
+function boxAt(i: number, count: number): { x: number; y: number; row: number } {
+  const cols = Math.min(BOX.cols, count)
+  const row = Math.floor(i / cols)
+  const c = i % cols
+  const col = row % 2 ? cols - 1 - c : c
+  return { x: BOX.pad + col * (BOX.w + BOX.gapX), y: BOX.pad + row * (BOX.h + BOX.gapY), row }
+}
+
+/** The tooltip of one stage: where it stands, then each gate it holds and when the gate passed. */
+function boxTip(flow: SddFlow, item: SddItem, row: StageRow, gates: string[]): string {
+  const st = row.stage
+  const lines = [`${st.key === st.label ? st.label : `${st.key} · ${st.label}`}: ${MARK_WORD[row.mark] || 'not reached yet'}`]
+  if (st.conditional) lines.push('Runs only when there are questions to answer.')
+  for (const g of gates) lines.push(item.gates?.[g] ? `Gate passed: ${g} (${when(item.gates[g])} UTC)` : `Gate open: ${g}`)
+  if (st.reworkTo) lines.push(`A rejected review goes back to ${st.reworkTo}.`)
+  return lines.join('\n')
+}
+
+export function flowMap(flow: SddFlow, item: SddItem, rows: StageRow[], derived: string[], colors: SddColors,
+  pending: { gate: string; key: string } | null): FlowMap {
+  const n = rows.length
+  const cols = Math.min(BOX.cols, Math.max(n, 1))
+  const rowCount = Math.max(Math.ceil(n / cols), 1)
+  const width = BOX.pad * 2 + cols * BOX.w + (cols - 1) * BOX.gapX
+  const height = BOX.pad + rowCount * BOX.h + (rowCount - 1) * BOX.gapY + BOX.lane * 2
+  const isPhase = flow.stages.every(s => /^Phase\s+\d+$/i.test(s.key))
+  const at = rows.map((_, i) => boxAt(i, n))
+  const parts: string[] = []
+
+  // arrows first, so a box covers the end of its own line
+  const arrow = (id: string, color: string) =>
+    `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="${esc(color)}"/></marker>`
+  parts.push(`<defs>${arrow('go', colors.line)}${arrow('gone', colors.done)}${arrow('back', colors.dim)}</defs>`)
+  for (let i = 0; i + 1 < n; i++) {
+    const a = at[i]
+    const b = at[i + 1]
+    const walked = rows[i].mark === 'done' || rows[i].mark === 'skipped'
+    const color = walked ? colors.done : colors.line
+    const head = walked ? 'gone' : 'go'
+    if (a.row === b.row) {
+      const dir = a.row % 2 ? -1 : 1
+      const y = a.y + BOX.h / 2
+      const x1 = dir === 1 ? a.x + BOX.w : a.x
+      const x2 = dir === 1 ? b.x : b.x + BOX.w
+      parts.push(`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${esc(color)}" stroke-width="2" marker-end="url(#${head})"/>`)
+    } else {
+      const x = a.x + BOX.w / 2
+      parts.push(`<line x1="${x}" y1="${a.y + BOX.h}" x2="${x}" y2="${b.y}" stroke="${esc(color)}" stroke-width="2" marker-end="url(#${head})"/>`)
+    }
+  }
+
+  // the way back: down to the lane under the row, along it (by the left edge to an earlier row), up into the target
+  rows.forEach((r, i) => {
+    const to = r.stage.reworkTo ? flow.stages.findIndex(s => s.key === r.stage.reworkTo) : -1
+    if (to < 0 || to >= i) return
+    const a = at[i]
+    const b = at[to]
+    const sx = a.x + BOX.w / 2
+    const tx = b.x + BOX.w / 2
+    const laneA = a.y + BOX.h + BOX.lane
+    const laneB = b.y + BOX.h + BOX.lane
+    const path = a.row === b.row
+      ? `M${sx},${a.y + BOX.h} V${laneA} H${tx} V${b.y + BOX.h + 1}`
+      : `M${sx},${a.y + BOX.h} V${laneA} H${BOX.gutter} V${laneB} H${tx} V${b.y + BOX.h + 1}`
+    parts.push(`<path d="${path}" fill="none" stroke="${esc(colors.dim)}" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#back)"/>`)
+    parts.push(`<text x="${tx + 14}" y="${(a.row === b.row ? laneA : laneB) - 4}" font-family="${FONT}" font-size="9" fill="${esc(colors.dim)}">${esc(`rework → ${flow.stages[to].key}`)}</text>`)
+  })
+
+  rows.forEach((r, i) => {
+    const { x, y } = at[i]
+    const st = markStyle(r.mark, colors)
+    const gates = decidedGates(r.stage, derived)
+    const done = gates.length > 0 && gates.every(g => item.gates?.[g])
+    const waitsHere = pending?.key === r.stage.key
+    const name = isPhase ? r.stage.key : r.stage.label
+    const second = isPhase ? r.stage.label : MARK_WORD[r.mark]
+    const here = r.mark === 'active' || r.mark === 'waiting' || r.mark === 'blocked'
+    parts.push(`<g><title>${esc(boxTip(flow, item, r, gates))}</title>`)
+    if (here) parts.push(`<rect x="${x - 4}" y="${y - 4}" width="${BOX.w + 8}" height="${BOX.h + 8}" rx="11" fill="none" stroke="${esc(st.stroke)}" stroke-width="2"/>`)
+    parts.push(`<rect x="${x}" y="${y}" width="${BOX.w}" height="${BOX.h}" rx="8" fill="${esc(st.fill)}" stroke="${esc(st.stroke)}" stroke-width="2"${r.stage.conditional || st.dash ? ` stroke-dasharray="${st.dash ?? '4 3'}"` : ''}/>`)
+    parts.push(`<text x="${x + 10}" y="${y + 19}" font-family="${FONT}" font-size="12" font-weight="600" fill="${esc(st.ink)}">${esc(`${GLYPH[r.mark]} ${cut(name, isPhase ? 9 : 14)}`)}</text>`)
+    if (second) parts.push(`<text x="${x + 10}" y="${y + 35}" font-family="${FONT}" font-size="10" fill="${esc(st.ink)}" opacity="0.9">${esc(cut(second, 17))}</text>`)
+    if (gates.length) {
+      const cx = x + BOX.w - 12
+      const cy = y + BOX.h - 12
+      parts.push(`<path d="M${cx},${cy - 6} L${cx + 6},${cy} L${cx},${cy + 6} L${cx - 6},${cy} z" fill="${done ? esc(st.ink) : 'none'}" stroke="${esc(st.ink)}" stroke-width="${waitsHere ? 2.5 : 1.5}"/>`)
+    }
+    parts.push('</g>')
+  })
+
+  const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join('')}</svg>`
+  const alt = `${flow.label}, ${n} stages: ` + rows.map(r => `${r.stage.label}${MARK_WORD[r.mark] ? ` (${MARK_WORD[r.mark]})` : ''}`).join(', ') + '.'
+  return { source, alt, width, height }
 }

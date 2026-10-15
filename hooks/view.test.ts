@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { flowTag, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { flowMap, flowTag, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 
 const SPEC = {
   label: 'Spec flow',
@@ -234,4 +234,36 @@ test('Open Questions: skipped when nothing was asked, badged while questions sta
   // an item started before the stages existed: Requirements agreed is passed, so Requirements is not "missed"
   const legacy = { ...base, gates: { Claimed: 'x', 'Requirements agreed': 'y' } }
   expect(stageRows(SPEC, { ...legacy, progress: { ...legacy.progress!, phase: 'Design' } }).find(r => r.stage.key === 'Requirements')!.mark).toBe('done')
+})
+
+const COLORS = { done: '#3f9a63', now: '#c98a12', work: '#4a7fc4', revoked: '#c0503f', gate: '#8a73c9', dim: '#7b8794', line: '#5c6670', hoverText: '#ffffff' }
+const SPEC_REWORK = { ...SPEC, stages: [...SPEC.stages, { key: 'Review', label: 'Review', needs: ['PR raised'], passes: ['PR approved'], stop: true, reworkTo: 'Implement' }] }
+
+test('the flow map draws one box per stage, in a snake of four, with the way back for a rejected review', () => {
+  const item: SddItem = { ...ITEM, progress: { ...ITEM.progress!, phase: 'Design', status: 'waiting' }, gates: { Claimed: '2026-10-01T08:50:08Z', 'Requirements agreed': '2026-10-01T12:41:15Z' } }
+  const rows = stageRows(SPEC_REWORK, item)
+  const pend = pendingGate(SPEC_REWORK, item, SNAP.derived)
+  const m = flowMap(SPEC_REWORK, item, rows, SNAP.derived, COLORS, pend)
+  expect(m.source.startsWith('<svg xmlns="http://www.w3.org/2000/svg"')).toBe(true)
+  expect(m.source.endsWith('</svg>')).toBe(true)
+  expect(m.source.length).toBeLessThan(131072)                              // the Svg element's limit
+  expect(m.source.match(/<rect /g)?.length).toBe(8 + 1)                      // a box each, and the ring round the stage the item is at
+  expect(m.source).toContain('stroke-dasharray="5 4"')                       // Review goes back to Implement
+  expect(m.source).toContain('rework → Implement')
+  expect(m.alt).toBe('Spec flow, 8 stages: Specify (done), Open Questions (done), Requirements (done), Design (waiting on you), Decompose (next), Implement, Verify, Review.')
+  // the second row runs right to left: Decompose (stage 5) sits under Design (stage 4)
+  const xs = [...m.source.matchAll(/<rect x="(\d+)" y="(\d+)" width="126"/g)].map(x => [Number(x[1]), Number(x[2])])
+  expect(xs[3][0]).toBe(xs[4][0])
+  expect(xs[4][1]).toBeGreaterThan(xs[3][1])
+  expect(xs[7][0]).toBe(xs[0][0])                                            // Review ends under Specify
+})
+
+test('the flow map: a flow of phases, no way back drawn when the target is not behind, and text is escaped', () => {
+  const bug = { ...BUG, stages: [...BUG.stages.slice(0, 3), { key: 'Phase 15', label: 'PR <review> & "more"', needs: [], passes: [], stop: true, reworkTo: 'Phase 99' }] }
+  const item: SddItem = { ...ITEM, flow: 'bug', progress: { ...ITEM.progress!, phase: 'Phase 6', status: 'active' } }
+  const m = flowMap(bug, item, stageRows(bug, item), [], COLORS, null)
+  expect(m.source).not.toContain('stroke-dasharray="5 4"')                  // reworkTo names no stage: nothing drawn
+  expect(m.source).toContain('Phase 15')
+  expect(m.source).toContain('PR &lt;review&gt; &amp; &quot;more&quot;')
+  expect(m.source).not.toContain('<review>')
 })
