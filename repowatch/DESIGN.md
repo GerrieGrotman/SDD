@@ -9,6 +9,9 @@ What is built, and what is decided but not built yet. Update this when a decisio
   `prune-worktrees` and `delete-branch` with a journal, the Worktrees view with the confirm panel, and
   sdd's `/sdd-worktrees` page. See `README.md`.
 
+- Step 3: merge-conflict forecast (cached by sha, sdd's base read from `workitem.json`), behind-base counts,
+  the toast, "Ask Claude to merge", a Delete… button for gone branches, and `undo` from the journal.
+
 Squash merges: git cannot see that a squash-merged branch is merged. Such a worktree is classed `review`
 (its upstream is gone and its commits are on no remote), and the plan lists those commits. A later step
 can ask ADO whether the PR merged and move it to `safe`.
@@ -25,7 +28,6 @@ can ask ADO whether the PR merged and move it to `safe`.
 
 ## Steps still to build
 
-3. Merge-conflict forecast (`git merge-tree --write-tree`, cached by branch sha + base sha; needs git 2.38).
 4. Branch sync, read-only: the matrix below.
 5. Branch sync actions and the conflict hand-off to Claude.
 

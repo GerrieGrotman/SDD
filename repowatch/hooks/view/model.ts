@@ -1,11 +1,12 @@
 // Pure helpers for the repowatch pane: sorting, wording, paging. No engine calls, so view.test.ts can run them.
-import type { RwPlan, RwRepo, RwState, RwSummary, RwWorktree, WorktreeClass } from '../../types'
+import type { RwForecast, RwPlan, RwRepo, RwState, RwSummary, RwUndo, RwWorktree, WorktreeClass } from '../../types'
 
 /** What each flag means, in the order a person should care about it. */
 export const FLAGS: Array<{ flag: string; label: string; urgent: boolean }> = [
   { flag: 'error', label: 'cannot read', urgent: true },
   { flag: 'conflicted', label: 'merge conflict', urgent: true },
   { flag: 'diverged', label: 'diverged', urgent: true },
+  { flag: 'will-conflict', label: 'will conflict', urgent: true },
   { flag: 'dirty', label: 'uncommitted', urgent: false },
   { flag: 'behind', label: 'behind', urgent: false },
   { flag: 'unpushed', label: 'unpushed', urgent: false },
@@ -53,6 +54,7 @@ export function statusText(s: RwSummary | undefined): string | undefined {
   if (!s || s.repos === 0) return undefined
   const parts: string[] = []
   if (s.errors) parts.push(`${s.errors} unreadable`)
+  if (s.conflicts) parts.push(`${s.conflicts} will conflict`)
   if (s.behind) parts.push(`${s.behind} behind`)
   if (s.dirty) parts.push(`${s.dirty} dirty`)
   if (s.unpushed) parts.push(`${s.unpushed} unpushed`)
@@ -122,6 +124,7 @@ export function actionArgs(row: WtRow): string[] | null {
 
 /** The same arguments from a plan, for `apply`. */
 export function planArgs(plan: RwPlan): string[] {
+  if (plan.action === 'undo') return ['undo', '--repo', plan.repo, '--id', plan.undoId ?? '']
   if (plan.action === 'prune-worktrees') return ['prune-worktrees', '--repo', plan.repo]
   if (plan.action === 'delete-branch') return ['delete-branch', '--repo', plan.repo, '--branch', plan.branch ?? '']
   return ['remove-worktree', '--repo', plan.repo, '--path', plan.path ?? '', ...(plan.steps.some(s => s[1] === 'branch') ? ['--delete-branch'] : [])]
@@ -150,4 +153,58 @@ export function stepText(step: string[]): string {
 
 export function sddRemoveText(id: number | null | undefined): string {
   return `Remove the sdd environment for work item ${id ?? '?'}: run env.py remove --id ${id ?? '?'} and show me the dry run first.`
+}
+
+// ---- merge-conflict forecast, undo
+
+/** "will conflict in a.cs, b.cs (+2 more)"; '' when there is nothing to say. */
+export function forecastText(f: RwForecast | undefined): string {
+  if (!f || f.state !== 'conflict') return ''
+  const files = f.files ?? []
+  const shown = files.slice(0, 3).join(', ')
+  return `merging ${f.base} in would conflict${shown ? ` in ${shown}` : ''}${files.length > 3 ? ` (+${files.length - 3} more)` : ''}`
+}
+
+/** "3 behind origin/main, 1 ahead"; '' when the worktree has no base to measure against. */
+export function baseText(w: RwWorktree): string {
+  if (!w.baseRef || w.behindBase == null) return ''
+  return `${w.behindBase} behind ${w.baseRef}, ${w.aheadBase ?? 0} ahead`
+}
+
+/** Branches whose forecast turned to conflict between two scans, as "repo · branch". */
+export function newConflicts(before: RwState | null, after: RwState | null): string[] {
+  if (!before || !after) return []
+  const out: string[] = []
+  for (const r of Object.values(after.repos)) {
+    const was = before.repos[r.name]
+    if (r.forecast?.state === 'conflict' && was && was.forecast?.state !== 'conflict') out.push(`${r.name} · ${r.branch ?? 'HEAD'}`)
+    for (const w of r.worktrees ?? []) {
+      if (w.forecast?.state !== 'conflict' || !was) continue
+      const prior = (was.worktrees ?? []).find(x => x.path === w.path)
+      if (prior && prior.forecast?.state !== 'conflict') out.push(`${r.name} · ${w.branch ?? '(detached)'}`)
+    }
+  }
+  return out
+}
+
+export function conflictToast(before: RwState | null, after: RwState | null): string | null {
+  const now = newConflicts(before, after)
+  if (!now.length) return null
+  return `Will now conflict: ${now.slice(0, 3).join(', ')}${now.length > 3 ? ` (+${now.length - 3} more)` : ''}`
+}
+
+/** What to ask Claude when a worktree's branch would conflict with its base. */
+export function mergeAskText(row: WtRow): string {
+  const w = row.wt
+  const files = w.forecast?.files ?? []
+  return `In the worktree ${w.path} (branch ${w.branch ?? 'HEAD'}), merge ${w.baseRef ?? 'the base branch'} in and resolve the conflicts${files.length ? ` in ${files.join(', ')}` : ''}. Show me the plan first, and do not push.`
+}
+
+export function undoArgs(u: RwUndo): string[] {
+  return ['undo', '--repo', u.repo, '--id', u.id]
+}
+
+export function undoLabel(u: RwUndo): string {
+  const what = u.action === 'delete-branch' ? 'deleted branch' : 'removed worktree'
+  return `Undo: ${what} ${u.branch ?? u.path ?? ''} (${u.repo})`
 }

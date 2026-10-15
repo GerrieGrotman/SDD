@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { SddItem, SddSnapshot } from '../types'
 import { flowTag, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
-import { agoText, cleanupNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
+import { agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
 const SPEC = {
   label: 'Spec flow',
@@ -278,6 +278,18 @@ test('a line says where it came from and how the worktree is', () => {
   expect(cleanupNote(one)).toBe('can be removed: merged into main')
   expect(cleanupNote(two)).toBe('')
   expect(cleanupNote(three)).toBe('')
-  expect(counts([one, two, three])).toEqual({ items: 3, worktrees: 3, cleanup: 1, dirty: 1 })
+  expect(counts([one, two, three])).toEqual({ items: 3, worktrees: 3, cleanup: 1, dirty: 1, conflicts: 0 })
   expect(agoText(undefined, 5)).toBe('no commits')
+})
+
+test('the Worktrees page shows how far behind the base a branch is and what would conflict', () => {
+  const live: SddLiveState = { generated: 1000, repos: { Repo: { worktrees: [
+    { path: 'C:/ws/.claude/worktrees/1-a/src/Repo', branch: 'dev/x/1', class: 'ok', reasons: [], dirty: 0, lastCommit: 1000 - 7200,
+      baseRef: 'origin/team/0.0.1', behindBase: 4, aheadBase: 2, forecast: { state: 'conflict', base: 'origin/team/0.0.1', files: ['a.cs', 'b.cs'] } },
+  ] } } }
+  const [line] = joinWorktrees([wtItem(1, 'C:/ws/.claude/worktrees/1-a')], live)
+  expect(lineFacts(line, 1000)).toContain('4 behind origin/team/0.0.1')
+  expect(conflictNote(line)).toBe('merging origin/team/0.0.1 in would conflict in a.cs, b.cs')
+  expect(counts([line]).conflicts).toBe(1)
+  expect(sortLines(joinWorktrees([wtItem(2, 'C:/ws/.claude/worktrees/2-b'), wtItem(1, 'C:/ws/.claude/worktrees/1-a')], live))[0].item.id).toBe(1)
 })

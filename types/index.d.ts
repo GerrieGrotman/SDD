@@ -115,6 +115,12 @@ export type SddLiveWorktree = {
   class: 'safe' | 'review' | 'keep' | 'ok' | 'prune'
   reasons: string[]
   unique?: number
+  /** The base it is measured against, and how far apart they are. */
+  baseRef?: string
+  behindBase?: number
+  aheadBase?: number
+  /** Would merging the base in conflict? */
+  forecast?: { state: 'clean' | 'conflict' | 'unavailable' | 'error'; base: string; files?: string[] }
 }
 
 export type SddLiveState = { generated: number; repos: Record<string, { worktrees?: SddLiveWorktree[] }> }

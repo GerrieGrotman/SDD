@@ -7,8 +7,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { RwPlan, RwResult, RwState } from '../types'
 import {
-  actionArgs, ago, branchText, bulkRows, classLabel, dedupePrune, flagLabel, isUrgent, page, planArgs, planGist,
-  sddRemoveText, statusText, stepText, visibleRepos, worktreeRows,
+  actionArgs, ago, baseText, branchText, bulkRows, classLabel, conflictToast, dedupePrune, flagLabel, forecastText, isUrgent,
+  mergeAskText, page, planArgs, planGist, sddRemoveText, statusText, stepText, undoArgs, undoLabel, visibleRepos, worktreeRows,
 } from './view/model'
 
 const PANE = 'repowatch'
@@ -109,7 +109,10 @@ export const register: Register = on => {
       argumentHint: '[worktrees|scan|fetch]',
     })
     const sync = async (fetch: boolean) => {
+      const before = (await $.state.get(state)).value ?? null
       const r = await refresh($, fetch)
+      const toast = conflictToast(before, r.s)
+      if (toast) $.ui.toast(toast)
       if (r.s) await $.state.set(state, r.s)
       await $.state.set(error, r.why)
       $.ui.status(statusText(r.s?.summary))
@@ -156,6 +159,8 @@ export const register: Register = on => {
     const sync = async (fetch: boolean, label: string) => {
       await $.state.set(busy, label)
       const r = await refresh($, fetch)
+      const toast = conflictToast(s, r.s)
+      if (toast) $.ui.toast(toast)
       if (r.s) await $.state.set(state, r.s)
       await $.state.set(error, r.why)
       await $.state.set(busy, null)
@@ -258,6 +263,9 @@ export const register: Register = on => {
             <Button key="bulk" label={`Remove all safe (${bulk.length})`}
               onPress={propose(bulk.map(r => actionArgs(r)).filter((a): a is string[] => !!a))} />
           )}
+          {!pending && (s.undoable ?? []).length > 0 && (
+            <Button key="undo" label={undoLabel((s.undoable ?? [])[0])} onPress={propose([undoArgs((s.undoable ?? [])[0])])} />
+          )}
           {confirmPanel}
           {p.rows.length === 0 && <Text color={COLORS.ok}>{only ? 'No worktree needs a look.' : 'No worktrees.'}</Text>}
           {p.rows.map(r => {
@@ -276,7 +284,13 @@ export const register: Register = on => {
                     <Button key={`sdd-${w.path}`} label="Ask sdd to remove" onPress={() => $.prompt.fill({ text: sddRemoveText(w.workItem) })} />
                   )}
                 </Box>
-                <Text dimColor>                 {w.reasons.join('; ') || 'in use'}{w.missing ? '' : ` · last commit ${ago(w.lastCommit, now)}`}</Text>
+                <Text dimColor>                 {w.reasons.join('; ') || 'in use'}{w.missing ? '' : ` · last commit ${ago(w.lastCommit, now)}`}{baseText(w) ? ` · ${baseText(w)}` : ''}</Text>
+                {forecastText(w.forecast) && (
+                  <Box>
+                    <Text color={COLORS.urgent}>                 {forecastText(w.forecast)}  </Text>
+                    <Button key={`merge-${w.path}`} label="Ask Claude to merge" onPress={() => $.prompt.fill({ text: mergeAskText(r) })} />
+                  </Box>
+                )}
               </Box>
             )
           })}
@@ -326,7 +340,13 @@ export const register: Register = on => {
                   </Text>
                   {r.error && <Text color={COLORS.urgent}>{r.error}</Text>}
                   {r.fetchError && <Text color={COLORS.warn}>fetch: {r.fetchError}</Text>}
-                  {(r.goneBranches ?? []).length > 0 && <Text dimColor>upstream gone: {(r.goneBranches ?? []).join(', ')}</Text>}
+                  {forecastText(r.forecast) && <Text color={COLORS.urgent}>diverged from {r.upstream}: {forecastText(r.forecast)}</Text>}
+                  {(r.goneBranches ?? []).map(b => (
+                    <Box key={`gone-${b}`}>
+                      <Text dimColor>upstream gone: {b}  </Text>
+                      {!pending && <Button key={`del-${b}`} label="Delete…" onPress={propose([['delete-branch', '--repo', r.name, '--branch', b]])} />}
+                    </Box>
+                  ))}
                   {(r.worktrees ?? []).map(w => (
                     <Text key={w.path} dimColor>
                       worktree {w.branch ?? '(detached)'} · {classLabel(w.class)} · {w.dirty ? `${w.dirty} uncommitted` : 'clean'} · last commit {ago(w.lastCommit, now)}{w.missing ? ' · folder missing' : ''}

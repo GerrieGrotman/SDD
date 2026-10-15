@@ -4,11 +4,18 @@
     python repowatch.py status [--json]
     python repowatch.py plan  remove-worktree|prune-worktrees|delete-branch --repo NAME [--path P] [--branch B] [--delete-branch]
     python repowatch.py apply <same arguments> [--allow-review]
+    python repowatch.py plan|apply undo --repo NAME --id ID      (ID from `status --json` "undoable")
 
 `scan` reads each repo's local facts (branch, ahead/behind, dirty files, stashes, worktrees) and
 writes them to <workspace>/.claude/repowatch/state.json. With --fetch it also fetches the repos that
 were fetched longest ago, a few at a time, so a sweep of dozens of repos is spread over many scans
 and never stalls. It never pulls, merges or checks out anything.
+
+Merge-conflict forecast: for each worktree (and each diverged repo) `scan` asks git, with
+`merge-tree --write-tree`, whether merging the base branch in would conflict, and in which files. No
+checkout, no change. The base is the work item's base from sdd's workitem.json, else the default
+branch. Results are cached by the two shas, so they are only recomputed when a branch moves.
+Needs git 2.38; older git says "unavailable".
 
 `plan` shows what a clean-up would do and what it checks first. `apply` checks again against the
 live repo, runs it, and writes .claude/repowatch/journal.jsonl (with the sha, so a deleted branch can
@@ -268,6 +275,48 @@ def is_fresh(repo, branch):
     return rc == 0 and 0 < len(out.splitlines()) <= 1
 
 
+def sdd_base(wt_path, cfg):
+    """The base branch sdd recorded for a work item's worktree (workitem.json), or None."""
+    base = cfg.get("sddWorktrees")
+    p = posix(Path(wt_path).resolve())
+    if not base or not p.lower().startswith(base.lower() + "/"):
+        return None
+    folder = Path(base) / p[len(base) + 1:].split("/")[0]
+    for r in (_read_json(folder / "workitem.json").get("repos") or {}).values():
+        if isinstance(r, dict) and r.get("path") and posix((folder / r["path"]).resolve()).lower() == p.lower():
+            return r.get("base") or None
+    return None
+
+
+def rev(path, ref):
+    rc, out, _ = git(["rev-parse", "--verify", "--quiet", ref], path)
+    return out.strip() if rc == 0 else ""
+
+
+def forecast(path, head_sha, base_ref, prev=None):
+    """Would merging base_ref into head_sha conflict? {state: clean|conflict|unavailable|error, files, ...}.
+    Reuses `prev` when neither sha moved."""
+    base_sha = rev(path, base_ref)
+    res = {"base": base_ref, "sha": head_sha, "baseSha": base_sha}
+    if not base_sha:
+        return dict(res, state="error", error="no such branch: " + base_ref)
+    if prev and prev.get("sha") == head_sha and prev.get("baseSha") == base_sha and prev.get("state") in ("clean", "conflict"):
+        return prev
+    rc, out, err = git(["merge-tree", "--write-tree", "--name-only", "--no-messages", head_sha, base_sha], path)
+    if rc == 0:
+        return dict(res, state="clean", files=[])
+    if rc == 1:
+        files = []
+        for line in out.splitlines()[1:]:
+            if not line.strip():
+                break
+            files.append(line.strip())
+        return dict(res, state="conflict", files=files[:20])
+    if rc == 129 or "write-tree" in err or "usage" in err.lower():
+        return dict(res, state="unavailable")
+    return dict(res, state="error", error=err.splitlines()[-1] if err else "merge-tree failed")
+
+
 def classify(f, cfg, now):
     """(class, reasons) of a worktree from its facts. Classes:
     safe: nothing is lost by removing it. review: probably done, a person should look. keep: has work
@@ -306,7 +355,7 @@ def classify(f, cfg, now):
     return "ok", []
 
 
-def worktree_facts(repo, wt, default, gone, cfg, now):
+def worktree_facts(repo, wt, default, gone, cfg, now, prev=None):
     """Everything known about one linked worktree, with its class."""
     p = Path(wt["path"])
     info = {"path": posix(wt["path"]), "branch": wt["branch"], "head": wt["head"], "detached": wt["detached"],
@@ -330,6 +379,18 @@ def worktree_facts(repo, wt, default, gone, cfg, now):
             info["created"] = int((p / ".git").stat().st_mtime)
         except OSError:
             pass
+    if not info["missing"] and info.get("sha") and not wt["detached"]:
+        base = sdd_base(wt["path"], cfg) or default
+        ref = "origin/" + base if base else ""
+        if ref and rev(wt["path"], "refs/remotes/" + ref):
+            info["baseRef"] = ref
+            rc, out, _ = git(["rev-list", "--left-right", "--count", ref + "...HEAD"], wt["path"])
+            nums = out.split()
+            if rc == 0 and len(nums) == 2:
+                info["behindBase"], info["aheadBase"] = int(nums[0]), int(nums[1])
+                # a branch with nothing of its own, or a base with nothing new, cannot conflict
+                if info["behindBase"] and info["aheadBase"]:
+                    info["forecast"] = forecast(wt["path"], info["sha"], ref, (prev or {}).get("forecast"))
     info["gone"] = bool(wt["branch"]) and wt["branch"] in gone
     info["isDefault"] = bool(default) and wt["branch"] == default
     info["fresh"] = is_fresh(repo, wt["branch"])
@@ -338,7 +399,7 @@ def worktree_facts(repo, wt, default, gone, cfg, now):
     return info
 
 
-def scan_repo(name, path, cfg, now=None):
+def scan_repo(name, path, cfg, now=None, prev=None):
     """Everything the pane shows about one repo. Never raises: a failure is recorded in `error`."""
     now = int(now or time.time())
     rec = {"name": name, "path": posix(path), "scannedAt": now}
@@ -360,7 +421,13 @@ def scan_repo(name, path, cfg, now=None):
     wts = parse_worktrees(out) if rc == 0 else []
     mine = posix(Path(path).resolve())
     others = [w for w in wts if posix(Path(w["path"]).resolve()) != mine and not w["bare"]]
-    rec["worktrees"] = [worktree_facts(path, w, rec["defaultBranch"], rec["goneBranches"], cfg, now) for w in others]
+    before = {w["path"]: w for w in (prev or {}).get("worktrees", [])}
+    rec["worktrees"] = [worktree_facts(path, w, rec["defaultBranch"], rec["goneBranches"], cfg, now,
+                                       before.get(posix(w["path"]))) for w in others]
+    if rec.get("ahead") and rec.get("behind") and rec.get("upstream") and not rec.get("detached"):
+        head = rev(path, "HEAD")
+        if head:
+            rec["forecast"] = forecast(path, head, rec["upstream"], (prev or {}).get("forecast"))
     rec["flags"] = flags_for(rec, cfg, now)
     return rec
 
@@ -394,6 +461,9 @@ def flags_for(rec, cfg, now):
         f.append("removable-worktree")
     if "review" in classes:
         f.append("old-worktree")
+    if (rec.get("forecast") or {}).get("state") == "conflict" or \
+            any((w.get("forecast") or {}).get("state") == "conflict" for w in rec.get("worktrees", [])):
+        f.append("will-conflict")
     return f
 
 
@@ -431,6 +501,7 @@ def summarize(repos):
         "worktrees": sum(len(r.get("worktrees", [])) for r in recs),
         "removable": wcount(recs, "safe", "prune"),
         "toReview": wcount(recs, "review"),
+        "conflicts": sum(1 for r in recs for x in [r] + r.get("worktrees", []) if (x.get("forecast") or {}).get("state") == "conflict"),
         "errors": count("error"),
     }
 
@@ -453,7 +524,7 @@ def fetch_repo(rec, cfg):
 #   review   something is probably done, but a commit may exist only here (listed in atRisk)
 #   blocked  not offered: uncommitted files, commits only here, owned by sdd, checked out, not found
 
-ACTIONS = ("remove-worktree", "prune-worktrees", "delete-branch")
+ACTIONS = ("remove-worktree", "prune-worktrees", "delete-branch", "undo")
 
 
 def find_repo(root, cfg, name):
@@ -463,10 +534,36 @@ def find_repo(root, cfg, name):
     return None
 
 
-def plan_for(action, repo, args, cfg, now):
+def show(step):
+    return " ".join('"%s"' % a if re.search(r"\s", a) else a for a in step)
+
+
+def read_journal(root):
+    out = []
+    try:
+        for line in (root / JOURNAL_REL).read_text(encoding="utf-8").splitlines():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    return out
+
+
+def undoable(root, limit=5):
+    """The newest finished clean-ups that can be put back, newest first, not yet undone."""
+    entries = read_journal(root)
+    undone = {e.get("of") for e in entries if e.get("status") == "undone"}
+    keep = [e for e in entries if e.get("status") == "done" and e.get("restoreSteps") and e.get("id") not in undone]
+    keep.sort(key=lambda e: e.get("at", 0), reverse=True)
+    return [{k: e.get(k) for k in ("id", "at", "action", "repo", "path", "branch")} for e in keep[:limit]]
+
+
+def plan_for(action, repo, args, cfg, now, root=None):
     """The plan dict for one action on one repo (see above). Never runs anything that changes the repo."""
     plan = {"action": action, "repo": args.repo, "path": None, "branch": None, "level": "blocked",
-            "blocked": [], "reasons": [], "atRisk": [], "steps": [], "restore": []}
+            "blocked": [], "reasons": [], "atRisk": [], "steps": [], "restore": [], "restoreSteps": []}
     default = default_branch(repo)
     _, gone = branch_info(repo)
 
@@ -510,7 +607,12 @@ def plan_for(action, repo, args, cfg, now):
             steps.append(["git", "branch", "-D", f["branch"]])
         plan["steps"] = steps
         if f["branch"] and f.get("sha"):
-            plan["restore"] = ["git branch %s %s" % (f["branch"], f["sha"]), "git worktree add %s %s" % (f["path"], f["branch"])]
+            if len(steps) > 1:
+                plan["restoreSteps"].append(["git", "branch", f["branch"], f["sha"]])
+            plan["restoreSteps"].append(["git", "worktree", "add", f["path"], f["branch"]])
+        elif f.get("sha"):
+            plan["restoreSteps"].append(["git", "worktree", "add", "--detach", f["path"], f["sha"]])
+        plan["restore"] = [show(x) for x in plan["restoreSteps"]]
         return plan
 
     if action == "delete-branch":
@@ -548,7 +650,33 @@ def plan_for(action, repo, args, cfg, now):
         else:
             plan["level"], plan["reasons"] = "review", ["pushed but not merged: nothing says it is finished"]
         plan["steps"] = [["git", "branch", "-D", br]]
-        plan["restore"] = ["git branch %s %s" % (br, sha)]
+        plan["restoreSteps"] = [["git", "branch", br, sha]]
+        plan["restore"] = [show(x) for x in plan["restoreSteps"]]
+        return plan
+
+    if action == "undo":
+        plan["undoId"] = args.id
+        entries = read_journal(root) if root else []
+        done = [e for e in entries if e.get("id") == args.id and e.get("repo") == args.repo and e.get("status") == "done"]
+        if not done or not done[-1].get("restoreSteps"):
+            plan["blocked"].append("nothing to undo with that id")
+            return plan
+        if any(e.get("status") == "undone" and e.get("of") == args.id for e in entries):
+            plan["blocked"].append("already undone")
+            return plan
+        e = done[-1]
+        plan.update(path=e.get("path"), branch=e.get("branch"))
+        steps = e["restoreSteps"]
+        for st in steps:
+            if st[1:2] == ["branch"] and rev(repo, "refs/heads/" + st[2]):
+                plan["blocked"].append("branch %s exists again" % st[2])
+            if st[1:3] == ["worktree", "add"] and Path(st[-2]).exists():
+                plan["blocked"].append("%s exists again" % st[-2])
+        if plan["blocked"]:
+            return plan
+        plan["level"] = "safe"
+        plan["reasons"] = ["puts back what %s removed; ignored files such as build output are not restored" % e.get("action")]
+        plan["steps"] = steps
         return plan
 
     plan["blocked"].append("unknown action %s" % action)
@@ -569,7 +697,7 @@ def run_action(root, cfg, args, apply):
         print(json.dumps({"ok": False, "error": "no repo named %s" % args.repo}))
         return 2
     now = int(time.time())
-    plan = plan_for(action, repo, args, cfg, now)
+    plan = plan_for(action, repo, args, cfg, now, root)
     if not apply:
         print(json.dumps(plan))
         return 0
@@ -579,8 +707,9 @@ def run_action(root, cfg, args, apply):
     elif plan["level"] == "review" and not args.allow_review:
         result["error"] = "not done: this needs a person's go-ahead (--allow-review): " + "; ".join(plan["reasons"])
     else:
-        entry = {"at": now, "action": action, "repo": args.repo, "path": plan["path"], "branch": plan["branch"],
-                 "level": plan["level"], "steps": plan["steps"], "restore": plan["restore"], "atRisk": plan["atRisk"]}
+        entry = {"id": "%d" % int(time.time() * 1000), "at": now, "action": action, "repo": args.repo,
+                 "path": plan["path"], "branch": plan["branch"], "level": plan["level"], "steps": plan["steps"],
+                 "restore": plan["restore"], "restoreSteps": plan["restoreSteps"], "atRisk": plan["atRisk"]}
         journal(root, dict(entry, status="started"))
         for step in plan["steps"]:
             rc, _, err = git(step[1:], repo, timeout=120)
@@ -590,11 +719,14 @@ def run_action(root, cfg, args, apply):
             result["done"].append(step)
         result["ok"] = "error" not in result
         journal(root, dict(entry, status="done" if result["ok"] else "failed", error=result.get("error")))
+        if result["ok"] and action == "undo":
+            journal(root, {"at": now, "status": "undone", "of": args.id, "repo": args.repo})
         # bring the state up to date for this repo only
         state = read_state(root)
-        state["repos"][args.repo] = scan_repo(args.repo, repo, cfg, now)
+        state["repos"][args.repo] = scan_repo(args.repo, repo, cfg, now, state["repos"].get(args.repo))
         state["generated"] = now
         state["summary"] = summarize(state["repos"])
+        state["undoable"] = undoable(root)
         write_state(root, state)
     print(json.dumps(result))
     return 0 if result["ok"] else 2
@@ -620,7 +752,7 @@ def cmd_scan(a):
 
     now = int(time.time())
     with ThreadPoolExecutor(max_workers=max(1, cfg["workers"])) as ex:
-        recs = list(ex.map(lambda np_: scan_repo(np_[0], np_[1], cfg, now), repos))
+        recs = list(ex.map(lambda np_: scan_repo(np_[0], np_[1], cfg, now, known.get(np_[0])), repos))
     for rec in recs:
         if rec["name"] in fetch_errors:
             rec["fetchError"] = fetch_errors[rec["name"]]
@@ -634,6 +766,7 @@ def cmd_scan(a):
     state["generated"] = now
     state["root"] = posix(root)
     state["summary"] = summarize(known)
+    state["undoable"] = undoable(root)
     write_state(root, state)
     if a.json:
         print(json.dumps(state["summary"]))
@@ -689,6 +822,7 @@ def main(argv=None):
         s.add_argument("--path")
         s.add_argument("--branch")
         s.add_argument("--delete-branch", action="store_true", help="remove-worktree: also delete its local branch")
+        s.add_argument("--id", help="undo: the journal id of the clean-up to put back")
         if apply:
             s.add_argument("--allow-review", action="store_true", help="go ahead with a plan at level review")
         s.set_defaults(fn=(lambda a, ap_=apply: cmd_act(a, ap_)))

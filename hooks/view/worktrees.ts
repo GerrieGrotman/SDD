@@ -35,9 +35,9 @@ export function joinWorktrees(items: SddItem[], live: SddLiveState | null): WtLi
 
 const CLEANUP = new Set(['safe', 'prune', 'review'])
 
-/** Lines to clean up first, then work that waits on the person, then the rest by latest activity. */
+/** Lines to clean up or that will conflict first, then work that waits on the person, then the rest by latest activity. */
 export function sortLines(lines: WtLine[]): WtLine[] {
-  const rank = (l: WtLine) => (l.live && CLEANUP.has(l.live.class) ? 0 : l.item.progress?.status === 'waiting' ? 1 : 2)
+  const rank = (l: WtLine) => (l.live?.forecast?.state === 'conflict' || (l.live && CLEANUP.has(l.live.class)) ? 0 : l.item.progress?.status === 'waiting' ? 1 : 2)
   return [...lines].sort((a, b) => rank(a) - rank(b)
     || (b.item.progress?.at ?? '').localeCompare(a.item.progress?.at ?? '') || a.item.id - b.item.id || a.repo.localeCompare(b.repo))
 }
@@ -69,6 +69,7 @@ export function lineFacts(l: WtLine, nowSeconds: number): string[] {
   if (!w) return [...facts, 'repowatch has not seen it']
   facts.push(w.dirty ? `${w.dirty} uncommitted` : 'clean')
   if (w.ahead || w.behind) facts.push(`+${w.ahead ?? 0}/-${w.behind ?? 0} upstream`)
+  if (w.behindBase) facts.push(`${w.behindBase} behind ${w.baseRef ?? 'base'}`)
   facts.push(agoText(w.lastCommit, nowSeconds))
   return facts
 }
@@ -81,11 +82,20 @@ export function cleanupNote(l: WtLine): string {
   return w.class === 'review' ? `to review: ${why}` : w.class === 'prune' ? `broken: ${why}` : `can be removed: ${why}`
 }
 
-export function counts(lines: WtLine[]): { items: number; worktrees: number; cleanup: number; dirty: number } {
+/** A line's merge-conflict forecast: the files, or '' when it is clean or unknown. */
+export function conflictNote(l: WtLine): string {
+  const f = l.live?.forecast
+  if (!f || f.state !== 'conflict') return ''
+  const files = f.files ?? []
+  return `merging ${f.base} in would conflict${files.length ? ` in ${files.slice(0, 3).join(', ')}${files.length > 3 ? ` (+${files.length - 3} more)` : ''}` : ''}`
+}
+
+export function counts(lines: WtLine[]): { items: number; worktrees: number; cleanup: number; dirty: number; conflicts: number } {
   return {
     items: new Set(lines.map(l => l.item.id)).size,
     worktrees: lines.length,
     cleanup: lines.filter(l => l.live && CLEANUP.has(l.live.class)).length,
     dirty: lines.filter(l => l.live?.dirty).length,
+    conflicts: lines.filter(l => l.live?.forecast?.state === 'conflict').length,
   }
 }

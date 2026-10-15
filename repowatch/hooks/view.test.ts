@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { RwPlan, RwRepo, RwSummary, RwWorktree, WorktreeClass } from '../types'
-import { actionArgs, ago, branchText, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
+import { actionArgs, ago, baseText, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
 
 const repo = (name: string, flags: string[], extra: Partial<RwRepo> = {}): RwRepo => ({ name, path: `/ws/${name}`, scannedAt: 0, flags, ...extra })
 
@@ -23,7 +23,7 @@ test('the attention filter hides clean repos', () => {
 })
 
 test('the status line says what needs doing, and stays clear for no repos', () => {
-  const s: RwSummary = { repos: 40, attention: 3, behind: 2, dirty: 1, unpushed: 0, worktrees: 5, removable: 2, toReview: 1, errors: 0 }
+  const s: RwSummary = { repos: 40, attention: 3, behind: 2, dirty: 1, unpushed: 0, worktrees: 5, removable: 2, toReview: 1, conflicts: 0, errors: 0 }
   expect(statusText(s)).toBe('repos 40 · 2 behind · 1 dirty · 2 worktrees to remove · 1 to review')
   expect(statusText({ ...s, behind: 0, dirty: 0, removable: 0, toReview: 0 })).toBe('repos 40 · all clear')
   expect(statusText({ ...s, repos: 0 })).toBe(undefined)
@@ -86,4 +86,34 @@ test('the confirm panel runs what is still allowed and says what it skips', () =
   expect([g.run.length, g.skipped.length, g.review]).toEqual([2, 1, 1])
   expect(stepText(['git', 'worktree', 'remove', '/a b/c'])).toBe('git worktree remove "/a b/c"')
   expect(sddRemoveText(77)).toContain('env.py remove --id 77')
+})
+
+test('a forecast reads as the files that would conflict', () => {
+  expect(forecastText({ state: 'clean', base: 'origin/main' })).toBe('')
+  expect(forecastText(undefined)).toBe('')
+  expect(forecastText({ state: 'conflict', base: 'origin/main', files: ['a.cs', 'b.cs'] })).toBe('merging origin/main in would conflict in a.cs, b.cs')
+  expect(forecastText({ state: 'conflict', base: 'origin/team/1', files: ['a', 'b', 'c', 'd', 'e'] })).toBe('merging origin/team/1 in would conflict in a, b, c (+2 more)')
+  expect(baseText(wt('ok', { baseRef: 'origin/main', behindBase: 3, aheadBase: 1 }))).toBe('3 behind origin/main, 1 ahead')
+  expect(baseText(wt('ok'))).toBe('')
+  expect(statusText({ repos: 4, attention: 1, behind: 0, dirty: 0, unpushed: 0, worktrees: 1, removable: 0, toReview: 0, conflicts: 2, errors: 0 })).toBe('repos 4 · 2 will conflict')
+})
+
+test('a toast fires when a branch turns to conflict, not while it stays one', () => {
+  const state = (cls: 'clean' | 'conflict') => ({ version: 1, generated: 0, repos: { a: { ...repo('a', []), worktrees: [
+    wt('ok', { branch: 'f', path: '/w/f', forecast: { state: cls, base: 'origin/main', files: [] } })] } } })
+  expect(newConflicts(state('clean'), state('conflict'))).toEqual(['a · f'])
+  expect(newConflicts(state('conflict'), state('conflict'))).toEqual([])
+  expect(newConflicts(null, state('conflict'))).toEqual([])
+  expect(conflictToast(state('clean'), state('conflict'))).toBe('Will now conflict: a · f')
+  expect(conflictToast(state('clean'), state('clean'))).toBe(null)
+  const diverged = (cls: 'clean' | 'conflict') => ({ version: 1, generated: 0, repos: { a: { ...repo('a', []), branch: 'main', forecast: { state: cls, base: 'origin/main' } } } })
+  expect(newConflicts(diverged('clean'), diverged('conflict'))).toEqual(['a · main'])
+})
+
+test('undo and the ask for a merge say what they do', () => {
+  const plan: RwPlan = { action: 'undo', repo: 'a', path: null, branch: null, level: 'safe', blocked: [], reasons: [], atRisk: [], steps: [], restore: [], undoId: '17' }
+  expect(planArgs(plan)).toEqual(['undo', '--repo', 'a', '--id', '17'])
+  expect(undoLabel({ id: '17', at: 1, action: 'delete-branch', repo: 'a', path: null, branch: 'old' })).toBe('Undo: deleted branch old (a)')
+  const row = { repo: 'a', wt: wt('ok', { branch: 'f', baseRef: 'origin/main', forecast: { state: 'conflict' as const, base: 'origin/main', files: ['x.cs'] } }) }
+  expect(mergeAskText(row)).toContain('merge origin/main in and resolve the conflicts in x.cs')
 })

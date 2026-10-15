@@ -8,7 +8,7 @@ type On = Parameters<Register>[0]
 
 import type { SddLiveState, SddSnapshot } from '../types'
 import { phaseLabel, statusWord } from './view/model'
-import { agoText, cleanupNote, counts, groupByItem, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
+import { agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
 
 const PANE = 'sdd-worktrees'
 const snap = { plugin: 'sdd', key: 'snap' } as const
@@ -128,7 +128,7 @@ export function registerWorktrees(on: On): void {
       <Box flexDirection="column">
         {header}
         <Text dimColor>
-          {c.items} work items · {c.worktrees} worktrees · {c.cleanup} to clean up · {c.dirty} with uncommitted files
+          {c.items} work items · {c.worktrees} worktrees · {c.cleanup} to clean up · {c.conflicts} will conflict · {c.dirty} with uncommitted files
           {liveState ? ` · scanned ${agoText(liveState.generated, now).replace('last commit ', '')}` : ''}
         </Text>
         {blocks.length === 0 && <Text dimColor>No work item has a worktree folder.</Text>}
@@ -145,11 +145,13 @@ export function registerWorktrees(on: On): void {
               </Box>
               {b.lines.map(l => {
                 const note = cleanupNote(l)
+                const clash = conflictNote(l)
                 return (
                   <Box key={`${l.item.id}-${l.repo}`} flexDirection="column" marginLeft={4}>
                     <Text>{l.repo} · {l.branch}</Text>
                     <Text dimColor>  {lineFacts(l, now).join(' · ')}</Text>
                     {note && <Text color={COLORS.warn}>  {note}</Text>}
+                    {clash && <Text color={COLORS.urgent}>  {clash}</Text>}
                   </Box>
                 )
               })}

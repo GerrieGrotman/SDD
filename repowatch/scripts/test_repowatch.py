@@ -226,6 +226,18 @@ def test_worktrees():
         state = json.loads(run_cli(ws, "status", "--json"))
         assert "merged" not in [Path(w["path"]).name for w in state["repos"]["app"]["worktrees"]]
 
+        # undo puts the worktree and its branch back, once
+        und = state["undoable"]
+        assert len(und) == 1 and und[0]["branch"] == "feat/merged", und
+        rc, plan = cli(ws, "plan", "undo", "--repo", "app", "--id", und[0]["id"])
+        assert plan["level"] == "safe" and len(plan["steps"]) == 2, plan
+        rc, res = cli(ws, "apply", "undo", "--repo", "app", "--id", und[0]["id"])
+        assert rc == 0 and res["ok"] and (wts / "merged").is_dir(), res
+        assert git_out(app, "branch", "--list", "feat/merged") != ""
+        assert json.loads(run_cli(ws, "status", "--json"))["undoable"] == []
+        assert cli(ws, "plan", "undo", "--repo", "app", "--id", und[0]["id"])[1]["level"] == "blocked"
+        assert cli(ws, "plan", "undo", "--repo", "app", "--id", "nope")[1]["level"] == "blocked"
+
         # a worktree that became dirty after the plan is refused when applied
         rc, plan = cli(ws, "plan", "remove-worktree", "--repo", "app", "--path", str(wts / "merged2"))
         assert plan["level"] == "safe"
@@ -267,6 +279,70 @@ def test_worktrees():
         assert cli(ws, "apply", "delete-branch", "--repo", "nope", "--branch", "x")[0] == 2
 
 
+def test_forecast():
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        gitcfg = tmp / "gitconfig"
+        gitcfg.write_text("[user]\n\tname = Dev\n\temail = dev@x.co\n[init]\n\tdefaultBranch = main\n")
+        os.environ["GIT_CONFIG_GLOBAL"] = str(gitcfg)
+        ws, origins, wts = tmp / "ws", tmp / "origins", tmp / "wts"
+        for d in (ws, origins, wts, ws / ".claude"):
+            d.mkdir()
+        (ws / ".claude" / "sdd.json").write_text(json.dumps({"worktreeRoot": ".claude/worktrees"}))
+        app = make_repo(ws, origins, "app")
+
+        # branches cut from main, each with a change of its own
+        add_worktree(app, wts / "clean", "feat/clean", commit_file="c.txt")
+        add_worktree(app, wts / "conflict", "feat/conflict")
+        (wts / "conflict" / "a.txt").write_text("branch\n")
+        sh(["git", "commit", "-qam", "branch edit"], wts / "conflict")
+        add_worktree(app, wts / "level", "feat/level")  # nothing of its own: cannot conflict
+        # main moves on: a new file and an edit of a.txt
+        commit(app, "b.txt")
+        commit(app, "a.txt", "main\n", "main edit")
+        sh(["git", "push", "-q", "origin", "main"], app)
+        # a team branch an sdd work item was cut against
+        sh(["git", "checkout", "-q", "-b", "team/1"], app)
+        commit(app, "t.txt")
+        sh(["git", "push", "-q", "-u", "origin", "team/1"], app)
+        sh(["git", "checkout", "-q", "main"], app)
+        item = ws / ".claude" / "worktrees" / "9-x"
+        add_worktree(app, item / "src" / "app", "feat/9", commit_file="z.txt")
+        (item / "workitem.json").write_text(json.dumps({"repos": {"app": {"base": "team/1", "path": "src/app"}}}))
+        # a repo whose local and remote branches diverged on one file
+        div = make_repo(ws, origins, "div")
+        other = tmp / "other"
+        sh(["git", "clone", "-q", str(origins / "div.git"), str(other)], tmp)
+        commit(other, "a.txt", "theirs\n", "remote edit")
+        sh(["git", "push", "-q", "origin", "main"], other)
+        commit(div, "a.txt", "mine\n", "local edit")
+
+        run_cli(ws, "scan", "--fetch", "--fetch-batch", "10")
+        state = json.loads(run_cli(ws, "status", "--json"))
+        by = {Path(w["path"]).name: w for w in state["repos"]["app"]["worktrees"]}
+        assert by["clean"]["forecast"]["state"] == "clean" and by["clean"]["behindBase"] == 2 and by["clean"]["aheadBase"] == 1, by["clean"]
+        assert by["conflict"]["forecast"]["state"] == "conflict" and by["conflict"]["forecast"]["files"] == ["a.txt"], by["conflict"]
+        assert "forecast" not in by["level"] and by["level"]["aheadBase"] == 0, by["level"]
+        assert by["app"]["baseRef"] == "origin/team/1" and by["app"]["forecast"]["state"] == "clean", by["app"]
+        assert by["app"]["behindBase"] == 1 and by["app"]["aheadBase"] == 1
+        assert state["repos"]["div"]["forecast"]["state"] == "conflict" and "will-conflict" in state["repos"]["div"]["flags"]
+        assert "will-conflict" in state["repos"]["app"]["flags"], state["repos"]["app"]["flags"]
+        assert state["summary"]["conflicts"] == 2, state["summary"]
+
+        # a forecast is reused until a branch moves
+        w = by["conflict"]
+        again = rw.forecast(w["path"], w["sha"], "origin/main", w["forecast"])
+        assert again is w["forecast"]
+        commit(wts / "conflict", "extra.txt")
+        moved = rw.forecast(w["path"], rw.rev(w["path"], "HEAD"), "origin/main", w["forecast"])
+        assert moved is not w["forecast"] and moved["state"] == "conflict"
+        # a merge that is fixed stops being a conflict
+        sh(["git", "merge", "-q", "-X", "theirs", "origin/main"], wts / "conflict")
+        run_cli(ws, "scan", "--only", "app")
+        by = {Path(x["path"]).name: x for x in json.loads(run_cli(ws, "status", "--json"))["repos"]["app"]["worktrees"]}
+        assert "forecast" not in by["conflict"] and by["conflict"]["behindBase"] == 0, by["conflict"]
+
+
 def git_out(repo, *args):
     return sh(["git"] + list(args), repo).stdout.strip()
 
@@ -275,6 +351,7 @@ def main():
     test_parsers()
     test_scan()
     test_worktrees()
+    test_forecast()
     print("ok")
 
 
