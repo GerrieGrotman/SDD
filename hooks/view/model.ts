@@ -406,6 +406,14 @@ export function railSlice(input: { mark: Mark; prevMark: Mark | null; hasNext: b
     alt: MARK_WORD[mark] || 'not reached yet', width: RAIL.w, height: RAIL.h }
 }
 
+/** A stretch of rail with no node, 40 wide and 48 high (a multiple of the dash pattern): stacked down the side of an open
+ *  stage's detail, it keeps the rail running between the stage above and the one below. */
+export function railLine(input: { mark: Mark; colors: SddColors }): FlowPicture {
+  const done = behind(input.mark)
+  return { source: `<svg xmlns="http://www.w3.org/2000/svg" width="${RAIL.w}" height="48" viewBox="0 0 ${RAIL.w} 48"><line x1="${RAIL.x}" y1="0" x2="${RAIL.x}" y2="48" `
+    + `stroke="${done ? input.colors.done : input.colors.line}" stroke-width="3"${done ? '' : ' stroke-dasharray="4 4"'}/></svg>`, alt: '', width: RAIL.w, height: 48 }
+}
+
 /** The small bar that shows what a stage cost against the dearest stage. */
 export function costBar(input: { usd: number; max: number; mark: Mark; colors: SddColors }): FlowPicture {
   const { usd, max, mark, colors } = input
@@ -479,10 +487,10 @@ function itemLine(flows: Record<string, SddFlow>, item: SddItem): string {
 }
 
 /** The choices of the pane's work item dropdown: value is the id, label the line. `current` is the item the pane shows. */
-export function itemOptions(snap: Pick<SddSnapshot, 'items' | 'flows'>, current?: SddItem): { value: string; label: string }[] {
+export function itemOptions(snap: Pick<SddSnapshot, 'items' | 'flows'>, current?: SddItem, maxLabel = 90): { value: string; label: string }[] {
   // the item the pane shows may be a finished one, which is not among the open items: the list holds it last, so it shows
   const all = current && !snap.items.some(i => i.id === current.id) ? [...openItems(snap), current] : openItems(snap)
-  return all.map(i => ({ value: String(i.id), label: cutAt(itemLine(snap.flows, i), 90) }))
+  return all.map(i => ({ value: String(i.id), label: cutAt(itemLine(snap.flows, i), maxLabel) }))
 }
 
 /** `/sdd `, `/sdd spec `, `/sdd:sdd bug `, `/sdd-view `: the place a work item id goes. */
