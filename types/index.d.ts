@@ -51,6 +51,8 @@ export type SddItem = {
   stages?: Record<string, SddStageRecord>
   /** Stages that take feedback now, each with the gates a reopen there revokes (env.py reopen_plan). */
   feedback?: Record<string, string[]>
+  /** What the item has cost, per stage, in dollars and tokens (uncached input, output, cache read, cache write), from its cost.jsonl (env.py cost); the record keeps the totals once the folder is gone. */
+  spend?: Record<string, { usd: number; turns: number; input?: number; output?: number; cacheRead?: number; cacheWrite?: number }>
   /** The way through the flow the user chose (env.py path): 'full' or 'short' for the spec flow; null for
    *  the bug flow, which has one way, or while the spec flow's choice is still open. */
   path?: 'full' | 'short' | string | null
@@ -143,6 +145,8 @@ declare module 'claude-code' {
       opened: boolean
       /** This chat's work item: the one it last ran /sdd or an sdd script for. */
       mine: number | null
+      /** The item this chat took up with /sdd (or, with no /sdd, the first its scripts named): what each turn costs is charged to it. */
+      home: number | null
       /** The questions Claude asked at the gate this chat's item waits on, or null. */
       asked: SddAsk | null
       /** The options picked in the view so far, per question text. */

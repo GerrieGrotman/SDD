@@ -1,10 +1,13 @@
 // What the view shows, worked out from one env.py view snapshot. No $ here: plain functions.
-import type { SddFlow, SddItem, SddProgress, SddQuestion, SddStage } from '../../types'
+import type { SddColors, SddFlow, SddItem, SddProgress, SddQuestion, SddSnapshot, SddStage } from '../../types'
 
 // skipped = the user agreed to skip it; missed = never worked and never skipped (the flow jumped it)
 export type Mark = 'done' | 'skipped' | 'missed' | 'active' | 'waiting' | 'blocked' | 'abandoned' | 'next' | 'later'
 
 export type StageRow = { stage: SddStage; mark: Mark }
+
+/** One glyph per mark, so the terminal and a colour-blind reader get the same word the colour gives. */
+export const GLYPH: Record<Mark, string> = { done: '✓', skipped: '↷', missed: '!', active: '●', waiting: '●', blocked: '✕', abandoned: '–', next: '○', later: '·' }
 
 
 /** Which flow an item runs, and for a flow with paths (the spec flow) which one the user chose.
@@ -150,6 +153,29 @@ export function statusWord(item: SddItem): string {
   return p.status
 }
 
+/** The note after the spinner's word while Claude works: the item, its stage, and what it works toward
+ *  (the next gate a person decides, or the task count while it implements). Null when there is nothing to say. */
+export function spinnerNote(flow: SddFlow | undefined, item: SddItem, derived: string[]): string | null {
+  const p = item.progress
+  if (!flow || !p || ['done', 'abandoned'].includes(p.status)) return null
+  const stage = flow.stages.find(s => s.key === phaseKey(flow, p.phase))
+  if (!stage) return null
+  const gate = decidedGates(stage, derived).find(g => !item.gates?.[g])
+  const total = item.spec?.tasks_total ?? 0
+  const goal = gate ? `gate: ${gate}` : stage.key === 'Implement' && total ? `task ${item.spec?.tasks_done ?? 0}/${total}` : ''
+  return ` · ${item.id} ${stage.label}${goal ? ` · ${goal}` : ''}`
+}
+
+/** The item waits on the person: the text for a notification, and a key that is the same for the whole wait,
+ *  so the person is told once. Null while the item does not wait. */
+export function yourTurn(flow: SddFlow | undefined, item: SddItem): { key: string; text: string } | null {
+  const p = item.progress
+  if (p?.status !== 'waiting') return null
+  const stage = flow?.stages.find(s => s.key === phaseKey(flow, p.phase))
+  const what = p.gate || 'a decision'
+  return { key: `${item.id}|${p.at}|${what}`, text: `${item.id} ${stage?.label ?? p.phase}: your turn. ${what}`.slice(0, 200) }
+}
+
 export function phaseLabel(flow: SddFlow | undefined, item: SddItem): string {
   const p = item.progress
   if (!p) return ''
@@ -292,4 +318,294 @@ export function approveAnswers(questions: SddQuestion[], option: string): Record
  *  as the go-ahead option of that stage's gate question. */
 export function approveMessage(id: number, key: string): string {
   return `sdd approve for ${id}, stage ${key}`
+}
+
+
+// ---------------------------------------------------------------- the flow map
+// The stages of a flow as one drawing: a snake of boxes four to a row, an arrow from each stage to the
+// next, a diamond on a stage that holds a gate, and a dashed arrow back along `reworkTo`. It is an SVG
+// string for the apps that draw one. It carries its own colours (boxes with ink on them), so it reads on a
+// light and a dark theme, and it only shows: the stage rows below it stay the buttons.
+
+export type FlowMap = { source: string; alt: string; width: number; height: number }
+
+const MARK_WORD: Record<Mark, string> = { done: 'done', skipped: 'skipped', missed: 'never worked', active: 'working', waiting: 'waiting on you',
+  blocked: 'blocked', abandoned: 'abandoned', next: 'next', later: '' }
+
+const BOX = { cols: 4, w: 126, h: 46, gapX: 22, gapY: 44, pad: 14, lane: 14, gutter: 6 }
+const FONT = '-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
+
+function esc(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function cut(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+/** White or near-black, whichever reads on `color`. Not a hex colour: white. */
+function ink(color: string): string {
+  const m = /^#([0-9a-f]{6})/i.exec(color)
+  if (!m) return '#ffffff'
+  const n = parseInt(m[1], 16)
+  const lin = (v: number) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4 }
+  const lum = 0.2126 * lin(n >> 16) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255)
+  return lum > 0.4 ? '#14181d' : '#ffffff'
+}
+
+/** The box, the ink and the line of one mark. `later` is a quiet box, `next` has the work colour on its edge. */
+function markStyle(mark: Mark, c: SddColors): { fill: string; stroke: string; ink: string; dash?: string; } {
+  const quiet = '#2f3640'
+  switch (mark) {
+    case 'done': return { fill: c.done, stroke: c.done, ink: ink(c.done) }
+    case 'skipped': return { fill: c.dim, stroke: c.dim, ink: ink(c.dim), dash: '4 3' }
+    case 'missed': return { fill: c.revoked, stroke: c.revoked, ink: ink(c.revoked), dash: '4 3' }
+    case 'active': return { fill: c.work, stroke: c.work, ink: ink(c.work) }
+    case 'waiting': return { fill: c.now, stroke: c.now, ink: ink(c.now) }
+    case 'blocked': return { fill: c.revoked, stroke: c.revoked, ink: ink(c.revoked) }
+    case 'abandoned': return { fill: c.dim, stroke: c.dim, ink: ink(c.dim) }
+    case 'next': return { fill: quiet, stroke: c.work, ink: '#ffffff' }
+    case 'later': return { fill: '#39414b', stroke: c.line, ink: '#b4bec9' }
+  }
+}
+
+/** Where stage `i` sits: boxes run left to right on the first row, right to left on the next, so the
+ *  arrow between two rows is a short drop. */
+function boxAt(i: number, count: number): { x: number; y: number; row: number } {
+  const cols = Math.min(BOX.cols, count)
+  const row = Math.floor(i / cols)
+  const c = i % cols
+  const col = row % 2 ? cols - 1 - c : c
+  return { x: BOX.pad + col * (BOX.w + BOX.gapX), y: BOX.pad + row * (BOX.h + BOX.gapY), row }
+}
+
+/** The tooltip of one stage: where it stands, then each gate it holds and when the gate passed. */
+function boxTip(flow: SddFlow, item: SddItem, row: StageRow, gates: string[]): string {
+  const st = row.stage
+  const lines = [`${st.key === st.label ? st.label : `${st.key} · ${st.label}`}: ${MARK_WORD[row.mark] || 'not reached yet'}`]
+  if (st.conditional) lines.push('Runs only when there are questions to answer.')
+  for (const g of gates) lines.push(item.gates?.[g] ? `Gate passed: ${g} (${when(item.gates[g])} UTC)` : `Gate open: ${g}`)
+  if (st.reworkTo) lines.push(`A rejected review goes back to ${st.reworkTo}.`)
+  return lines.join('\n')
+}
+
+export function flowMap(flow: SddFlow, item: SddItem, rows: StageRow[], derived: string[], colors: SddColors,
+  pending: { gate: string; key: string } | null): FlowMap {
+  const n = rows.length
+  const cols = Math.min(BOX.cols, Math.max(n, 1))
+  const rowCount = Math.max(Math.ceil(n / cols), 1)
+  const width = BOX.pad * 2 + cols * BOX.w + (cols - 1) * BOX.gapX
+  const height = BOX.pad + rowCount * BOX.h + (rowCount - 1) * BOX.gapY + BOX.lane * 2
+  const isPhase = flow.stages.every(s => /^Phase\s+\d+$/i.test(s.key))
+  const at = rows.map((_, i) => boxAt(i, n))
+  const parts: string[] = []
+
+  // arrows first, so a box covers the end of its own line
+  const arrow = (id: string, color: string) =>
+    `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="${esc(color)}"/></marker>`
+  parts.push(`<defs>${arrow('go', colors.line)}${arrow('gone', colors.done)}${arrow('back', colors.dim)}</defs>`)
+  for (let i = 0; i + 1 < n; i++) {
+    const a = at[i]
+    const b = at[i + 1]
+    const walked = rows[i].mark === 'done' || rows[i].mark === 'skipped'
+    const color = walked ? colors.done : colors.line
+    const head = walked ? 'gone' : 'go'
+    if (a.row === b.row) {
+      const dir = a.row % 2 ? -1 : 1
+      const y = a.y + BOX.h / 2
+      const x1 = dir === 1 ? a.x + BOX.w : a.x
+      const x2 = dir === 1 ? b.x : b.x + BOX.w
+      parts.push(`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${esc(color)}" stroke-width="2" marker-end="url(#${head})"/>`)
+    } else {
+      const x = a.x + BOX.w / 2
+      parts.push(`<line x1="${x}" y1="${a.y + BOX.h}" x2="${x}" y2="${b.y}" stroke="${esc(color)}" stroke-width="2" marker-end="url(#${head})"/>`)
+    }
+  }
+
+  // the way back: down to the lane under the row, along it (by the left edge to an earlier row), up into the target
+  rows.forEach((r, i) => {
+    const to = r.stage.reworkTo ? flow.stages.findIndex(s => s.key === r.stage.reworkTo) : -1
+    if (to < 0 || to >= i) return
+    const a = at[i]
+    const b = at[to]
+    const sx = a.x + BOX.w / 2
+    const tx = b.x + BOX.w / 2
+    const laneA = a.y + BOX.h + BOX.lane
+    const laneB = b.y + BOX.h + BOX.lane
+    const path = a.row === b.row
+      ? `M${sx},${a.y + BOX.h} V${laneA} H${tx} V${b.y + BOX.h + 1}`
+      : `M${sx},${a.y + BOX.h} V${laneA} H${BOX.gutter} V${laneB} H${tx} V${b.y + BOX.h + 1}`
+    parts.push(`<path d="${path}" fill="none" stroke="${esc(colors.dim)}" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#back)"/>`)
+    parts.push(`<text x="${tx + 14}" y="${(a.row === b.row ? laneA : laneB) - 4}" font-family="${FONT}" font-size="9" fill="${esc(colors.dim)}">${esc(`rework → ${flow.stages[to].key}`)}</text>`)
+  })
+
+  rows.forEach((r, i) => {
+    const { x, y } = at[i]
+    const st = markStyle(r.mark, colors)
+    const gates = decidedGates(r.stage, derived)
+    const done = gates.length > 0 && gates.every(g => item.gates?.[g])
+    const waitsHere = pending?.key === r.stage.key
+    const name = isPhase ? r.stage.key : r.stage.label
+    const second = isPhase ? r.stage.label : MARK_WORD[r.mark]
+    const here = r.mark === 'active' || r.mark === 'waiting' || r.mark === 'blocked'
+    parts.push(`<g><title>${esc(boxTip(flow, item, r, gates))}</title>`)
+    if (here) parts.push(`<rect x="${x - 4}" y="${y - 4}" width="${BOX.w + 8}" height="${BOX.h + 8}" rx="11" fill="none" stroke="${esc(st.stroke)}" stroke-width="2"/>`)
+    parts.push(`<rect x="${x}" y="${y}" width="${BOX.w}" height="${BOX.h}" rx="8" fill="${esc(st.fill)}" stroke="${esc(st.stroke)}" stroke-width="2"${r.stage.conditional || st.dash ? ` stroke-dasharray="${st.dash ?? '4 3'}"` : ''}/>`)
+    parts.push(`<text x="${x + 10}" y="${y + 19}" font-family="${FONT}" font-size="12" font-weight="600" fill="${esc(st.ink)}">${esc(`${GLYPH[r.mark]} ${cut(name, isPhase ? 9 : 14)}`)}</text>`)
+    if (second) parts.push(`<text x="${x + 10}" y="${y + 35}" font-family="${FONT}" font-size="10" fill="${esc(st.ink)}" opacity="0.9">${esc(cut(second, 17))}</text>`)
+    if (gates.length) {
+      const cx = x + BOX.w - 12
+      const cy = y + BOX.h - 12
+      parts.push(`<path d="M${cx},${cy - 6} L${cx + 6},${cy} L${cx},${cy + 6} L${cx - 6},${cy} z" fill="${done ? esc(st.ink) : 'none'}" stroke="${esc(st.ink)}" stroke-width="${waitsHere ? 2.5 : 1.5}"/>`)
+    }
+    parts.push('</g>')
+  })
+
+  const source = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${parts.join('')}</svg>`
+  const alt = `${flow.label}, ${n} stages: ` + rows.map(r => `${r.stage.label}${MARK_WORD[r.mark] ? ` (${MARK_WORD[r.mark]})` : ''}`).join(', ') + '.'
+  return { source, alt, width, height }
+}
+
+
+// ---------------------------------------------------------------- the agents
+
+/** What `$.agent.list()` returns for one agent loop of the session: a subagent or a teammate. */
+export type AgentInfoLike = { id: string; description: string; type: string; status: string; parentId?: string }
+
+export type AgentTone = 'working' | 'waiting' | 'done' | 'failed' | 'quiet'
+
+export type AgentRow = { id: string; name: string; text: string; word: string; tone: AgentTone; isLive: boolean }
+
+const AGENT_TONE: Record<string, { word: string; tone: AgentTone }> = {
+  running: { word: 'working', tone: 'working' },
+  waiting: { word: 'waiting', tone: 'waiting' },
+  idle: { word: 'idle', tone: 'quiet' },
+  pending: { word: 'starting', tone: 'quiet' },
+  completed: { word: 'done', tone: 'done' },
+  failed: { word: 'failed', tone: 'failed' },
+  killed: { word: 'stopped', tone: 'failed' },
+}
+
+/** The agents as rows: the ones working or waiting first, then the newest of the rest, at most `max`.
+ *  `sdd:investigator` shows as `investigator`; a status the view does not know shows as it is. */
+export function agentRows(list: AgentInfoLike[], max = 6): AgentRow[] {
+  const rows = list.map((a, i): AgentRow & { i: number } => {
+    const t = AGENT_TONE[a.status] ?? { word: a.status, tone: 'quiet' as AgentTone }
+    const text = (a.description || '').replace(/\s+/g, ' ').trim()
+    return { i, id: a.id, name: a.type.replace(/^.*:/, ''), text: text.length > 80 ? `${text.slice(0, 79)}…` : text, word: t.word, tone: t.tone,
+      isLive: t.tone === 'working' || t.tone === 'waiting' }
+  })
+  // the list is oldest first: among the finished, the newest stay
+  const live = rows.filter(r => r.isLive)
+  const rest = rows.filter(r => !r.isLive).reverse().slice(0, Math.max(max - live.length, 0))
+  return [...live, ...rest].slice(0, Math.max(max, live.length)).map(({ i: _i, ...r }) => r)
+}
+
+
+// ---------------------------------------------------------------- picking a work item
+
+function cutAt(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+/** The workspace's open work items, the ones waiting on the person first, then the newest id first. */
+function openItems(snap: Pick<SddSnapshot, 'items'>): SddItem[] {
+  const waits = (i: SddItem) => (i.progress?.status === 'waiting' ? 0 : 1)
+  return [...snap.items].sort((a, b) => waits(a) - waits(b) || b.id - a.id)
+}
+
+/** One line for a work item: `92012 Author tags · Design · waiting on you`. */
+function itemLine(flows: Record<string, SddFlow>, item: SddItem): string {
+  const where = phaseLabel(flows[item.flow], item)
+  return [`${item.id} ${item.title}`, where, item.progress ? statusWord(item) : ''].filter(Boolean).join(' · ')
+}
+
+/** The choices of the pane's work item dropdown: value is the id, label the line. */
+export function itemOptions(snap: Pick<SddSnapshot, 'items' | 'flows'>): { value: string; label: string }[] {
+  return openItems(snap).map(i => ({ value: String(i.id), label: cutAt(itemLine(snap.flows, i), 90) }))
+}
+
+/** `/sdd `, `/sdd spec `, `/sdd:sdd bug `, `/sdd-view `: the place a work item id goes. */
+const ID_PLACE = /^\s*\/(?:sdd(?::sdd)?(?:\s+(?:bug|spec|status|done|abandon|impact))?|sdd-view)\s+$/i
+
+/** The rows the prompt box adds below its own while a work item id is typed after /sdd: the open items
+ *  whose id starts with the token, or whose title holds it. Empty anywhere else in the prompt. */
+export function itemSuggestions(snap: Pick<SddSnapshot, 'items' | 'flows'>, before: string, token: string, max = 8):
+  { text: string; label: string; description: string }[] {
+  if (!ID_PLACE.test(before) || !token) return []
+  const t = token.toLowerCase()
+  return openItems(snap)
+    .filter(i => (/^\d+$/.test(t) ? String(i.id).startsWith(t) : i.title.toLowerCase().includes(t)))
+    .slice(0, max)
+    .map(i => ({ text: String(i.id), label: String(i.id), description: cutAt(itemLine(snap.flows, i).slice(String(i.id).length + 1), 80) }))
+}
+
+
+// ---------------------------------------------------------------- cost and context
+// What a work item has cost, by stage. The session reports one running total ($.session.usage().cost); the
+// view takes what it grew by over a turn and has `env.py cost` append it to the item's own folder, against the
+// stage the item was in when the turn began (a stage that changes mid-turn is charged to the one it began in).
+// `env.py view` reports the totals per stage, whichever chat or session spent them.
+
+/** What one stage cost: dollars, turns, and the tokens by kind (a record from before tokens were kept has none). */
+export type SpendRow = { usd: number; turns: number; input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+
+/** Per stage key. */
+export type Spend = Record<string, SpendRow>
+
+export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number }
+
+export function spendTotal(spend: Spend): number {
+  return Object.values(spend).reduce((a, v) => a + v.usd, 0)
+}
+
+/** 0.004 -> `<$0.01`, 1.234 -> `$1.23`, 12.34 -> `$12.3`, 123.4 -> `$123`. */
+export function moneyText(usd: number): string {
+  if (!Number.isFinite(usd) || usd <= 0) return '$0'
+  if (usd < 0.01) return '<$0.01'
+  if (usd < 10) return `$${usd.toFixed(2)}`
+  if (usd < 100) return `$${usd.toFixed(1)}`
+  return `$${Math.round(usd)}`
+}
+
+export type ContextTone = 'ok' | 'warn' | 'high'
+
+/** From 80 percent a context window is worth a word, from 90 it is nearly full. */
+export function contextTone(percent: number | undefined): ContextTone {
+  if (percent == null || !Number.isFinite(percent)) return 'ok'
+  return percent >= 90 ? 'high' : percent >= 80 ? 'warn' : 'ok'
+}
+
+/** 950 -> `950`, 1234 -> `1.2k`, 45000 -> `45k`, 1234567 -> `1.2M`, 3.4e9 -> `3.4B`. */
+export function tokenText(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0'
+  const one = (v: number, unit: string) => `${v < 10 ? v.toFixed(1).replace(/\.0$/, '') : Math.round(v)}${unit}`
+  if (n < 1000) return String(Math.round(n))
+  if (n < 1e6) return one(n / 1e3, 'k')
+  if (n < 1e9) return one(n / 1e6, 'M')
+  return one(n / 1e9, 'B')
+}
+
+/** The tokens of one stage's row, or of all the rows added up. */
+export function spendTokens(rows: SpendRow | SpendRow[] | Spend): Tokens {
+  const list = Array.isArray(rows) ? rows : 'usd' in rows && typeof rows.usd === 'number' ? [rows as SpendRow] : Object.values(rows as Spend)
+  return list.reduce<Tokens>((t, r) => ({ input: t.input + (r.input ?? 0), output: t.output + (r.output ?? 0),
+    cacheRead: t.cacheRead + (r.cacheRead ?? 0), cacheWrite: t.cacheWrite + (r.cacheWrite ?? 0) }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+}
+
+/** `in 12k · out 3.4k · cache read 1.2M · cache write 80k`: the kinds with tokens, in that order. Null when none. */
+export function tokensLine(t: Tokens): string | null {
+  const parts = ([['in', t.input], ['out', t.output], ['cache read', t.cacheRead], ['cache write', t.cacheWrite]] as const)
+    .filter(([, n]) => n > 0).map(([label, n]) => `${label} ${tokenText(n)}`)
+  return parts.length ? parts.join(' · ') : null
+}
+
+/** The line for a stage: `$1.23 over 4 turns · in 12k · out 3k · cache read 1.2M · cache write 80k`. Null when the
+ *  stage has cost nothing. */
+export function spendLine(spend: Spend, key: string): string | null {
+  const v = spend[key]
+  const tokens = v ? tokensLine(spendTokens(v)) : null
+  if (!v || !(v.usd > 0 || tokens)) return null
+  const head = v.usd > 0 ? `${moneyText(v.usd)} over ${v.turns} turn${v.turns === 1 ? '' : 's'}` : `${v.turns} turn${v.turns === 1 ? '' : 's'}`
+  return tokens ? `${head} · ${tokens}` : head
 }

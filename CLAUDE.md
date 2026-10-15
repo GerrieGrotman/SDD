@@ -42,7 +42,7 @@ python hooks/test_edit_guard.py
 python repowatch/scripts/test_repowatch.py   # needs git; real repos in temp folders
 claude plugin test repowatch         # also mounts and presses the pane (hooks/pane.test.ts)
 claude plugin validate repowatch
-claude plugin test .                 # the view and the Worktrees page; it also finds repowatch's tests, whose pane tests stand down (the plugin under test is sdd)
+claude plugin test .                 # the view (model tests and hooks/pane.test.ts, which mounts the pane) and the Worktrees page; it also finds repowatch's tests, whose pane tests stand down (the plugin under test is sdd)
 claude plugin validate .             # the author warning is expected
 ```
 
@@ -70,4 +70,6 @@ to trust the plugin directory, and each case is a paid agent run. A full TypeScr
 - **repowatch deletes nothing on a remote except a stale `sync/<x>-<y>` branch.** `remote_delete_refusal` in
   `repowatch/scripts/repowatch.py` refuses every other deleting `git push` (and `--mirror`, `--prune`), and
   `test_remote_deletes` pins it. A new action must not route around `git()` for pushes.
-- **The view never writes**: `register.tsx` reads `env.py view` and posts the user's messages.
+- **The view writes one thing**: what each turn cost, in dollars and tokens, through `env.py cost` (one appended
+  line in the item's `cost.jsonl`; `view` reports the totals). Otherwise `register.tsx` reads `env.py view` and posts the user's
+  messages. It never passes a gate or runs another state-changing command.

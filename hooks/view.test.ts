@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { flowTag, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -238,6 +238,37 @@ test('Open Questions: skipped when nothing was asked, badged while questions sta
   expect(stageRows(SPEC, { ...legacy, progress: { ...legacy.progress!, phase: 'Design' } }).find(r => r.stage.key === 'Requirements')!.mark).toBe('done')
 })
 
+const COLORS = { done: '#3f9a63', now: '#c98a12', work: '#4a7fc4', revoked: '#c0503f', gate: '#8a73c9', dim: '#7b8794', line: '#5c6670', hoverText: '#ffffff' }
+const SPEC_REWORK = { ...SPEC, stages: [...SPEC.stages, { key: 'Review', label: 'Review', needs: ['PR raised'], passes: ['PR approved'], stop: true, reworkTo: 'Implement' }] }
+
+test('the flow map draws one box per stage, in a snake of four, with the way back for a rejected review', () => {
+  const item: SddItem = { ...ITEM, progress: { ...ITEM.progress!, phase: 'Design', status: 'waiting' }, gates: { Claimed: '2026-10-01T08:50:08Z', 'Requirements agreed': '2026-10-01T12:41:15Z' } }
+  const rows = stageRows(SPEC_REWORK, item)
+  const pend = pendingGate(SPEC_REWORK, item, SNAP.derived)
+  const m = flowMap(SPEC_REWORK, item, rows, SNAP.derived, COLORS, pend)
+  expect(m.source.startsWith('<svg xmlns="http://www.w3.org/2000/svg"')).toBe(true)
+  expect(m.source.endsWith('</svg>')).toBe(true)
+  expect(m.source.length).toBeLessThan(131072)                              // the Svg element's limit
+  expect(m.source.match(/<rect /g)?.length).toBe(8 + 1)                      // a box each, and the ring round the stage the item is at
+  expect(m.source).toContain('stroke-dasharray="5 4"')                       // Review goes back to Implement
+  expect(m.source).toContain('rework → Implement')
+  expect(m.alt).toBe('Spec flow, 8 stages: Specify (done), Open Questions (done), Requirements (done), Design (waiting on you), Decompose (next), Implement, Verify, Review.')
+  // the second row runs right to left: Decompose (stage 5) sits under Design (stage 4)
+  const xs = [...m.source.matchAll(/<rect x="(\d+)" y="(\d+)" width="126"/g)].map(x => [Number(x[1]), Number(x[2])])
+  expect(xs[3][0]).toBe(xs[4][0])
+  expect(xs[4][1]).toBeGreaterThan(xs[3][1])
+  expect(xs[7][0]).toBe(xs[0][0])                                            // Review ends under Specify
+})
+
+test('the flow map: a flow of phases, no way back drawn when the target is not behind, and text is escaped', () => {
+  const bug = { ...BUG, stages: [...BUG.stages.slice(0, 3), { key: 'Phase 15', label: 'PR <review> & "more"', needs: [], passes: [], stop: true, reworkTo: 'Phase 99' }] }
+  const item: SddItem = { ...ITEM, flow: 'bug', progress: { ...ITEM.progress!, phase: 'Phase 6', status: 'active' } }
+  const m = flowMap(bug, item, stageRows(bug, item), [], COLORS, null)
+  expect(m.source).not.toContain('stroke-dasharray="5 4"')                  // reworkTo names no stage: nothing drawn
+  expect(m.source).toContain('Phase 15')
+  expect(m.source).toContain('PR &lt;review&gt; &amp; &quot;more&quot;')
+  expect(m.source).not.toContain('<review>')
+})
 
 // ---- the Worktrees page
 
@@ -306,4 +337,115 @@ test('the Worktrees page asks repowatch for a line\'s history: its branch agains
   const [unseen] = joinWorktrees([wtItem(2, 'C:/ws/.claude/worktrees/2-b')], null)
   expect(unseen.repoName).toBe('Repo')
   expect(historyRefs(unseen)).toEqual(['dev/x/2', 'origin/team/0.0.1'])
+})
+
+test('the spinner note names the item, its stage and the next gate or the task count', () => {
+  const at = (phase: string, status: 'active' | 'waiting' | 'done', gates: Record<string, string> = {}, spec = ITEM.spec): SddItem =>
+    ({ ...ITEM, gates, spec, progress: { ...ITEM.progress!, phase, status } })
+  expect(spinnerNote(SPEC, at('Design', 'active', { Claimed: 'x', 'Requirements agreed': 'x' }), SNAP.derived)).toBe(' · 92012 Design · gate: Design agreed')
+  expect(spinnerNote(SPEC, at('Implement (task 3/7)', 'active', {}, { ...ITEM.spec!, tasks_done: 3, tasks_total: 7 }), SNAP.derived)).toBe(' · 92012 Implement · task 3/7')
+  expect(spinnerNote(SPEC, at('Implement', 'active', {}, { ...ITEM.spec!, tasks_total: 0 }), SNAP.derived)).toBe(' · 92012 Implement')
+  expect(spinnerNote(SPEC, at('Design', 'done'), SNAP.derived)).toBe(null)            // nothing to say about a finished item
+  expect(spinnerNote(undefined, at('Design', 'active'), SNAP.derived)).toBe(null)     // an old snapshot without flows
+  expect(spinnerNote(SPEC, at('somewhere else', 'active'), SNAP.derived)).toBe(null)  // a phase the flow does not have
+})
+
+test('your turn: told once per wait, and not while the item works', () => {
+  const waiting = yourTurn(SPEC, ITEM)
+  expect(waiting?.text).toBe('92012 Verify: your turn. PR status')
+  expect(yourTurn(SPEC, { ...ITEM })?.key).toBe(waiting?.key)                                                  // the same wait: the same key
+  expect(yourTurn(SPEC, { ...ITEM, progress: { ...ITEM.progress!, at: '2026-10-02T09:00:00Z' } })?.key).not.toBe(waiting?.key)  // a new wait
+  expect(yourTurn(SPEC, { ...ITEM, progress: { ...ITEM.progress!, status: 'active' } })).toBe(null)
+  expect(yourTurn(SPEC, { ...ITEM, progress: { ...ITEM.progress!, gate: '' } })?.text).toBe('92012 Verify: your turn. a decision')
+  expect(yourTurn(SPEC, { ...ITEM, progress: { ...ITEM.progress!, gate: 'x'.repeat(400) } })!.text.length).toBe(200)
+})
+
+test('agent rows: the live ones first, then the newest of the rest, and the plugin prefix dropped', () => {
+  const a = (id: string, type: string, status: string, description = id) => ({ id, type, status, description })
+  const list = [a('1', 'sdd:investigator', 'completed'), a('2', 'sdd:skeptic', 'running', 'Check\n  the design'), a('3', 'Explore', 'failed'),
+    a('4', 'teammate', 'waiting'), a('5', 'general-purpose', 'completed'), a('6', 'Explore', 'idle'), a('7', 'Explore', 'killed'), a('8', 'Explore', 'weird')]
+  const rows = agentRows(list)
+  expect(rows.map(r => r.id)).toEqual(['2', '4', '8', '7', '6', '5'])               // live (2, 4), then newest first, six in all
+  expect(rows[0]).toEqual({ id: '2', name: 'skeptic', text: 'Check the design', word: 'working', tone: 'working', isLive: true })
+  expect(rows.find(r => r.id === '8')).toMatchObject({ word: 'weird', tone: 'quiet', isLive: false })   // a status the view does not know
+  expect(rows.find(r => r.id === '7')).toMatchObject({ word: 'stopped', tone: 'failed' })
+  expect(agentRows(list, 2).map(r => r.id)).toEqual(['2', '4'])                       // live ones are never cut for room
+  expect(agentRows([])).toEqual([])
+  expect(agentRows([a('9', 'Explore', 'running', 'x'.repeat(200))])[0].text.length).toBe(80)
+})
+
+const OTHER: SddItem = { ...ITEM, id: 92100, title: 'Second thing', progress: { ...ITEM.progress!, phase: 'Design', status: 'waiting', gate: 'Design agreed?' } }
+const THIRD: SddItem = { ...ITEM, id: 92200, title: 'Third thing', progress: { ...ITEM.progress!, phase: 'Implement', status: 'active' } }
+const FIRST: SddItem = { ...ITEM, progress: { ...ITEM.progress!, status: 'active' } }
+const MANY: SddSnapshot = { ...SNAP, items: [FIRST, THIRD, OTHER] }
+
+test('the work item dropdown: the ones waiting on you first, then the newest id, each as one line', () => {
+  const o = itemOptions(MANY)
+  expect(o.map(x => x.value)).toEqual(['92100', '92200', '92012'])          // 92100 waits on the person
+  expect(o[0].label).toBe('92100 Second thing · Design · waiting on you')
+  expect(o[1].label).toBe('92200 Third thing · Implement · active')
+  expect(itemOptions({ items: [], flows: {} })).toEqual([])
+  expect(itemOptions({ items: [{ ...ITEM, title: 'x'.repeat(200) }], flows: SNAP.flows })[0].label.length).toBe(90)
+})
+
+test('autocomplete: only after /sdd, by id prefix or a word of the title', () => {
+  const ids = (before: string, token: string) => itemSuggestions(MANY, before, token).map(r => r.text)
+  expect(ids('/sdd ', '92')).toEqual(['92100', '92200', '92012'])
+  expect(ids('/sdd ', '921')).toEqual(['92100'])
+  expect(ids('/sdd ', 'third')).toEqual(['92200'])                          // a word of the title, any case
+  expect(ids('/sdd spec ', '9210')).toEqual(['92100'])                      // after a subcommand
+  expect(ids('/sdd:sdd ', '92200')).toEqual(['92200'])
+  expect(ids('  /sdd-view ', '92')).toHaveLength(3)
+  expect(ids('fix the bug in ', '92')).toEqual([])                          // a number elsewhere in the prompt
+  expect(ids('/sdd 92100 ', '92')).toEqual([])                              // the id is already given
+  expect(ids('/sddx ', '92')).toEqual([])                                   // another command
+  expect(ids('/sdd ', '')).toEqual([])
+  expect(ids('/sdd ', 'nothing matches')).toEqual([])
+  expect(itemSuggestions(MANY, '/sdd ', '92', 2)).toHaveLength(2)           // at most max rows
+  expect(itemSuggestions(MANY, '/sdd ', '921')[0]).toEqual({ text: '92100', label: '92100', description: 'Second thing · Design · waiting on you' })
+})
+
+test('spend: the total of an item, over its stages', () => {
+  expect(spendTotal({ Design: { usd: 0.75, turns: 2 }, Implement: { usd: 1, turns: 1 } })).toBe(1.75)
+  expect(spendTotal({})).toBe(0)
+})
+
+test('spend text: small, ordinary and large amounts, and the line for a stage', () => {
+  expect([0, -1, Number.NaN].map(moneyText)).toEqual(['$0', '$0', '$0'])
+  expect([0.004, 0.01, 1.234, 9.999, 12.34, 99.94, 123.4].map(moneyText)).toEqual(['<$0.01', '$0.01', '$1.23', '$10.00', '$12.3', '$99.9', '$123'])
+  const sp = { Design: { usd: 1.234, turns: 4 }, Implement: { usd: 0.5, turns: 1 } }
+  expect(spendLine(sp, 'Design')).toBe('$1.23 over 4 turns')
+  expect(spendLine(sp, 'Implement')).toBe('$0.50 over 1 turn')
+  expect(spendLine(sp, 'Verify')).toBe(null)
+})
+
+test('context tone: a word from 80 percent, nearly full from 90', () => {
+  expect([undefined, 0, 79, 79.9, 80, 89, 90, 100, Number.NaN].map(contextTone)).toEqual(['ok', 'ok', 'ok', 'ok', 'warn', 'warn', 'high', 'high', 'ok'])
+})
+
+test('token text: plain under a thousand, then k, M and B with one decimal under ten', () => {
+  expect([0, -5, Number.NaN, 7, 950, 999.4, 1000, 1234, 9999, 45_000, 999_999, 1_234_567, 80_000_000, 3.4e9].map(tokenText))
+    .toEqual(['0', '0', '0', '7', '950', '999', '1k', '1.2k', '10k', '45k', '1000k', '1.2M', '80M', '3.4B'])
+})
+
+test('tokens: one stage or all of them added up, old rows without tokens counting as none, one line of the kinds used', () => {
+  const spend = { Design: { usd: 1, turns: 2, input: 1000, output: 200, cacheRead: 50_000, cacheWrite: 3000 }, Specify: { usd: 0.5, turns: 1 },
+    Implement: { usd: 2, turns: 4, input: 20, output: 5, cacheRead: 0, cacheWrite: 0 } }
+  expect(spendTokens(spend.Design)).toEqual({ input: 1000, output: 200, cacheRead: 50_000, cacheWrite: 3000 })
+  expect(spendTokens(spend.Specify)).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+  expect(spendTokens(spend)).toEqual({ input: 1020, output: 205, cacheRead: 50_000, cacheWrite: 3000 })
+  expect(spendTokens({})).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+  expect(tokensLine(spendTokens(spend))).toBe('in 1k · out 205 · cache read 50k · cache write 3k')
+  expect(tokensLine(spendTokens(spend.Implement))).toBe('in 20 · out 5')
+  expect(tokensLine(spendTokens(spend.Specify))).toBe(null)
+})
+
+test('the stage line: dollars and turns, then the tokens; tokens alone still say something; nothing says nothing', () => {
+  const spend = { Design: { usd: 1.234, turns: 4, input: 12_000, output: 3400, cacheRead: 1_200_000, cacheWrite: 80_000 }, Tok: { usd: 0, turns: 1, output: 9 },
+    Old: { usd: 0.5, turns: 1 }, None: { usd: 0, turns: 1 } }
+  expect(spendLine(spend, 'Design')).toBe('$1.23 over 4 turns · in 12k · out 3.4k · cache read 1.2M · cache write 80k')
+  expect(spendLine(spend, 'Tok')).toBe('1 turn · out 9')
+  expect(spendLine(spend, 'Old')).toBe('$0.50 over 1 turn')
+  expect(spendLine(spend, 'None')).toBe(null)
+  expect(spendLine(spend, 'Missing')).toBe(null)
 })
