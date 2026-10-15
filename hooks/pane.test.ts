@@ -174,7 +174,11 @@ test('desktop: each stage is a button with a rail slice, and the picked stage op
   for (const name of ['Specify', 'Design', 'Review']) expect((await ui.find({ key: `row:${name}` })).props.label).toBe(name)
   expect(await ui.find({ key: 'pick-stage' })).toBe(undefined)                         // no picker row: the stages are the picker
   expect(await ui.find({ key: 'stage-next' })).toBe(undefined)
-  expect(await ui.find({ key: 'stagedetail-Design' })).toBeTruthy()                    // the pane opens on the stage the item is at
+  const detail = await ui.find({ key: 'stagedetail-Design' })
+  expect(detail).toBeTruthy()                                                          // the pane opens on the stage the item is at
+  expect(detail.props.borderStyle).toBe(undefined)                                     // no frame: it would run over the rail
+  expect(detail.props.marginLeft).toBeGreaterThanOrEqual(6)                            // it starts right of the 40 px rail slice
+  expect((await ui.find({ key: 'stagerow-Design' })).props.paddingRight).toBeGreaterThanOrEqual(1)   // the cost and time keep room on the right
   expect(await ui.find({ key: 'log:Design' })).toBeTruthy()
   expect(await ui.find({ key: 'log:Specify' })).toBe(undefined)                        // and shows only that one
   await ui.press({ key: 'row:Review' })
@@ -326,6 +330,19 @@ test('cost: a chat that never ran /sdd belongs to the first item its scripts nam
   await $.tool.call({ tool: 'Bash', command: 'python /p/scripts/env.py can --id 92012 --op phase --flow spec --phase Design' })
   await turn($, f, 1.5)
   expect(f.costs.map(c => c.id)).toEqual([92100])                                          // the first one named
+})
+
+test('desktop: an item with no cost recorded says so, and the line goes once a turn is recorded', async ($: any, on: any) => {
+  const f = fake(on, [])
+  if (!(await begin($, f))) return
+  const ui = await $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'Pane', props: { title: 'sdd', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never,
+    requestId: 'sdd-view', viewport: { columns: 100, rows: 40 } })
+  for (let i = 0; i < 100 && !(await texts(ui)).includes('Author tags'); i++) await new Promise(r => setTimeout(r, 10))
+  expect(await texts(ui)).toContain('No cost recorded for this item yet')
+  await turn($, f, 1.5)
+  for (let i = 0; i < 100 && (await texts(ui)).includes('No cost recorded'); i++) await new Promise(r => setTimeout(r, 10))
+  expect(await texts(ui)).not.toContain('No cost recorded')
+  expect(await texts(ui)).toContain('Spent $')
 })
 
 test('cost: a failed record says so once, and the turn goes on', async ($: any, on: any) => {

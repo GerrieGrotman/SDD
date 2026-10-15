@@ -63,6 +63,8 @@ let isWorkspace = false
 // Cost and context, from session.measure. The cost is charged to the stage the item was in when the turn began.
 let desktopReady = false  // a Desktop app is attached: until then the mod does nothing
 let sessionId = ''
+/** Why the last finished turn charged nothing, for the pane to say when an item shows no cost; null = it was recorded. */
+let costWhy: string | null = null
 let costFailed = false
 let staleBaseline = false  // /clear, /resume or /branch ran: read the session id and cost total again at the next turn
 let lastUsd: number | null = null
@@ -236,10 +238,12 @@ async function flushCost($: EngineInterface, folder: string | null): Promise<boo
   const p = pend
   if (!(p.usd > 0 || p.input + p.output + p.cacheRead + p.cacheWrite > 0)) return false
   pend = nothing()  // before any await: a second flush at once finds nothing
-  if (!turnOf || !sessionId) return false
+  if (!turnOf) { costWhy = 'this chat has no work item yet (the turn was not charged); run /sdd <id> in it'; return false }
+  if (!sessionId) { costWhy = 'the session reported no id (the turn was not charged)'; return false }
   const turns = turnCounted ? 0 : 1
   turnCounted = true
   const why = await recordCost($, folder, turnOf.id, turnOf.key, p, turns)
+  costWhy = why ? `the last turn was not recorded: ${why.slice(0, 100)}` : null
   if (why && !costFailed) {
     costFailed = true  // a missing script would otherwise say it after every turn
     $.ui.toast(`Cost not recorded: ${why.slice(0, 160)}`)
@@ -580,6 +584,7 @@ export const register: Register = on => {
     if (!desktopReady) return next(e)
     if (e.context.percent != null) ctx = { percent: e.context.percent, window: e.context.window }
     const usd = e.cost?.usd
+    if (usd == null && !pend.input && !pend.output) costWhy = 'the session reports no cost'
     if (usd != null) {
       const delta = lastUsd == null ? 0 : usd - lastUsd
       lastUsd = usd
@@ -876,6 +881,9 @@ export const register: Register = on => {
             <Box flexGrow={1} flexShrink={1}><Text dimColor wrap="truncate-end">{`${item.type}, ${item.state} in ADO`}</Text></Box>
           </Box>
           <Markdown text={links} />
+          {spendTotal(spend) <= 0 && !tokensLine(spendTokens(spend)) && (
+            <Text dimColor wrap="wrap">{`No cost recorded for this item yet${costWhy ? `: ${costWhy}` : '. It shows after the next turn in a chat on this item.'}`}</Text>
+          )}
           {tokensLine(spendTokens(spend)) && <Text dimColor wrap="wrap">{`Tokens: ${tokensLine(spendTokens(spend))}`}</Text>}
           {(spendTotal(spend) > 0 || ctx) && (
             <Box flexDirection="row" gap={2}>
@@ -946,7 +954,7 @@ export const register: Register = on => {
               const maxUsd = Math.max(0, ...rows.map(x => spend[x.stage.key]?.usd ?? 0))
               return (
                 <Box key={`stagebox-${key}`} flexDirection="column">
-                  <Box key={`stagerow-${key}`} flexDirection="row" gap={1} alignItems="center" backgroundColor={isOpen ? tint : undefined}>
+                  <Box key={`stagerow-${key}`} flexDirection="row" gap={1} alignItems="center" paddingRight={2} backgroundColor={isOpen ? tint : undefined}>
                     <Svg source={rail.source} alt={rail.alt} width={rail.width} height={rail.height} />
                     <Box flexShrink={1} minWidth={0}>
                       <Button key={`row:${key}`} dimColor={r.mark === 'later'} label={stageName(r.stage)} onPress={() => pickStage(key)} />
@@ -967,7 +975,8 @@ export const register: Register = on => {
                     {wide && at && <Text dimColor>{at}</Text>}
                   </Box>
                   {isOpen && (
-                    <Box key={`stagedetail-${key}`} flexDirection="column" marginLeft={2} paddingLeft={2} borderStyle="quote" borderColor={markColor(r.mark) ?? C.line}>
+                    // no border: the rail is drawn in the slices, and a frame would run over it; the detail starts where the buttons do
+                    <Box key={`stagedetail-${key}`} flexDirection="column" marginLeft={6} marginBottom={1}>
                       {sum.note && <Text dimColor wrap="wrap">{sum.note}</Text>}
                       {drawStageDetail(r)}
                     </Box>
