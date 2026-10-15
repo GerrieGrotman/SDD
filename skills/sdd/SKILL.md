@@ -245,7 +245,7 @@ the verdict is completed or abandoned, say so and ask before starting the item a
 
 Every question to the user in an sdd flow follows **Decision briefs** in
 `references/flow-rules.md`: build the visual page, get the Links block from the script, paste it
-above the question, send the listed files, ask with `AskUserQuestion`. The `question_guard.py` hooks
+directly above the question (no gap: nothing between the Links block and the question), send the listed files, ask with `AskUserQuestion`. The `question_guard.py` hooks
 enforce it. `/sdd init` install questions and `/sdd help` are exempt — they are about tools, not the
 spec.
 

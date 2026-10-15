@@ -55,14 +55,17 @@ ask it properly. They act only while an sdd flow runs. `/sdd init` installs them
      decision is about — the lines you propose to change, the failing test, the callers — as
      `src/<Repo>/path/file.cs:120-140`. Use `ado` when only the work item itself applies.
    - A ref that does not exist is an error. Fix the ref; never drop it to get past the check.
-2. **Paste the printed "Links" block into the chat message, above the question.** Every link — the
+2. **Paste the printed "Links" block into the chat message, directly above the question — no gap.**
+   The Links block is the last thing in the message, and the `AskUserQuestion` call comes right after
+   it: no sentence, summary, quoted code or second block between them. Say everything else first,
+   then the Links block, then the question. Every link — the
    work item, the PR, files, the visual page — goes in the chat. **Never put a link inside the
    `AskUserQuestion` question or its options**: they hold plain text only. The hook refuses a
    question that contains a link.
 3. **Send every file listed under "Send with SendUserFile"** (`display: "render"`) when that tool
    exists. Local links do not open on a phone; sent files and ADO links do.
-4. **Code marked "not pushed": quote those lines** (20 at most) in the message, since only a pushed
-   branch gets an ADO link.
+4. **Code marked "not pushed": quote those lines** (20 at most) in the message, *before* the Links
+   block, since only a pushed branch gets an ADO link.
 5. Exempt: `/sdd init` install questions and `/sdd help` — they are about tools, not the spec.
 
 ## Bugs this work did not cause — explain, then ask (mandatory)
