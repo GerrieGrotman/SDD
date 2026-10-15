@@ -237,6 +237,28 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(calls.some(c => c[0] === 'apply' || c[0] === 'plan')).toBe(false)
   })
 
+  test(`${surface}: /repowatch history opens a branch's history, from words or from another plugin's JSON`, async ($: any, on: any) => {
+    const calls = fakeScript(on)
+    const ui = await mountPane($, 'repos', calls)
+    if (!ui) return
+    const json = JSON.stringify({ repo: 'app', refs: ['feat/x', 'origin/team/1'], title: 'app · feat/x against origin/team/1' })
+    const res = await $.command.run({ command: 'repowatch', args: 'history ' + json })
+    expect(res.text).toContain('History of app · feat/x against origin/team/1 opened')
+    expect(calls.find(c => c[0] === 'graph')).toEqual(['graph', '--repo', 'app', '--ref=feat/x', '--ref=origin/team/1', '--limit', '40'])
+    const t = await texts(ui)
+    expect(t).toContain('app · feat/x against origin/team/1')
+    expect(t).toContain('feature two')
+    // by hand: words
+    await $.command.run({ command: 'repowatch', args: 'history app main' })
+    expect(calls.filter(c => c[0] === 'graph').pop()).toEqual(['graph', '--repo', 'app', '--ref=main', '--limit', '40'])
+    // an option-looking ref and a missing branch never reach the script, or come back as a message
+    const before = calls.filter(c => c[0] === 'graph').length
+    expect((await $.command.run({ command: 'repowatch', args: 'history app --all' })).text).toContain('Usage:')
+    expect(calls.filter(c => c[0] === 'graph').length).toBe(before)
+    calls.graphError = 'no such branch or commit: nope'
+    expect((await $.command.run({ command: 'repowatch', args: 'history app nope' })).text).toContain('no such branch or commit: nope')
+  })
+
   test(`${surface}: History can drop the base, follow first parents only, show more, and go back`, async ($: any, on: any) => {
     const calls = fakeScript(on)
     const ui = await mountPane($, 'worktrees', calls)

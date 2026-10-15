@@ -10,7 +10,7 @@ import {
   actionArgs, ago, baseText, branchText, bulkRows, classLabel, conflictToast, dedupePrune, flagLabel, forecastText, isUrgent,
   fixGlyph, fixLine, hopKey, hopLine, hopRows, mergeAskText, page, planArgs, planGist, resolveAskText, resultLine, sddRemoveText,
   statusText, stepText, syncArgs, undoArgs, undoLabel, visibleRepos, worktreeRows,
-  commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory,
+  commitMeta, graphArgs, parseHistoryArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory,
 } from './view/model'
 import type { GraphTarget } from './view/model'
 
@@ -131,8 +131,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'repowatch',
-      description: 'Show the git repos of this workspace in a pane; "worktrees" lists every worktree, "sync" the team branch sync, "scan" or "fetch" refreshes',
-      argumentHint: '[worktrees|sync|scan|fetch]',
+      description: 'Show the git repos of this workspace in a pane; "worktrees" lists every worktree, "sync" the team branch sync, "history <repo> <branch> [<base>]" draws a branch, "scan" or "fetch" refreshes',
+      argumentHint: '[worktrees|sync|scan|fetch|history <repo> <branch> [<base>]]',
     })
     const sync = async (fetch: boolean) => {
       const before = (await $.state.get(state)).value ?? null
@@ -154,6 +154,25 @@ export const register: Register = on => {
   on('command.run', { command: 'repowatch' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
     await $.ui.open({ id: PANE, title: 'repowatch', closeOnEscape: true, columns: 110 })
+    if (arg === 'history' || arg.startsWith('history ')) {
+      // another plugin (sdd's Worktrees page) asks this way, or a person types it
+      const target = parseHistoryArgs(e.args.trim().slice('history'.length))
+      if (!target) return { text: 'Usage: /repowatch history <repo> <branch> [<base>]' }
+      const next = { repo: target.repo, refs: target.refs, withBase: target.refs.length > 1, firstParent: false, limit: GRAPH_STEP }
+      try {
+        const r = await loadGraph($, next)
+        await $.state.set(graph, { ...next, ...r, title: target.title, back: 'repos' })
+        await $.state.set(commit, null)
+        await $.state.set(view, 'graph')
+        await $.state.set(offset, 0)
+        await $.state.set(note, null)
+      } catch (err) {
+        const why = String(err instanceof Error ? err.message : err)
+        await $.state.set(note, why)
+        return { text: why }
+      }
+      return { text: `History of ${target.title} opened.` }
+    }
     if (arg === 'worktrees' || arg === 'sync') {
       await $.state.set(view, arg)
       await $.state.set(offset, 0)

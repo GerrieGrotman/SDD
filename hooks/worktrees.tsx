@@ -8,7 +8,7 @@ type On = Parameters<Register>[0]
 
 import type { SddLiveState, SddSnapshot } from '../types'
 import { phaseLabel, statusWord } from './view/model'
-import { agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
+import { agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
 
 const PANE = 'sdd-worktrees'
 const snap = { plugin: 'sdd', key: 'snap' } as const
@@ -90,6 +90,15 @@ export function registerWorktrees(on: On): void {
       await $.state.set(live, r.state)
       await $.state.set(liveError, r.why)
     }
+    // the history is repowatch's to draw: ask its command, which opens its own pane on that branch
+    const showHistory = (args: string) => async () => {
+      try {
+        const res = await $.command.run({ command: 'repowatch', args })
+        if (/^Usage:|no such|not found/i.test(res.text ?? '')) $.ui.toast(res.text ?? 'repowatch could not show that history')
+      } catch (err) {
+        $.ui.toast(`repowatch could not show that history (is the repowatch plugin enabled?): ${String(err).slice(0, 120)}`)
+      }
+    }
     const openItem = (id: number) => async () => {
       await $.state.set(selected, id)
       await $.state.set(stage, null)
@@ -148,7 +157,10 @@ export function registerWorktrees(on: On): void {
                 const clash = conflictNote(l)
                 return (
                   <Box key={`${l.item.id}-${l.repo}`} flexDirection="column" marginLeft={4}>
-                    <Text>{l.repo} · {l.branch}</Text>
+                    <Box>
+                      <Text>{l.repo} · {l.branch}  </Text>
+                      <Button key={`hist-${l.item.id}-${l.repo}`} label="History" onPress={showHistory(historyArgs(l))} />
+                    </Box>
                     <Text dimColor>  {lineFacts(l, now).join(' · ')}</Text>
                     {note && <Text color={COLORS.warn}>  {note}</Text>}
                     {clash && <Text color={COLORS.urgent}>  {clash}</Text>}

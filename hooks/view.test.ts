@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { SddItem, SddSnapshot } from '../types'
 import { flowTag, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
-import { agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
+import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
 const SPEC = {
   label: 'Spec flow',
@@ -292,4 +292,18 @@ test('the Worktrees page shows how far behind the base a branch is and what woul
   expect(conflictNote(line)).toBe('merging origin/team/0.0.1 in would conflict in a.cs, b.cs')
   expect(counts([line]).conflicts).toBe(1)
   expect(sortLines(joinWorktrees([wtItem(2, 'C:/ws/.claude/worktrees/2-b'), wtItem(1, 'C:/ws/.claude/worktrees/1-a')], live))[0].item.id).toBe(1)
+})
+
+test('the Worktrees page asks repowatch for a line\'s history: its branch against the recorded base', () => {
+  const live: SddLiveState = { generated: 1, repos: { 'my app': { worktrees: [
+    { path: 'C:/ws/.claude/worktrees/1-a/src/Repo', branch: 'dev/x/1', class: 'ok', reasons: [], baseRef: 'origin/team/0.0.1' }] } } }
+  const [seen] = joinWorktrees([wtItem(1, 'C:/ws/.claude/worktrees/1-a')], live)
+  expect(seen.repoName).toBe('my app') // repowatch's name for the repo, which may differ from the work item's
+  expect(historyRefs(seen)).toEqual(['dev/x/1', 'origin/team/0.0.1'])
+  expect(JSON.parse(historyArgs(seen).slice('history '.length))).toEqual(
+    { repo: 'my app', refs: ['dev/x/1', 'origin/team/0.0.1'], title: '1 · my app · dev/x/1 against origin/team/0.0.1' })
+  // not seen by repowatch yet: the work item's own names and its recorded base
+  const [unseen] = joinWorktrees([wtItem(2, 'C:/ws/.claude/worktrees/2-b')], null)
+  expect(unseen.repoName).toBe('Repo')
+  expect(historyRefs(unseen)).toEqual(['dev/x/2', 'origin/team/0.0.1'])
 })

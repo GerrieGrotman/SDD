@@ -41,7 +41,7 @@ pandoc, Ollama (meaning search).
 | `/sdd status <id>` | Where the item stands |
 | `/sdd <id> feedback <stage>: <text>` | Back to a done or waiting stage with your feedback |
 | `/sdd-view [id]` | Opens the sdd view for this chat's work item (or the one given) |
-| `/sdd-worktrees` | Lists every work item that still has worktrees, with each worktree's live state (needs the repowatch plugin, which installs with sdd). Read-only; clean-up is in `/repowatch worktrees` |
+| `/sdd-worktrees` | Lists every work item that still has worktrees, with each worktree's live state (needs the repowatch plugin, which installs with sdd). Read-only; each line has a **History** button that asks repowatch to draw that branch against its base. Clean-up is in `/repowatch worktrees` |
 
 The sdd view opens by itself the first time a chat takes up a work item. In it:
 

@@ -27,6 +27,7 @@ const ok = (value: unknown) => ({ value })
 function engine(on: any, liveFile = true) {
   const reads: string[] = []
   const opened: string[] = []
+  const commands: Array<{ command: string; args: string }> = []
   let filled = ''
   on('process.run', (() => ok({ exitCode: 0, stdout: JSON.stringify(SNAP), stderr: '', isStdoutTruncated: false, isStderrTruncated: false })) as never)
   on('fs.read', ((_$: unknown, e: { path: string }) => {
@@ -40,8 +41,9 @@ function engine(on: any, liveFile = true) {
   on('clock.every', (() => ok({ id: 'tick' })) as never)
   on('ui.open', ((_$: unknown, e: { id: string }) => { opened.push(e.id); return ok({ isPlaced: true }) }) as never)
   on('ui.toast', (() => ok(undefined)) as never)
+  on('command.run', ((_$: unknown, e: { command: string; args: string }) => { commands.push({ command: e.command, args: e.args }); return { text: 'History opened.' } }) as never)
   on('prompt.fill', ((_$: unknown, e: { text: string }) => { filled = e.text; return { isFilled: true } }) as never)
-  return { reads, opened, filled: () => filled }
+  return { reads, opened, commands, filled: () => filled }
 }
 
 const texts = async (ui: { findAll: (q: { type: string }) => Promise<Array<{ text?: string }>> }) =>
@@ -86,5 +88,19 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(world.opened).toContain('sdd-view')
     await ui.press({ key: 'rw' })
     expect(world.filled()).toBe('/repowatch worktrees')
+  })
+
+  test(`${surface}: History asks repowatch's command for that branch against its recorded base, and changes nothing`, async ($: any, on: any) => {
+    const world = engine(on)
+    const ui = await mountPage($)
+    await ui.press({ key: 'reload' })
+    await ui.press({ key: 'hist-1-Repo' })
+    expect(world.commands.length).toBe(1)
+    expect(world.commands[0].command).toBe('repowatch')
+    expect(world.commands[0].args.startsWith('history {')).toBe(true)
+    const sent = JSON.parse(world.commands[0].args.slice('history '.length))
+    expect(sent.repo).toBe('Repo')
+    expect(sent.refs).toEqual(['dev/x/1', 'origin/team/0.0.1'])
+    expect(world.opened).not.toContain('repowatch') // the pane is repowatch's to open
   })
 }

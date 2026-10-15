@@ -10,6 +10,8 @@ export type WtLine = {
   prId: number | null
   /** repowatch's scan of this worktree; null = it has not seen it. */
   live: SddLiveWorktree | null
+  /** The repo's name in repowatch's scan when it has seen the worktree, else the work item's own name for it. */
+  repoName: string
 }
 
 /** A path as a key: forward slashes, no trailing slash, and lower case when it starts with a drive letter. */
@@ -20,14 +22,14 @@ export function pathKey(p: string): string {
 
 /** One line per repo of every work item that still has a folder, joined to the live worktree by path. */
 export function joinWorktrees(items: SddItem[], live: SddLiveState | null): WtLine[] {
-  const byPath = new Map<string, SddLiveWorktree>()
-  for (const r of Object.values(live?.repos ?? {})) for (const w of r.worktrees ?? []) byPath.set(pathKey(w.path), w)
+  const byPath = new Map<string, { w: SddLiveWorktree; repo: string }>()
+  for (const [name, r] of Object.entries(live?.repos ?? {})) for (const w of r.worktrees ?? []) byPath.set(pathKey(w.path), { w, repo: name })
   const out: WtLine[] = []
   for (const item of items) {
     if (item.removed || !item.folder) continue
     for (const [repo, r] of Object.entries(item.repos ?? {})) {
-      out.push({ item, repo, branch: r.branch, base: r.base, prId: r.pr?.id ?? null,
-        live: byPath.get(pathKey(`${item.folder}/${r.path}`)) ?? null })
+      const seen = byPath.get(pathKey(`${item.folder}/${r.path}`))
+      out.push({ item, repo, branch: r.branch, base: r.base, prId: r.pr?.id ?? null, live: seen?.w ?? null, repoName: seen?.repo ?? repo })
     }
   }
   return out
@@ -98,4 +100,15 @@ export function counts(lines: WtLine[]): { items: number; worktrees: number; cle
     dirty: lines.filter(l => l.live?.dirty).length,
     conflicts: lines.filter(l => l.live?.forecast?.state === 'conflict').length,
   }
+}
+
+/** The refs of a line's history: its branch, and what it is measured against (repowatch's base, else origin/<the recorded base>). */
+export function historyRefs(l: WtLine): string[] {
+  return [l.branch, l.live?.baseRef ?? `origin/${l.base}`]
+}
+
+/** The arguments for repowatch's `history` command: the repo, the refs and a title, as JSON so no name needs quoting. */
+export function historyArgs(l: WtLine): string {
+  const refs = historyRefs(l)
+  return 'history ' + JSON.stringify({ repo: l.repoName, refs, title: `${l.item.id} · ${l.repoName} · ${refs[0]} against ${refs[1]}` })
 }

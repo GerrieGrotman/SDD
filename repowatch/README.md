@@ -60,7 +60,8 @@ installs with sdd.
   coloured by where it is: green only on the branch, blue only on the base, grey on both, so the fork point and
   what is unmerged stand out. Press a commit id for its message and the files it changed. **Without base**,
   **First parent only** and **Show 40 more** change what is drawn; **‹ Back** returns to where you were. It only
-  reads. `repowatch.py graph --repo NAME --ref BRANCH [--ref BASE] [--limit N] [--first-parent]` and
+  reads. `/repowatch history <repo> <branch> [<base>]` opens it directly (sdd's `/sdd-worktrees` page uses the same
+  command). `repowatch.py graph --repo NAME --ref BRANCH [--ref BASE] [--limit N] [--first-parent]` and
   `show --repo NAME --sha SHA` do it by hand; refs that start with `-` are refused.
 - **Background scan**: local facts every minute; every fifth scan also fetches the four repos fetched
   longest ago, so dozens of repos are covered without a stall. Nothing is pulled, merged or deleted.

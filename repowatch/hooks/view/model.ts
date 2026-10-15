@@ -343,3 +343,27 @@ export function commitMeta(row: RwGraphRow, nowSeconds: number): string {
 export function sideLegend(g: RwGraph): string {
   return g.withBase && g.refs.length > 1 ? `green: only on ${g.refs[0]} · blue: only on ${g.refs[1]} · grey: on both` : ''
 }
+
+/** The arguments of `/repowatch history`: `<repo> <branch> [<base>]`, or the JSON `{repo, refs, title?}` another plugin sends. */
+export function parseHistoryArgs(text: string): GraphTarget | null {
+  const t = text.trim()
+  let repo = ''
+  let refs: string[] = []
+  let title = ''
+  if (t.startsWith('{')) {
+    try {
+      const j = JSON.parse(t) as { repo?: unknown; refs?: unknown; title?: unknown }
+      repo = typeof j.repo === 'string' ? j.repo : ''
+      refs = Array.isArray(j.refs) ? j.refs.filter((r): r is string => typeof r === 'string') : []
+      title = typeof j.title === 'string' ? j.title : ''
+    } catch {
+      return null
+    }
+  } else {
+    const words = t.split(/\s+/).filter(Boolean)
+    repo = words[0] ?? ''
+    refs = words.slice(1, 3)
+  }
+  if (!repo || refs.length < 1 || refs.length > 2 || refs.some(r => !r || r.startsWith('-'))) return null
+  return { repo, refs, title: title || `${repo} · ${refs[0]}${refs[1] ? ` against ${refs[1]}` : ''}` }
+}

@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { RwGraph, RwPlan, RwRepo, RwResult, RwSummary, RwSyncFix, RwSyncState, RwWorktree, WorktreeClass } from '../types'
-import { commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory, actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
+import { parseHistoryArgs, commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory, actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows } from './view/model'
 
 const repo = (name: string, flags: string[], extra: Partial<RwRepo> = {}): RwRepo => ({ name, path: `/ws/${name}`, scannedAt: 0, flags, ...extra })
 
@@ -215,4 +215,12 @@ test('labels, meta and the legend read plainly', () => {
   const g: RwGraph = { repo: 'a', title: 't', refs: ['feat/x', 'origin/main'], withBase: true, firstParent: false, limit: 40, rows: [], more: false, back: 'repos' }
   expect(sideLegend(g)).toBe('green: only on feat/x · blue: only on origin/main · grey: on both')
   expect(sideLegend({ ...g, withBase: false })).toBe('')
+})
+
+test('/repowatch history reads words typed by hand or the JSON another plugin sends', () => {
+  expect(parseHistoryArgs(' app feat/x origin/main ')).toEqual({ repo: 'app', refs: ['feat/x', 'origin/main'], title: 'app · feat/x against origin/main' })
+  expect(parseHistoryArgs('app main')).toEqual({ repo: 'app', refs: ['main'], title: 'app · main' })
+  expect(parseHistoryArgs(JSON.stringify({ repo: 'my app', refs: ['a', 'b'], title: 'T' }))).toEqual({ repo: 'my app', refs: ['a', 'b'], title: 'T' })
+  for (const bad of ['', 'app', '{', '{"repo":"a"}', '{"repo":"a","refs":[]}', '{"repo":"a","refs":["a","b","c"]}', 'app --all', '{"repo":"a","refs":["--exec=x"]}', '{"repo":1,"refs":["a"]}'])
+    expect(parseHistoryArgs(bad)).toBe(null)
 })
