@@ -34,23 +34,26 @@ const AGENTS = [
   { id: 'a2', type: 'sdd:skeptic', status: 'running', description: 'Attack the design' },
 ]
 
-type Cost = { id: number; stage: string; usd: number; session: string }
+type Cost = { id: number; stage: string; usd: number; session: string; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
+type Row = { usd: number; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 type Fake = { registered: string[]; viewed: unknown[]; denyView: boolean; usd: number | null; costs: Cost[]; costFails: boolean; toasts: string[]
-  spend: Record<string, { usd: number; turns: number }>; spendOther: Record<string, { usd: number; turns: number }> }
+  sid: string; spend: Record<string, Row>; spendOther: Record<string, Row> }
 
 function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents = AGENTS): Fake {
-  const f: Fake = { registered: [], viewed: [], denyView: false, usd: 1, costs: [], costFails: false, toasts: [], spend: {}, spendOther: {} }
+  const f: Fake = { registered: [], viewed: [], denyView: false, usd: 1, costs: [], costFails: false, toasts: [], sid: 's1', spend: {}, spendOther: {} }
   // env.py: `cost` records a turn (and the totals the next `view` reports); anything else is the view
   on('process.run', ((_$: unknown, e: { argv: string[] }) => {
     const done = (exitCode: number, stdout: string, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
     if (e.argv.includes('cost')) {
       if (f.costFails) return done(2, '', 'error: no work item folder')
       const flag = (n: string) => e.argv[e.argv.indexOf(n) + 1]
-      const c = { id: Number(flag('--id')), stage: flag('--stage'), usd: Number(flag('--usd')), session: flag('--session') }
+      const c = { id: Number(flag('--id')), stage: flag('--stage'), usd: Number(flag('--usd')), session: flag('--session'), turns: Number(flag('--turns')),
+        input: Number(flag('--input')), output: Number(flag('--output')), cacheRead: Number(flag('--cache-read')), cacheWrite: Number(flag('--cache-write')) }
       f.costs.push(c)
       const into = c.id === 92012 ? f.spend : f.spendOther
-      const was = into[c.stage] ?? { usd: 0, turns: 0 }
-      into[c.stage] = { usd: was.usd + c.usd, turns: was.turns + 1 }
+      const was = into[c.stage] ?? { usd: 0, turns: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+      into[c.stage] = { usd: was.usd + c.usd, turns: was.turns + c.turns, input: was.input + c.input, output: was.output + c.output,
+        cacheRead: was.cacheRead + c.cacheRead, cacheWrite: was.cacheWrite + c.cacheWrite }
       return done(0, `${c.id}: ${c.stage}`)
     }
     const snap = { ...(SNAP as any), items: (SNAP as any).items.map((i: any) => ({ ...i, spend: i.id === 92012 ? f.spend : f.spendOther })) }
@@ -68,7 +71,9 @@ function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents
   on('session.measure' as never, ((_$: unknown, e: { changed: string[] }) => ({ changed: e.changed })) as never)
   on('prompt.autocomplete' as never, (() => ({ suggestions: [] })) as never)  // the engine's own answer: no rows
   // the engine's session id and usage, and a store that keeps what is set
-  on('session.id' as never, (() => ({ value: 's1' })) as never)
+  on('session.id' as never, (() => ({ value: f.sid })) as never)
+  on('session.end' as never, ((_$: unknown, e: { sessionId: string }) => ({ sessionId: e.sessionId })) as never)
+  on('turn.complete' as never, (() => ({ text: '' })) as never)
   on('session.usage' as never, (() => ({ value: { context: { window: 1_000_000, percent: 10 }, rateLimits: [], ...(f.usd == null ? {} : { cost: { usd: f.usd } }) } })) as never)
   on('agent.list' as never, (() => ({ value: agents })) as never)
   on('ui.view' as never, ((_$: unknown, e: unknown) => { f.viewed.push(e); return { value: f.denyView ? { deny: 'not person-initiated' } : {} } }) as never)
@@ -184,11 +189,16 @@ test('autocomplete: after /sdd the prompt box offers the open items, and nothing
 
 // ---- cost and context per stage
 
-/** One turn of the chat's item: it begins, then the session reports what it has spent so far. */
-const turn = async ($: any, f: Fake, usd: number, percent = 12) => {
+const USAGE = { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 50_000, cache_creation_input_tokens: 3000, model: 'm' }
+
+/** One turn of the chat's item: it begins, the session reports what it has spent so far (session.measure), and the turn
+ *  completes with what its responses used. The engine's order of the last two is not known, so a test can use either. */
+const turn = async ($: any, f: Fake, usd: number, percent = 12, usage: typeof USAGE | null = null, order: 'measure-first' | 'complete-first' = 'measure-first') => {
   await $.turn.start({ text: 'go', turnId: `t${usd}` })
   f.usd = usd
-  await $.session.measure({ context: { window: 1_000_000, tokens: percent * 10_000, percent }, rateLimits: [], cost: { usd }, changed: ['cost', 'context'] })
+  const measure = () => $.session.measure({ context: { window: 1_000_000, tokens: percent * 10_000, percent }, rateLimits: [], cost: { usd }, changed: ['cost', 'context'] })
+  const complete = () => $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: `t${usd}`, reason: 'answer', ...(usage ? { usage } : {}) })
+  if (order === 'measure-first') { await measure(); await complete() } else { await complete(); await measure() }
 }
 
 /** The session starts with the chat on 92012, so the view knows the item and its stage (Design). */
@@ -206,10 +216,10 @@ test('cost: a turn is recorded through env.py against the item and the stage it 
   const f = fake(on, [])
   if (!(await begin($, f))) return
   await turn($, f, 1.5)
-  expect(f.costs).toEqual([{ id: 92012, stage: 'Design', usd: 0.5, session: 's1' }])      // 1.00 at the start, 1.50 after the turn
+  expect(f.costs).toEqual([{ id: 92012, stage: 'Design', usd: 0.5, session: 's1', turns: 1, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }])   // 1.00 at the start, 1.50 after the turn
   await turn($, f, 2.25)
   expect(f.costs.map(c => c.usd)).toEqual([0.5, 0.75])
-  expect(f.spend).toEqual({ Design: { usd: 1.25, turns: 2 } })
+  expect(f.spend).toEqual({ Design: { usd: 1.25, turns: 2, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })
 })
 
 test('cost: nothing is recorded when the session keeps no ledger, or a turn cost nothing', async ($: any, on: any) => {
@@ -272,6 +282,83 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(t).not.toContain('$50')
   })
 }
+
+const TOTAL = { usd: 0.5, turns: 1, input: 1000, output: 200, cacheRead: 50_000, cacheWrite: 3000 }
+
+for (const order of ['measure-first', 'complete-first'] as const) {
+  test(`tokens: the turn's tokens and dollars reach the item once, one turn, ${order}`, async ($: any, on: any) => {
+    const f = fake(on, [])
+    if (!(await begin($, f))) return
+    await turn($, f, 1.5, 12, USAGE, order)
+    expect(f.spend).toEqual({ Design: TOTAL })                           // the split: uncached input, output, cache read, cache write
+    expect(f.costs.every(c => c.id === 92012 && c.stage === 'Design' && c.session === 's1')).toBe(true)
+    expect(f.costs.filter(c => c.turns === 1)).toHaveLength(1)           // however many lines it took, a turn counts once
+    await turn($, f, 2, 12, USAGE, order)
+    expect(f.spend.Design).toEqual({ usd: 1, turns: 2, input: 2000, output: 400, cacheRead: 100_000, cacheWrite: 6000 })
+  })
+}
+
+test('tokens: a sub-agent turn adds its tokens to the main turn that ran it, and does not count as a turn', async ($: any, on: any) => {
+  const f = fake(on, [])
+  if (!(await begin($, f))) return
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 'sub', reason: 'answer', agentId: 'a1', usage: { ...USAGE, input_tokens: 70, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } })
+  f.usd = 1.2
+  await $.session.measure({ context: { window: 1_000_000, percent: 5 }, rateLimits: [], cost: { usd: 1.2 }, changed: ['cost'] })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', usage: USAGE })
+  expect(f.spend.Design).toEqual({ usd: 0.2, turns: 1, input: 1070, output: 205, cacheRead: 50_000, cacheWrite: 3000 })
+})
+
+test('tokens: a chat with no item records nothing, and what it used is not charged to a later item', async ($: any, on: any) => {
+  const f = fake(on, [])
+  await $.session.start({ cwd: '/ws', surface: 'terminal', isInteractive: true })
+  if (!f.registered.includes('sdd-view')) {
+    await new Promise(r => setTimeout(r, 100))
+    return
+  }
+  await turn($, f, 1.5, 12, USAGE)
+  expect(f.costs).toEqual([])
+  await $.command.run({ command: 'sdd', args: '92012' })
+  await turn($, f, 2, 12, { ...USAGE, input_tokens: 1 })
+  expect(f.spend.Design.input).toBe(1)                                    // only the turn that began on the item
+})
+
+for (const reason of ['resume', 'clear'] as const) {
+  test(`${reason}: the session id and the cost total are read again, so the new session's total is not charged as a turn`, async ($: any, on: any) => {
+    const f = fake(on, [])
+    if (!(await begin($, f))) return
+    await turn($, f, 1.5)
+    expect(f.costs.map(c => [c.session, c.usd])).toEqual([['s1', 0.5]])
+    await $.session.end({ sessionId: 's1', reason })                      // /resume or /clear: another session, its own total
+    f.sid = 's2'
+    f.usd = 40
+    await $.command.run({ command: 'sdd', args: '92012' })                // a cleared chat takes its item up again
+    await turn($, f, 41.5)
+    expect(f.costs.map(c => [c.session, c.usd])).toEqual([['s1', 0.5], ['s2', 1.5]])   // 1.50 over the turn, not 39.50 or 40
+  })
+}
+
+test('another reason for a session to end changes nothing', async ($: any, on: any) => {
+  const f = fake(on, [])
+  if (!(await begin($, f))) return
+  await turn($, f, 1.5)
+  await $.session.end({ sessionId: 's1', reason: 'other' })
+  await turn($, f, 2)
+  expect(f.costs.map(c => [c.session, c.usd])).toEqual([['s1', 0.5], ['s1', 0.5]])
+})
+
+test('the pane shows the token split for the item, and for a stage when it is opened', async ($: any, on: any) => {
+  const f = fake(on, [])
+  f.spend = { Design: { usd: 2, turns: 3, input: 12_000, output: 3400, cacheRead: 1_200_000, cacheWrite: 80_000 } }
+  if (!(await begin($, f))) return
+  const ui = await $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'Pane', props: { title: 'sdd', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never,
+    requestId: 'sdd-view', viewport: { columns: 100, rows: 40 } })
+  for (let i = 0; i < 100 && !(await texts(ui)).includes('Tokens'); i++) await new Promise(r => setTimeout(r, 10))
+  expect(await texts(ui)).toContain('Tokens: in 12k · out 3.4k · cache read 1.2M · cache write 80k')
+  await ui.press({ key: 'stage:Design' })
+  for (let i = 0; i < 100 && !(await texts(ui)).includes('Spent $2.00 over'); i++) await new Promise(r => setTimeout(r, 10))
+  expect(await texts(ui)).toContain('Spent $2.00 over 3 turns · in 12k · out 3.4k · cache read 1.2M · cache write 80k')
+})
 
 test('context: from 80 percent the band says so', async ($: any, on: any) => {
   const f = fake(on, [])

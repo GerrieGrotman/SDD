@@ -7,7 +7,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTotal, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, flowFinished, flowMap, flowTag, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, questionBadge, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark } from './view/model'
 import { registerWorktrees, registerWorktreesCommand, worktreesPaneClosed } from './worktrees'
 
@@ -63,8 +63,15 @@ let isWorkspace = false
 // Cost and context, from session.measure. The cost is charged to the stage the item was in when the turn began.
 let sessionId = ''
 let costFailed = false
+let staleBaseline = false  // /clear, /resume or /branch ran: read the session id and cost total again at the next turn
 let lastUsd: number | null = null
 let turnOf: { id: number; key: string } | null = null
+// What the turn spent so far and has not been recorded: dollars from session.measure, tokens from turn.complete.
+// Either event may come last, so both flush, and a turn is counted once (turnCounted).
+type Pending = { usd: number; input: number; output: number; cacheRead: number; cacheWrite: number; model: string }
+const nothing = (): Pending => ({ usd: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, model: '' })
+let pend = nothing()
+let turnCounted = false
 let ctx: { percent: number; window: number } | null = null
 let agentsBusy = false  // an agent works: the pane redraws on a timer so its row keeps up
 let notified = ''  // the wait the person was last notified of; lost on reload, which at worst tells them once more
@@ -177,15 +184,18 @@ async function watchAgent($: EngineInterface, agentId?: string): Promise<void> {
   }
 }
 
-/** Records what a turn cost, against the item and the stage the turn began in: `env.py cost` appends one line to
- *  the item's folder. Two chats on the same item append to the same file and never rewrite each other. */
-async function recordCost($: EngineInterface, folder: string | null, id: number, key: string, usd: number): Promise<string | null> {
+/** Records what a turn spent, in dollars and tokens, against the item and the stage the turn began in:
+ *  `env.py cost` appends one line to the item's folder. Chats on the same item append to the same file and
+ *  never rewrite each other. `turns` is 1 for the first line of a turn and 0 for a further line of it. */
+async function recordCost($: EngineInterface, folder: string | null, id: number, key: string, p: Pending, turns: 0 | 1): Promise<string | null> {
   const cwd = folder || (await $.session.cwd())
+  const args = ['cost', '--id', String(id), '--stage', key, '--usd', p.usd.toFixed(6), '--input', String(p.input), '--output', String(p.output),
+    '--cache-read', String(p.cacheRead), '--cache-write', String(p.cacheWrite), '--turns', String(turns), '--session', sessionId,
+    ...(p.model ? ['--model', p.model] : [])]
   let why: string | null = null
   for (const exe of [python, 'python3', 'py']) {
     try {
-      const r = await $.process.run([exe, `${$.plugin.root}/scripts/env.py`, 'cost', '--id', String(id), '--stage', key,
-        '--usd', usd.toFixed(6), '--session', sessionId], { cwd, timeoutMs: 20000 })
+      const r = await $.process.run([exe, `${$.plugin.root}/scripts/env.py`, ...args], { cwd, timeoutMs: 20000 })
       python = exe
       return r.exitCode === 0 ? null : (r.stderr || r.stdout).trim().split('\n').pop() || `env.py cost exited ${r.exitCode}`
     } catch (err) {
@@ -193,6 +203,39 @@ async function recordCost($: EngineInterface, folder: string | null, id: number,
     }
   }
   return why
+}
+
+/** Records what is pending against the stage the turn began in. True when a line was written. A chat with no
+ *  item has nothing to charge: what is pending is dropped. A failure says so once a session. */
+async function flushCost($: EngineInterface, folder: string | null): Promise<boolean> {
+  const p = pend
+  if (!(p.usd > 0 || p.input + p.output + p.cacheRead + p.cacheWrite > 0)) return false
+  pend = nothing()  // before any await: a second flush at once finds nothing
+  if (!turnOf || !sessionId) return false
+  const turns = turnCounted ? 0 : 1
+  turnCounted = true
+  const why = await recordCost($, folder, turnOf.id, turnOf.key, p, turns)
+  if (why && !costFailed) {
+    costFailed = true  // a missing script would otherwise say it after every turn
+    $.ui.toast(`Cost not recorded: ${why.slice(0, 160)}`)
+  }
+  return !why
+}
+
+/** The session's id and what it has spent so far: the point later spending is measured from. It is read when
+ *  the session starts and again at the first turn after /clear, /resume and /branch, which change both without a start. */
+async function baseline($: EngineInterface): Promise<void> {
+  turnOf = null
+  pend = nothing()
+  turnCounted = false
+  try {
+    sessionId = await $.session.id()
+    const u = await $.session.usage()
+    lastUsd = u.cost?.usd ?? null
+    if (u.context.percent != null) ctx = { percent: u.context.percent, window: u.context.window }
+  } catch {
+    lastUsd = null
+  }
 }
 
 const AGENT_GLYPH: Record<AgentTone, string> = { working: '●', waiting: '●', done: '✓', failed: '✕', quiet: '○' }
@@ -213,15 +256,7 @@ export const register: Register = on => {
       await $.state.set(error, v.why)
     }
     void sync()
-    // the baseline the cost is measured from: only what the session spends from here on counts
-    try {
-      sessionId = await $.session.id()
-      const u = await $.session.usage()
-      lastUsd = u.cost?.usd ?? null
-      if (u.context.percent != null) ctx = { percent: u.context.percent, window: u.context.window }
-    } catch {
-      lastUsd = null
-    }
+    await baseline($)
     $.clock.every(30_000, () => {
       if (isOpen || isWorkspace) void sync()
     })
@@ -330,6 +365,11 @@ export const register: Register = on => {
   // a subagent's turn starts: the pane's agent rows may have a new one
   on('turn.start', async ($, e, next) => {
     if (!e.agentId) {
+      if (staleBaseline) {
+        staleBaseline = false
+        await baseline($)
+      }
+      await flushCost($, (await $.state.get(place)).value ?? null)  // what the last turn left unrecorded goes to its own stage first
       // the main loop's turn: the stage the chat's item is in as it begins is the stage the turn is charged to
       const s = (await $.state.get(snap)).value ?? null
       // the item the chat took up with /sdd, not the one a script run last named
@@ -338,6 +378,7 @@ export const register: Register = on => {
       const flow = item ? s?.flows[item.flow] : undefined
       const key = item && flow ? phaseKey(flow, item.progress?.phase) : null
       turnOf = item && key ? { id: item.id, key } : null
+      turnCounted = false
     }
     if (isOpen) $.ui.invalidate('ui.render')
     return next(e)
@@ -350,25 +391,41 @@ export const register: Register = on => {
     if (usd != null) {
       const delta = lastUsd == null ? 0 : usd - lastUsd
       lastUsd = usd
-      if (delta > 0 && turnOf && sessionId) {
-        const why = await recordCost($, (await $.state.get(place)).value ?? null, turnOf.id, turnOf.key, delta)
-        if (why && !costFailed) {
-          costFailed = true  // once a session: a missing script would otherwise say it after every turn
-          $.ui.toast(`Cost not recorded: ${why.slice(0, 160)}`)
-        }
-        if (!why && (isOpen || isWorkspace)) {
-          // the pane and the stage rows show the new total at once, not at the next refresh
-          const v = await loadView($, (await $.state.get(selected)).value ?? null, (await $.state.get(snap)).value ?? null, (await $.state.get(place)).value ?? null)
-          await $.state.set(snap, v.out)
-          await $.state.set(error, v.why)
-        }
-      }
+      if (delta > 0) pend.usd += delta
+    }
+    if (await flushCost($, (await $.state.get(place)).value ?? null) && (isOpen || isWorkspace)) {
+      // the pane and the stage rows show the new total at once, not at the next refresh
+      const v = await loadView($, (await $.state.get(selected)).value ?? null, (await $.state.get(snap)).value ?? null, (await $.state.get(place)).value ?? null)
+      await $.state.set(snap, v.out)
+      await $.state.set(error, v.why)
     }
     $.ui.invalidate('ui.render')
     return next(e)
   })
 
+  // /clear, /resume and /branch end the session this mod measured: the session id and the cost total are another
+  // session's from here. The new baseline is read as the next turn begins (session.end fires before the change).
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear' || e.reason === 'resume') {
+      staleBaseline = true
+      turnOf = null
+      pend = nothing()
+      turnCounted = false
+    }
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
+    // what the turn's responses used, for every loop: a sub-agent's tokens are part of what the item cost too
+    const u = e.usage
+    if (u) {
+      pend.input += u.input_tokens ?? 0
+      pend.output += u.output_tokens ?? 0
+      pend.cacheRead += u.cache_read_input_tokens ?? 0
+      pend.cacheWrite += u.cache_creation_input_tokens ?? 0
+      pend.model = u.model || pend.model
+    }
+    await flushCost($, (await $.state.get(place)).value ?? null)
     if (isOpen || isWorkspace) {
       const v = await loadView($, (await $.state.get(selected)).value ?? null, (await $.state.get(snap)).value ?? null, (await $.state.get(place)).value ?? null)
       await $.state.set(snap, v.out)
@@ -602,6 +659,7 @@ export const register: Register = on => {
             <Box flexGrow={1} flexShrink={1}><Text dimColor wrap="truncate-end">{`${item.type}, ${item.state} in ADO`}</Text></Box>
           </Box>
           <Markdown text={links} />
+          {tokensLine(spendTokens(spend)) && <Text dimColor wrap="wrap">{`Tokens: ${tokensLine(spendTokens(spend))}`}</Text>}
           {(spendTotal(spend) > 0 || ctx) && (
             <Box flexDirection="row" gap={2}>
               {spendTotal(spend) > 0 && <Text dimColor>{`Spent ${moneyText(spendTotal(spend))} on this item`}</Text>}
@@ -678,12 +736,15 @@ export const register: Register = on => {
                       <Button hover={{ color: C.hoverText, dimColor: false }} key={key} plain dimColor label={stageName(r.stage)}
                         onPress={() => toggle(key)} />
                     </Box>
-                    {spendLine(spend, r.stage.key) && <Text dimColor>{moneyText(spend[r.stage.key].usd)}</Text>}
+                    {spendLine(spend, r.stage.key) && <Text dimColor>{spend[r.stage.key].usd > 0 ? moneyText(spend[r.stage.key].usd) : 'tokens'}</Text>}
                     {badge && <Text color={badge.warn ? C.now : C.dim}>{badge.text}</Text>}
                     {stamp(sum.lastAt) && (
                       <Button hover={{ color: C.hoverText, dimColor: false }} key={`${key}-at`} plain dimColor label={stamp(sum.lastAt)} onPress={() => toggle(key)} />
                     )}
                   </Box>
+                  {open === key && spendLine(spend, r.stage.key) && (
+                    <Box marginLeft={2}><Text dimColor wrap="wrap">{`Spent ${spendLine(spend, r.stage.key)}`}</Text></Box>
+                  )}
                   {open === key && (() => {
                     const lkey = `log:${r.stage.key}`
                     return (

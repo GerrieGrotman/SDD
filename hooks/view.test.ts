@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { contextTone, moneyText, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, flowMap, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
 
@@ -421,4 +421,31 @@ test('spend text: small, ordinary and large amounts, and the line for a stage', 
 
 test('context tone: a word from 80 percent, nearly full from 90', () => {
   expect([undefined, 0, 79, 79.9, 80, 89, 90, 100, Number.NaN].map(contextTone)).toEqual(['ok', 'ok', 'ok', 'ok', 'warn', 'warn', 'high', 'high', 'ok'])
+})
+
+test('token text: plain under a thousand, then k, M and B with one decimal under ten', () => {
+  expect([0, -5, Number.NaN, 7, 950, 999.4, 1000, 1234, 9999, 45_000, 999_999, 1_234_567, 80_000_000, 3.4e9].map(tokenText))
+    .toEqual(['0', '0', '0', '7', '950', '999', '1k', '1.2k', '10k', '45k', '1000k', '1.2M', '80M', '3.4B'])
+})
+
+test('tokens: one stage or all of them added up, old rows without tokens counting as none, one line of the kinds used', () => {
+  const spend = { Design: { usd: 1, turns: 2, input: 1000, output: 200, cacheRead: 50_000, cacheWrite: 3000 }, Specify: { usd: 0.5, turns: 1 },
+    Implement: { usd: 2, turns: 4, input: 20, output: 5, cacheRead: 0, cacheWrite: 0 } }
+  expect(spendTokens(spend.Design)).toEqual({ input: 1000, output: 200, cacheRead: 50_000, cacheWrite: 3000 })
+  expect(spendTokens(spend.Specify)).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+  expect(spendTokens(spend)).toEqual({ input: 1020, output: 205, cacheRead: 50_000, cacheWrite: 3000 })
+  expect(spendTokens({})).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+  expect(tokensLine(spendTokens(spend))).toBe('in 1k · out 205 · cache read 50k · cache write 3k')
+  expect(tokensLine(spendTokens(spend.Implement))).toBe('in 20 · out 5')
+  expect(tokensLine(spendTokens(spend.Specify))).toBe(null)
+})
+
+test('the stage line: dollars and turns, then the tokens; tokens alone still say something; nothing says nothing', () => {
+  const spend = { Design: { usd: 1.234, turns: 4, input: 12_000, output: 3400, cacheRead: 1_200_000, cacheWrite: 80_000 }, Tok: { usd: 0, turns: 1, output: 9 },
+    Old: { usd: 0.5, turns: 1 }, None: { usd: 0, turns: 1 } }
+  expect(spendLine(spend, 'Design')).toBe('$1.23 over 4 turns · in 12k · out 3.4k · cache read 1.2M · cache write 80k')
+  expect(spendLine(spend, 'Tok')).toBe('1 turn · out 9')
+  expect(spendLine(spend, 'Old')).toBe('$0.50 over 1 turn')
+  expect(spendLine(spend, 'None')).toBe(null)
+  expect(spendLine(spend, 'Missing')).toBe(null)
 })

@@ -51,8 +51,8 @@ export type SddItem = {
   stages?: Record<string, SddStageRecord>
   /** Stages that take feedback now, each with the gates a reopen there revokes (env.py reopen_plan). */
   feedback?: Record<string, string[]>
-  /** What the item has cost, per stage, from its cost.jsonl (env.py cost); the record keeps the totals once the folder is gone. */
-  spend?: Record<string, { usd: number; turns: number }>
+  /** What the item has cost, per stage, in dollars and tokens (uncached input, output, cache read, cache write), from its cost.jsonl (env.py cost); the record keeps the totals once the folder is gone. */
+  spend?: Record<string, { usd: number; turns: number; input?: number; output?: number; cacheRead?: number; cacheWrite?: number }>
   /** The way through the flow the user chose (env.py path): 'full' or 'short' for the spec flow; null for
    *  the bug flow, which has one way, or while the spec flow's choice is still open. */
   path?: 'full' | 'short' | string | null

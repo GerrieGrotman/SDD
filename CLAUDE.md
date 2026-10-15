@@ -70,6 +70,6 @@ to trust the plugin directory, and each case is a paid agent run. A full TypeScr
 - **repowatch deletes nothing on a remote except a stale `sync/<x>-<y>` branch.** `remote_delete_refusal` in
   `repowatch/scripts/repowatch.py` refuses every other deleting `git push` (and `--mirror`, `--prune`), and
   `test_remote_deletes` pins it. A new action must not route around `git()` for pushes.
-- **The view writes one thing**: what each turn cost, through `env.py cost` (one appended line in the item's
-  `cost.jsonl`; `view` reports the totals). Otherwise `register.tsx` reads `env.py view` and posts the user's
+- **The view writes one thing**: what each turn cost, in dollars and tokens, through `env.py cost` (one appended
+  line in the item's `cost.jsonl`; `view` reports the totals). Otherwise `register.tsx` reads `env.py view` and posts the user's
   messages. It never passes a gate or runs another state-changing command.

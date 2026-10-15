@@ -547,8 +547,13 @@ export function itemSuggestions(snap: Pick<SddSnapshot, 'items' | 'flows'>, befo
 // stage the item was in when the turn began (a stage that changes mid-turn is charged to the one it began in).
 // `env.py view` reports the totals per stage, whichever chat or session spent them.
 
-/** Dollars and turns per stage key. */
-export type Spend = Record<string, { usd: number; turns: number }>
+/** What one stage cost: dollars, turns, and the tokens by kind (a record from before tokens were kept has none). */
+export type SpendRow = { usd: number; turns: number; input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
+
+/** Per stage key. */
+export type Spend = Record<string, SpendRow>
+
+export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number }
 
 export function spendTotal(spend: Spend): number {
   return Object.values(spend).reduce((a, v) => a + v.usd, 0)
@@ -571,8 +576,36 @@ export function contextTone(percent: number | undefined): ContextTone {
   return percent >= 90 ? 'high' : percent >= 80 ? 'warn' : 'ok'
 }
 
-/** The tooltip-sized line for a stage: `$1.23 over 4 turns`. Null when the stage has cost nothing. */
+/** 950 -> `950`, 1234 -> `1.2k`, 45000 -> `45k`, 1234567 -> `1.2M`, 3.4e9 -> `3.4B`. */
+export function tokenText(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0'
+  const one = (v: number, unit: string) => `${v < 10 ? v.toFixed(1).replace(/\.0$/, '') : Math.round(v)}${unit}`
+  if (n < 1000) return String(Math.round(n))
+  if (n < 1e6) return one(n / 1e3, 'k')
+  if (n < 1e9) return one(n / 1e6, 'M')
+  return one(n / 1e9, 'B')
+}
+
+/** The tokens of one stage's row, or of all the rows added up. */
+export function spendTokens(rows: SpendRow | SpendRow[] | Spend): Tokens {
+  const list = Array.isArray(rows) ? rows : 'usd' in rows && typeof rows.usd === 'number' ? [rows as SpendRow] : Object.values(rows as Spend)
+  return list.reduce<Tokens>((t, r) => ({ input: t.input + (r.input ?? 0), output: t.output + (r.output ?? 0),
+    cacheRead: t.cacheRead + (r.cacheRead ?? 0), cacheWrite: t.cacheWrite + (r.cacheWrite ?? 0) }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+}
+
+/** `in 12k · out 3.4k · cache read 1.2M · cache write 80k`: the kinds with tokens, in that order. Null when none. */
+export function tokensLine(t: Tokens): string | null {
+  const parts = ([['in', t.input], ['out', t.output], ['cache read', t.cacheRead], ['cache write', t.cacheWrite]] as const)
+    .filter(([, n]) => n > 0).map(([label, n]) => `${label} ${tokenText(n)}`)
+  return parts.length ? parts.join(' · ') : null
+}
+
+/** The line for a stage: `$1.23 over 4 turns · in 12k · out 3k · cache read 1.2M · cache write 80k`. Null when the
+ *  stage has cost nothing. */
 export function spendLine(spend: Spend, key: string): string | null {
   const v = spend[key]
-  return v && v.usd > 0 ? `${moneyText(v.usd)} over ${v.turns} turn${v.turns === 1 ? '' : 's'}` : null
+  const tokens = v ? tokensLine(spendTokens(v)) : null
+  if (!v || !(v.usd > 0 || tokens)) return null
+  const head = v.usd > 0 ? `${moneyText(v.usd)} over ${v.turns} turn${v.turns === 1 ? '' : 's'}` : `${v.turns} turn${v.turns === 1 ? '' : 's'}`
+  return tokens ? `${head} · ${tokens}` : head
 }
