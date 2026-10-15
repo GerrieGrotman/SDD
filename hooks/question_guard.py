@@ -25,7 +25,7 @@ EXEMPT = {"doctor", "init", "type", "view", "upgrade"}  # never mean a flow is r
 ENV_PY = (Path(__file__).resolve().parent.parent / "scripts" / "env.py").as_posix()
 HOW = (f"Run `python {ENV_PY} refs --id <id> --ref <spec file or "
        "code path:line> ...` (or the `--status waiting` checkpoint with `--ref`), paste its Links block "
-       "above the question, send the listed files with SendUserFile, then ask with AskUserQuestion.")
+       "directly above the question (no gap: nothing between the Links block and the question), send the listed files with SendUserFile, then ask with AskUserQuestion.")
 
 
 def rows(path):

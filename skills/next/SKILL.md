@@ -37,7 +37,7 @@ claim is the first step of the flow the user starts with the item they choose.
 1. **Scope and version.** The epic or feature id comes with the command. The version too
    (`/sdd next 600 1.1.0`); if it did not, ask with `AskUserQuestion` — the team versions are the
    `team/*` branches of the workspace repos (`git branch -r`), two options at most plus "Other".
-   Paste the Links block from `env.py refs --id <scope> --ref ado` above the question.
+   Paste the Links block from `env.py refs --id <scope> --ref ado` directly above the question, with no gap.
 2. **The list.** `spec.py next --scope <scope> --version <version>`. It **syncs the scope first**
    (others claim items all day: it never ranks from an old mirror), then prints what is ready, what
    needs a judgement first, what is blocked and what is not available, with why. The sync fails (no
