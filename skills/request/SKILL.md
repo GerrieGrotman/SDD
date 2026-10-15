@@ -91,7 +91,7 @@ Sections, in this order:
 7. **Doubts** — anything unclear: a name you could not match, a "maybe", work the hand-over
    contradicts itself on.
 
-Then the Links block, and send the files it lists:
+Then the Links block, and send the files it lists (the Links block goes directly above the question, with no gap):
 
 ```
 env.py refs --id <id> --ref visuals/agent-request.html --ref request.md
@@ -111,7 +111,7 @@ Unless the command already said, one `AskUserQuestion`, the recommended option f
 
 **Candidates** are open items that relate directly (Step 2.4) and fit the chosen flow (`fits`).
 
-- **One or more candidates.** Ask under Decision briefs (Links block again: `env.py refs --id <id>
+- **One or more candidates.** Ask under Decision briefs (Links block again, directly above the question: `env.py refs --id <id>
   --ref visuals/agent-request.html --ref ado`): one option per candidate, "Continue on ADO <m> —
   <title>", the best first; then "Create a new Bug" / "Create a new Tech Story". On a candidate:
 
