@@ -30,20 +30,31 @@ Scripts are in `${CLAUDE_PLUGIN_ROOT}/scripts/`; `${CLAUDE_PLUGIN_ROOT}/skills/w
 
 ## `/sdd help` — the tour guide
 
-The reference is `HELP.md` next to this file; the step-by-step walk-through for a new user (init, sync,
-impact, a first bug, a first spec item) is `GETTING-STARTED.md`. Change nothing and run nothing else.
-`/sdd help start` (or "getting started", "first time") sends `GETTING-STARTED.md`; a plain `/sdd help`
-sends `HELP.md`, which points to it.
+The pages are in this skill's folder: `HELP.md` (the quick guide) and `help/getting-started.html` (the
+walk-through for a new user: init, sync, impact, a first bug, a first spec item). The plugin folder is a
+cache the Desktop app cannot open files from, so never send or link a page from there. First copy them
+into the workspace:
+
+```
+python ${CLAUDE_PLUGIN_ROOT}/scripts/env.py help
+```
+
+It prints the paths of the copies in `<workspace>/.claude/sdd/help/`. Send and link **those**. Change
+nothing else and run nothing else.
+
+- `/sdd help` sends the copy of `HELP.md`. `/sdd help start` (or "getting started", "first time") sends
+  `getting-started.html`. `HELP.md` points to it.
+-
 
 It must work on a phone too (the user may follow the session remotely), so:
 
-1. **`SendUserFile` available** (desktop app, remote or mobile session): send the guide with
+1. **`SendUserFile` available** (desktop app, remote or mobile session): send the copy with
    `display: "render"` and `status: "normal"`. That reaches the phone. Do not paste the guide.
-2. **Not available** (plain terminal): read the guide and paste its content as your reply,
-   unchanged. It is written as short lists with no wide tables, so it renders on any screen.
-3. Either way, add one line with this workspace's values from `.claude/sdd.json` when it exists:
-   the spec folder and the ADO projects. A local path link is optional extra — never the only
-   way in, because a phone cannot open it.
+2. **Not available** (plain terminal): for `HELP.md`, paste its content as your reply, unchanged (short
+   lists, no wide tables). For the HTML page, give its link and a one-line outline of the five steps.
+3. Either way, add the link to the copy in the workspace (a `file:///` URL with forward slashes), and one
+   line with this workspace's values from `.claude/sdd.json` when it exists: the spec folder and the ADO
+   projects. The link is optional extra for a phone, which cannot open it.
 
 ## `/sdd init` — set up this workspace
 

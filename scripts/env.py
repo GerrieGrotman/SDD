@@ -103,6 +103,28 @@ def cmd_init(a):
     report_output_style(force=True)
 
 
+HELP_FILES = ("HELP.md", "help/getting-started.html")
+
+
+def help_copy(dest):
+    """Copy the help pages into `dest`, which sits inside the workspace: the plugin's own folder is in a cache the
+    Desktop app cannot open a file from. Returns the copies' paths."""
+    dest.mkdir(parents=True, exist_ok=True)
+    out = []
+    for rel in HELP_FILES:
+        src = PLUGIN / "skills" / "sdd" / rel
+        to = dest / src.name
+        shutil.copyfile(src, to)
+        out.append(to)
+    return out
+
+
+def cmd_help(a):
+    root = find_root() or Path(os.getcwd()).resolve()
+    for p in help_copy(root / ".claude" / "sdd" / "help"):
+        print(p.as_posix())
+
+
 def cmd_type(a):
     cfg = load_config(require_root())
     print(json.dumps(item_info(cfg, a.id), indent=2))
@@ -1417,6 +1439,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
     s = sp.add_parser("init"); s.add_argument("--spec-root", default=DEFAULTS["specRoot"])
+    sp.add_parser("help", help="copy the help pages into the workspace (.claude/sdd/help/) and print their paths")
     s = sp.add_parser("type"); s.add_argument("--id", type=int, required=True)
     s = sp.add_parser("doctor"); s.add_argument("--json", action="store_true")
     sp.add_parser("upgrade-config", help="add new settings' defaults to .claude/sdd.json (SessionStart hook)")
@@ -1509,7 +1532,7 @@ def main():
     s.add_argument("--abandon", action="store_true")
     s.add_argument("--yes", action="store_true")
     a = ap.parse_args()
-    {"init": cmd_init, "doctor": cmd_doctor, "progress": cmd_progress, "refs": cmd_refs, "can": cmd_can, "type": cmd_type, "new": cmd_new, "status": cmd_status, "view": cmd_view, "reopen": cmd_reopen, "graph": cmd_graph,
+    {"init": cmd_init, "help": cmd_help, "doctor": cmd_doctor, "progress": cmd_progress, "refs": cmd_refs, "can": cmd_can, "type": cmd_type, "new": cmd_new, "status": cmd_status, "view": cmd_view, "reopen": cmd_reopen, "graph": cmd_graph,
      "pr": cmd_pr, "remove": cmd_remove, "upgrade-config": cmd_upgrade_config, "run": cmd_run,
      "revert-check": cmd_revert_check, "verify": cmd_verify, "path": cmd_path, "cost": cmd_cost}[a.cmd](a)
 
