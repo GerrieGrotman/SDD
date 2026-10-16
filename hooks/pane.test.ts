@@ -39,10 +39,10 @@ const AGENTS = [
 type Cost = { id: number; stage: string; usd: number; session: string; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 type Row = { usd: number; turns: number; input: number; output: number; cacheRead: number; cacheWrite: number }
 type Fake = { registered: string[]; usd: number | null; costs: Cost[]; costFails: boolean; toasts: string[]
-  ran: string[]; runs: string[][]; finishFirst?: boolean; surfaces: string[]; sid: string; spend: Record<string, Row>; spendOther: Record<string, Row> }
+  ran: string[]; opened: string[]; runs: string[][]; finishFirst?: boolean; surfaces: string[]; sid: string; spend: Record<string, Row>; spendOther: Record<string, Row> }
 
 function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents = AGENTS): Fake {
-  const f: Fake = { registered: [], usd: 1, costs: [], costFails: false, toasts: [], ran: [], runs: [], sid: 's1', surfaces: ['desktop'], spend: {}, spendOther: {} }
+  const f: Fake = { registered: [], usd: 1, costs: [], costFails: false, toasts: [], ran: [], opened: [], runs: [], sid: 's1', surfaces: ['desktop'], spend: {}, spendOther: {} }
   // env.py: `cost` records a turn (and the totals the next `view` reports); anything else is the view
   on('process.run', ((_$: unknown, e: { argv: string[] }) => {
     f.runs.push(e.argv)
@@ -68,7 +68,7 @@ function fake(on: (event: any, hook: (...a: never[]) => unknown) => void, agents
   on('session.start' as never, ((_$: unknown, e: { cwd: string }) => ({ cwd: e.cwd })) as never)
   on('command.register' as never, ((_$: unknown, e: { name: string }) => { f.registered.push(e.name); return { value: { isRegistered: true } } }) as never)
   on('clock.every' as never, (() => ({ value: { id: 'tick' } })) as never)
-  on('ui.open' as never, (() => ({ value: { isPlaced: true } })) as never)
+  on('ui.open' as never, ((_$: unknown, e: { id: string }) => { f.opened.push(e.id); return { value: { isPlaced: true } } }) as never)
   on('ui.toast' as never, ((_$: unknown, e: unknown) => { f.toasts.push(JSON.stringify(e)); return { value: undefined } }) as never)
   on('command.run' as never, ((_$: unknown, e: { command: string; args: string }) => {
     if (e.command === 'repowatch') f.ran.push(e.args)
@@ -525,6 +525,53 @@ async function bandCheck($: any, f: Fake) {
   const tag = (await ui.findAll({ type: 'Text' })).find((t: any) => /^\[/.test(t.text ?? ''))
   expect(tag.text).toBe('[spec\u00a0·\u00a0full]')                                      // no plain space to wrap at
 }
+
+const mountBand = ($: any, columns = 100) => $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'AbovePrompt',
+  props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: columns, scroll: { offset: 0, bodyRows: 3 }, view: {} } as never, requestId: 'band', viewport: { columns, rows: 40 } })
+
+test('the launcher: with no item running the band still offers the three panels, and each opens one', async ($: any, on: any) => {
+  const f = fake(on, [])
+  await $.session.start({ cwd: '/ws', surface: 'terminal', isInteractive: true })
+  if (!f.registered.includes('sdd-view')) { await new Promise(r => setTimeout(r, 100)); return }
+  const ui = await mountBand($)          // this chat has taken no item up
+  expect(await texts(ui)).toContain('Open a panel')
+  await ui.press({ key: 'band-worktrees' })
+  await until(async () => f.opened.includes('sdd-worktrees'))
+  expect(f.opened).toContain('sdd-worktrees')
+  await ui.press({ key: 'band-repowatch' })
+  await until(async () => f.ran.includes(''))
+  expect(f.ran).toContain('')            // /repowatch with no words
+  await ui.press({ key: 'band-open' })
+  await until(async () => f.opened.includes('sdd-view'))
+  expect(f.opened).toContain('sdd-view')
+})
+
+test('the launcher: while an item runs the same buttons sit beside its text', async ($: any, on: any) => {
+  const f = fake(on, [])
+  if (!(await begin($, f))) return
+  const ui = await mountBand($)
+  for (let i = 0; i < 100 && !(await ui.find({ key: 'band-tag' })); i++) await new Promise(r => setTimeout(r, 10))
+  expect(await ui.find({ key: 'band-worktrees' })).toBeTruthy()
+  expect(await ui.find({ key: 'band-repowatch' })).toBeTruthy()
+  await ui.press({ key: 'band-worktrees' })
+  await until(async () => f.opened.includes('sdd-worktrees'))
+  expect(f.opened).toContain('sdd-worktrees')
+})
+
+test('the launcher: a question (survey) hides the band', async ($: any, on: any) => {
+  const f = fake(on, [])
+  await $.session.start({ cwd: '/ws', surface: 'terminal', isInteractive: true })
+  if (!f.registered.includes('sdd-view')) { await new Promise(r => setTimeout(r, 100)); return }
+  // the mod passes the draw on, and nothing beneath it draws: that is the proof it drew no band
+  let why = ''
+  try {
+    await $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'AbovePrompt',
+      props: { hasSurvey: true, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} } as never, requestId: 'band', viewport: { columns: 100, rows: 40 } })
+  } catch (err) {
+    why = String(err)
+  }
+  expect(why).toContain('no implementation for ui.render')
+})
 
 test('context: from 80 percent the band says so', async ($: any, on: any) => {
   const f = fake(on, [])
