@@ -278,6 +278,10 @@ for (const surface of ['terminal', 'desktop'] as const) {
       expect(t).toContain(wanted)
     expect(t).toContain('green: only on feat/clash · blue: only on origin/main · grey: on both')
     expect(await ui.find({ key: 'graph-more' })).toBeTruthy()
+    // a long subject is cut to the pane, never pushing the age off it
+    const subjects = (await ui.findAll({ type: 'Box' })).filter((b: any) => b.props.minWidth === 0 && b.props.overflow === 'hidden')
+    expect(subjects.length).toBeGreaterThan(3)
+    expect((await ui.findAll({ type: 'Text' })).some((x: any) => x.props.wrap === 'truncate-end')).toBe(true)
     // a commit's details open on a press and close on the next
     await ui.press({ key: 'c-ccccccc' })
     expect(calls.find(c => c[0] === 'show')).toEqual(['show', '--repo', 'app', '--sha', 'ccccccc111122223333'])
@@ -362,6 +366,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await ui.press({ key: 'graph-back' })
     expect(await ui.find({ key: 'row-app' })).toBeTruthy() // back to the repos view
     await ui.press({ key: 'sync' })
+    await ui.press({ key: 'hop-app:team/0.0.1' })
     await ui.press({ key: 'hist-app:team/0.0.1' })
     expect(calls.filter(c => c[0] === 'graph').pop()).toEqual(
       ['graph', '--repo', 'app', '--ref=origin/team/0.0.2', '--ref=origin/team/0.0.1', '--limit', '40'])
@@ -387,12 +392,15 @@ for (const surface of ['terminal', 'desktop'] as const) {
     if (!ui) return
     const t = await texts(ui)
     expect(t).toContain('2 hops to sync')
+    expect(await ui.find({ key: 'go-app:team/0.0.1' })).toBe(undefined)   // a closed row shows no buttons
     // the clean hop: Sync… asks for a plan; nothing is applied
+    await ui.press({ key: 'hop-app:team/0.0.1' })
     await ui.press({ key: 'go-app:team/0.0.1' })
     expect(calls.find(c => c[0] === 'plan')).toEqual(['plan', 'sync-hop', '--repo', 'app', '--hop', 'team/0.0.1:team/0.0.2'])
     expect(calls.some(c => c[0] === 'apply')).toBe(false)
     await ui.press({ key: 'cancel' })
     // the stopped hop: no Sync… button, but resolve / finish / abort
+    await ui.press({ key: 'hop-app:team/0.0.2' })
     expect(await ui.find({ key: 'go-app:team/0.0.2' })).toBe(undefined)
     await ui.press({ key: 'ask-app:team/0.0.2' })
     expect(filled).toContain('stopped on conflicts in shared.txt')
