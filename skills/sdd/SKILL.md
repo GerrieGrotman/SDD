@@ -1,13 +1,13 @@
 ---
 name: sdd
-description: 'Entry point for the spec-driven development workflows on Azure DevOps work items in a multi-repo workspace. `/sdd help` gives a quick tour; `/sdd init` checks and (per item, with permission) installs or configures everything the workflows need, including the workspace CLAUDE.md block. `/sdd <id>` reads the work item type and routes Bug/Issue to the bug flow, story/tech story/change request/feature/epic to the spec flow, and an Ai Agent Request (a hand-over between AI agents) to the request triage, which reports on the hand-over, asks spec or bug, and sends the work to the open item it names or to a new Tech Story or Bug; `/sdd bug <id>`, `/sdd spec <id>`, `/sdd sync [<id>|all]`, `/sdd impact <id>` (or `/sdd impact all` for the whole spec, after a token-cost warning), `/sdd status <id>` reports where an item stands (so work started in one chat can resume in another), `/sdd harness <create|onboard|audit|maintain>` sets up and audits the Claude Code harness (CLAUDE.md, allowlists, hooks) of a repo or workspace, `/sdd done <id>` cleans up, `/sdd abandon <id>` stops an item, and `/sdd <id> feedback <stage>: <text>` (or the sdd view''s message "sdd feedback for <id>, stage <stage>: <text>") sends an item back to a stage with the user''s feedback, the view''s "sdd answer for <id>, stage <stage>: …" is the user''s answer to a gate question, and the view''s "sdd approve for <id>, stage <stage>" is the user''s go-ahead at a spec flow stop — each refuses and explains when the item''s state does not allow it. Use whenever the user types /sdd or asks to "sdd" a work item.'
+description: 'Entry point for the spec-driven development workflows on Azure DevOps work items in a multi-repo workspace. `/sdd:sdd` with no arguments, or `/sdd help`, sends the one help page (a first-time walk-through and every command); `/sdd init` checks and (per item, with permission) installs or configures everything the workflows need, including the workspace CLAUDE.md block. `/sdd <id>` reads the work item type and routes Bug/Issue to the bug flow, story/tech story/change request/feature/epic to the spec flow, and an Ai Agent Request (a hand-over between AI agents) to the request triage, which reports on the hand-over, asks spec or bug, and sends the work to the open item it names or to a new Tech Story or Bug; `/sdd bug <id>`, `/sdd spec <id>`, `/sdd sync [<id>|all]`, `/sdd impact <id>` (or `/sdd impact all` for the whole spec, after a token-cost warning), `/sdd status <id>` reports where an item stands (so work started in one chat can resume in another), `/sdd harness <create|onboard|audit|maintain>` sets up and audits the Claude Code harness (CLAUDE.md, allowlists, hooks) of a repo or workspace, `/sdd done <id>` cleans up, `/sdd abandon <id>` stops an item, and `/sdd <id> feedback <stage>: <text>` (or the sdd view''s message "sdd feedback for <id>, stage <stage>: <text>") sends an item back to a stage with the user''s feedback, the view''s "sdd answer for <id>, stage <stage>: …" is the user''s answer to a gate question, and the view''s "sdd approve for <id>, stage <stage>" is the user''s go-ahead at a spec flow stop — each refuses and explains when the item''s state does not allow it. Use whenever the user types /sdd or asks to "sdd" a work item.'
 ---
 
 # /sdd — one entry point for every sdd workflow
 
 | Command | Skill it runs | What happens |
 | --- | --- | --- |
-| `/sdd help` / `/sdd help start` | this skill | The quick guide, or the first-time walk-through — no checks, no changes |
+| `/sdd:sdd` (no arguments) / `/sdd help` | this skill | The one help page: first-time walk-through and every command — no checks, no changes |
 | `/sdd init` | this skill | Check every requirement; fix each missing one only after the user says yes |
 | `/sdd next <epic or feature id> [version]` | `sdd:next` | Which item to take next under the dev's epic or feature: free items with their version, blocked ones judged, ranked by dev priority — the user picks |
 | `/sdd <id>` | decided by type, see below | |
@@ -28,30 +28,28 @@ description: 'Entry point for the spec-driven development workflows on Azure Dev
 
 Scripts are in `${CLAUDE_PLUGIN_ROOT}/scripts/`; `${CLAUDE_PLUGIN_ROOT}/skills/workspace/SKILL.md` documents them.
 
-## `/sdd help` — the tour guide
+## `/sdd:sdd` and `/sdd help` — the help page
 
-The pages are in this skill's folder: `HELP.md` (the quick guide) and `help/getting-started.html` (the
-walk-through for a new user: init, sync, impact, a first bug, a first spec item). The plugin folder is a
-cache the Desktop app cannot open files from, so never send or link a page from there. First copy them
-into the workspace:
+`/sdd:sdd` with nothing after it, and `/sdd help`, do the same: they send **one page** that holds the
+first-time walk-through (init, sync, impact, a first bug, a first spec item) and every command. Never
+send a second file or tell the user to run another command for more help.
+
+The page is `help/help.html` in this skill's folder. The plugin folder is a cache the Desktop app cannot
+open files from, so never send or link the page from there. First copy it into the workspace:
 
 ```
 python ${CLAUDE_PLUGIN_ROOT}/scripts/env.py help
 ```
 
-It prints the paths of the copies in `<workspace>/.claude/sdd/help/`. Send and link **those**. Change
+It prints the path of the copy in `<workspace>/.claude/sdd/help/`. Send and link **that**. Change
 nothing else and run nothing else.
-
-- `/sdd help` sends the copy of `HELP.md`. `/sdd help start` (or "getting started", "first time") sends
-  `getting-started.html`. `HELP.md` points to it.
--
 
 It must work on a phone too (the user may follow the session remotely), so:
 
 1. **`SendUserFile` available** (desktop app, remote or mobile session): send the copy with
-   `display: "render"` and `status: "normal"`. That reaches the phone. Do not paste the guide.
-2. **Not available** (plain terminal): for `HELP.md`, paste its content as your reply, unchanged (short
-   lists, no wide tables). For the HTML page, give its link and a one-line outline of the five steps.
+   `display: "render"` and `status: "normal"`. That reaches the phone. Do not paste the page.
+2. **Not available** (plain terminal): give the link and a one-line outline: the five first-time steps
+   (init, sync, impact, first bug, first spec item), then the command list.
 3. Either way, add the link to the copy in the workspace (a `file:///` URL with forward slashes), and one
    line with this workspace's values from `.claude/sdd.json` when it exists: the spec folder and the ADO
    projects. The link is optional extra for a phone, which cannot open it.
@@ -95,7 +93,7 @@ It must work on a phone too (the user may follow the session remotely), so:
 <!-- sdd:begin -->
 ## sdd workflow
 
-Work on ADO items goes through `/sdd` (`/sdd help` for the tour). Config: `.claude/sdd.json`.
+Work on ADO items goes through `/sdd` (`/sdd:sdd` for help). Config: `.claude/sdd.json`.
 
 - One folder per work item: `.claude/worktrees/{id}-{slug}/` — `workitem.json`, `src/{Repo}/`
   (git worktrees), `graph/` (code graph). Edit, build, test and commit only in `src/{Repo}/`,

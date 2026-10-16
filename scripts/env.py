@@ -103,12 +103,12 @@ def cmd_init(a):
     report_output_style(force=True)
 
 
-HELP_FILES = ("HELP.md", "help/getting-started.html")
+HELP_FILES = ("help/help.html",)
 
 
 def help_copy(dest):
-    """Copy the help pages into `dest`, which sits inside the workspace: the plugin's own folder is in a cache the
-    Desktop app cannot open a file from. Returns the copies' paths."""
+    """Copy the help page into `dest`, which sits inside the workspace: the plugin's own folder is in a cache the
+    Desktop app cannot open a file from. Returns the copy's path."""
     dest.mkdir(parents=True, exist_ok=True)
     out = []
     for rel in HELP_FILES:
@@ -1439,7 +1439,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sp = ap.add_subparsers(dest="cmd", required=True)
     s = sp.add_parser("init"); s.add_argument("--spec-root", default=DEFAULTS["specRoot"])
-    sp.add_parser("help", help="copy the help pages into the workspace (.claude/sdd/help/) and print their paths")
+    sp.add_parser("help", help="copy the help page into the workspace (.claude/sdd/help/) and print its path")
     s = sp.add_parser("type"); s.add_argument("--id", type=int, required=True)
     s = sp.add_parser("doctor"); s.add_argument("--json", action="store_true")
     sp.add_parser("upgrade-config", help="add new settings' defaults to .claude/sdd.json (SessionStart hook)")

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>sdd getting started</title>
+<title>sdd help</title>
 <style>
   :root {
     --bg: #fafaf9; --card: #ffffff; --ink: #1c1917; --dim: #57534e; --line: #e7e5e4;
@@ -55,21 +55,28 @@
   .legend { font-size: 14px; color: var(--dim); display: flex; gap: 18px; flex-wrap: wrap; margin-top: 4px; }
   .dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
   .dot.ok { background: var(--ok); } .dot.stop { background: var(--stop); }
+  table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 10px 0; font-size: 15px; }
+  td { border-top: 1px solid var(--line); padding: 8px 8px 8px 0; vertical-align: top; }
+  td:first-child { width: 42%; padding-right: 16px; overflow-wrap: anywhere; }
+  @media (max-width: 560px) { td { display: block; border: 0; padding: 0; } td:first-child { width: auto; border-top: 1px solid var(--line); padding-top: 8px; } td:last-child { padding-bottom: 8px; } }
+  h3 { font-size: 16px; margin: 18px 0 2px; }
   .tips { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 10px; }
   .tip { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
-  .tip b { display: block; margin-bottom: 2px; }
+  .tip > b:first-child { display: block; margin-bottom: 2px; }
   .tip span { color: var(--dim); font-size: 15px; }
   footer { color: var(--dim); font-size: 14px; margin-top: 24px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Getting started with sdd</h1>
+  <h1>sdd help</h1>
+  <p class="lead">Spec-driven work on Azure DevOps items: one folder per work item, scripts do the mechanics, you make the decisions.
+    First time? Follow steps 1 to 5. Already set up? Jump to <a href="#commands" style="color:var(--accent)">Every command</a>.</p>
   <p class="lead">From a fresh workspace to your first fixed bug and your first spec item. Do the steps in order.
     Every step that changes something asks you first. Run every command from the workspace: the folder above your repos.</p>
   <nav>
     <a href="#init">1 Init</a><a href="#sync">2 Sync</a><a href="#impact">3 Impact</a>
-    <a href="#bug">4 First bug</a><a href="#spec">5 First spec item</a><a href="#after">While you work</a>
+    <a href="#bug">4 First bug</a><a href="#spec">5 First spec item</a><a href="#after">While you work</a><a href="#commands">Every command</a><a href="#places">Where things live</a><a href="#rules">Rules</a><a href="#update">Update sdd</a>
   </nav>
 
   <section id="init">
@@ -161,7 +168,81 @@
     </div>
   </section>
 
-  <footer>Every command: <code>/sdd help</code>. Lost? <code>/sdd status &lt;id&gt;</code> shows where an item is.</footer>
+  <section id="commands">
+    <h2>Every command</h2>
+    <h3>Set up and pull specs</h3>
+    <table>
+      <tr><td><code>/sdd init</code></td><td>Checks tools, config and CLAUDE.md. Asks before each fix.</td></tr>
+      <tr><td><code>/sdd sync &lt;epic id&gt;</code></td><td>The epic and everything under it.</td></tr>
+      <tr><td><code>/sdd sync</code></td><td>Refresh everything already synced.</td></tr>
+      <tr><td><code>/sdd sync all</code></td><td>Every item in every ADO project in <code>.claude/sdd.json</code>.</td></tr>
+      <tr><td><code>/sdd impact &lt;id&gt;</code></td><td>What else the item touches, and the gap questions that raises.</td></tr>
+      <tr><td><code>/sdd impact all</code></td><td>The same for the whole spec (<code>/sdd impact all &lt;epic id&gt;</code> for one epic). Costly: it shows a token estimate and asks first.</td></tr>
+    </table>
+    <h3>Do the work</h3>
+    <table>
+      <tr><td><code>/sdd next &lt;epic or feature id&gt; &lt;version&gt;</code></td><td>What to take next: free items with your team version, blocked ones set aside, ranked (bugs and issues first, then priority, severity, complexity). You pick.</td></tr>
+      <tr><td><code>/sdd &lt;id&gt;</code></td><td>Bug or Issue starts the bug flow. Story, feature or epic starts the spec flow.</td></tr>
+      <tr><td><code>/sdd &lt;id&gt;</code> on an Ai Agent Request</td><td>A report on the hand-over: what is done, what is left, the items it names. You pick spec or bug. The work goes to the open item it belongs to, or to a new Tech Story or Bug. Then that flow runs.</td></tr>
+      <tr><td><code>/sdd bug &lt;id&gt;</code> / <code>/sdd spec &lt;id&gt;</code></td><td>Force the bug or the spec flow.</td></tr>
+      <tr><td><code>/sdd &lt;id&gt; short</code> / <code>full</code></td><td>A small spec item: one stop approves design and tasks together. <code>full</code> keeps every stop. Say neither and the flow asks.</td></tr>
+    </table>
+    <h3>Check on it, finish or stop</h3>
+    <table>
+      <tr><td><code>/sdd status &lt;id&gt;</code></td><td>Where it stands: ADO state, the step reached, tasks done, PRs.</td></tr>
+      <tr><td><code>/sdd &lt;id&gt; feedback &lt;stage&gt;: &lt;text&gt;</code></td><td>Back to a done or waiting stage with your feedback.</td></tr>
+      <tr><td><code>/sdd done &lt;id&gt;</code></td><td>After the PRs merge and the work item is closed out. Shows what goes, then asks.</td></tr>
+      <tr><td><code>/sdd abandon &lt;id&gt;</code></td><td>Stop an item and clean up what it created. Asks before anything outward-facing.</td></tr>
+    </table>
+    <p>Both <code>done</code> and <code>abandon</code> refuse, and say why, when the item is not in the right state.</p>
+    <h3>Harness and help</h3>
+    <table>
+      <tr><td><code>/sdd harness audit</code></td><td>Is the Claude Code setup (CLAUDE.md, allowlists, hooks) complete and current? Reports, changes nothing.</td></tr>
+      <tr><td><code>/sdd harness create</code> / <code>onboard</code> / <code>maintain</code></td><td>Set up a repo or workspace, add a new repo to it, or fix drift.</td></tr>
+      <tr><td><code>/sdd:sdd</code></td><td>This page. <code>/sdd help</code> opens it too.</td></tr>
+    </table>
+  </section>
+
+  <section id="places">
+    <h2>Where things live</h2>
+    <h3>Work item folder: <code>.claude/worktrees/&lt;id&gt;-&lt;slug&gt;/</code></h3>
+    <ul>
+      <li><code>src/&lt;Repo&gt;/</code>: your code. Every edit, build, test and commit happens here.</li>
+      <li><code>graph/</code>: code graph of <code>src/</code>. Start with <code>GRAPH_REPORT.md</code>.</li>
+      <li><code>workitem.json</code>: which repo is on which branch, its PR, and where the flow stopped.</li>
+    </ul>
+    <h3>Spec folder: <code>specRoot</code> in <code>.claude/sdd.json</code>, then <code>**/&lt;id&gt;-&lt;TYPE&gt;-&lt;slug&gt;/</code></h3>
+    <p>TYPE is EPIC, FEAT, US, TS, CR, PBI, BUG or ISSUE.</p>
+    <ul>
+      <li><code>requirements.md</code>: mirror of ADO. Never edit it; the sync overwrites it.</li>
+      <li><code>questions.md</code>: open questions for the item's author, one <code>- [ ]</code> line each. While any is open, the flow stops at <b>Open Questions</b> and asks them one by one. You can answer "Continue with this open" to go on anyway.</li>
+      <li><code>design.md</code>, <code>tasks.md</code>, <code>impact.md</code>: yours. The sync never touches them.</li>
+      <li><code>.index/spec.db</code> (at the spec folder root): search index.</li>
+    </ul>
+  </section>
+
+  <section id="rules">
+    <h2>Rules</h2>
+    <ul>
+      <li>The flow stops for your approval before code changes, before a PR, and before cleanup.</li>
+      <li>Every question comes as a pick-list, with links to the spec documents and code it is about.</li>
+      <li>Say <b>abandon</b> at any point to stop and clean up.</li>
+      <li>Specs change in ADO, not in the files: fix the work item, then <code>/sdd sync</code>.</li>
+      <li>Never edit in the main checkout. Only in <code>src/&lt;Repo&gt;/</code>.</li>
+    </ul>
+  </section>
+
+  <section id="update">
+    <h2>Update sdd</h2>
+    <p>Get the newest version from a chat. Type each line with a <code>!</code> in front, so it runs as a shell command:</p>
+    <ol>
+      <li><code>!claude plugin marketplace update sdd</code>: pulls the newest marketplace list.</li>
+      <li><code>!claude plugin update sdd@sdd</code>: updates the plugin.</li>
+      <li>Run <code>/reload-plugins</code>, or start a new chat, so the new version loads.</li>
+    </ol>
+  </section>
+
+  <footer>Lost? <code>/sdd status &lt;id&gt;</code> shows where an item is. Open this page again with <code>/sdd:sdd</code>.</footer>
 </main>
 <script>
   document.querySelectorAll('[data-copy]').forEach(function (b) {

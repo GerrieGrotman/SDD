@@ -36,7 +36,7 @@ file's guidance when working inside the repo.
 - The spec folder tree mirrors the ADO hierarchy; resolve a folder by glob `{specRoot}/**/<id>-*/`,
   never by remembered path.
 - `ado_id` is the join key between work item, spec folder, branch and PR.
-- Use `/sdd` for anything spec-related (`/sdd help` for the tour).
+- Use `/sdd` for anything spec-related (`/sdd:sdd` for help).
 
 ## Skills catalogue
 
