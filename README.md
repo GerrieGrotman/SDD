@@ -38,6 +38,7 @@ pandoc, Ollama (meaning search).
 | `/sdd <id>` on an Ai Agent Request | Reports on the hand-over (what is done, what is left, the items it names) and asks spec or bug. The work goes to the open item it belongs to, or to a new Tech Story or Bug linked to the request; then that flow runs |
 | `/sdd <id> short` / `full` | A spec item on the short path (one stop approves design and tasks together) or the full one; without it, the flow asks |
 | `/sdd help` | A short tour |
+| `/sdd help start` | A step-by-step walk-through for a new user: init, sync, impact, a first bug and a first spec item |
 | `/sdd status <id>` | Where the item stands |
 | `/sdd <id> feedback <stage>: <text>` | Back to a done or waiting stage with your feedback |
 | `/sdd-view [id]` | Opens the sdd view for this chat's work item (or the one given) |
