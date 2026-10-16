@@ -51,6 +51,7 @@ The sdd view opens by itself the first time a chat takes up a work item. In it:
   was revoked), its documents and a **Give feedback** box;
 - the band above the prompt shows the same tag (`[spec · short]`) for as long as the chat's work item
   is in progress, and turns amber when it waits on you;
+- the same band is a launcher: **sdd view**, **Worktrees** and **repowatch** buttons are always there (with no item running it reads "Open a panel"), so a panel opens without a command;
 - the review stage (spec: Review, bug: Phase 15) has **Approved**, **Merged** and **Rejected**;
 - a worktree opens in File Explorer or VS Code from its box. The spanner (🔧) opens it in repowatch, on that one worktree (needs repowatch 0.1.1 or newer; older ones just open their normal pane).
 - the pane lists the flow's stages as one vertical rail: a small picture of the node and the rail for each stage, joined

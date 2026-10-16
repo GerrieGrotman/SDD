@@ -129,6 +129,33 @@ async function openPane($: EngineInterface, id: number | null): Promise<void> {
 }
 
 /** Opens a folder on this computer in the file manager or VS Code. It changes nothing in sdd. */
+/** Opens the sdd view on a work item (`/sdd-view [id] [folder]`); the command and the band's button both run it. Says what it did. */
+async function openSddView($: EngineInterface, args: string): Promise<string> {
+  const [, num, rest] = /^(\d+)?\s*(.*)$/s.exec(args.trim()) ?? []
+  const folder = (rest ?? '').trim().replace(/^["']|["']$/g, '')
+  if (folder) await $.state.set(place, folder)
+  // every get of one dispatch reads its start, so use what was just parsed
+  const where = folder || ((await $.state.get(place)).value ?? null)
+  const id = num ? Number(num) : ((await $.state.get(mine)).value ?? null)
+  await $.state.set(selected, id)
+  await $.state.set(stage, null)
+  await $.state.set(doc, null)
+  await openPane($, id)
+  const v = await loadView($, id, (await $.state.get(snap)).value ?? null, where)
+  await $.state.set(snap, v.out)
+  await $.state.set(error, v.why)
+  return `sdd view${id != null ? ` of ${id}` : ''} opened${where ? ` on ${where}` : ''}.`
+}
+
+/** The launcher's repowatch button: its pane, from another plugin's command, so say so when it is missing. */
+async function showRepowatch($: EngineInterface): Promise<void> {
+  try {
+    await $.command.run({ command: 'repowatch', args: '' })
+  } catch (err) {
+    $.ui.toast(`repowatch could not open (is the repowatch plugin enabled?): ${String(err).slice(0, 120)}`)
+  }
+}
+
 /** The spanner: repowatch's Worktrees list, on that one worktree. Another plugin's command, so say so when it is missing. */
 async function showWorktree($: EngineInterface, path: string): Promise<void> {
   try {
@@ -210,6 +237,29 @@ let wtOpen = false
 let wtTimer = false
 
 type Live = { state: SddLiveState | null; why: string | null }
+
+/** Opens the Worktrees page and reads the worktrees. The command and the band's button both run it: a hook cannot run its own plugin's command. */
+async function openWorktreesPage($: EngineInterface): Promise<void> {
+  wtOpen = true
+  if (!wtTimer) {
+    wtTimer = true
+    $.clock.every(WT_REFRESH_MS, () => {
+      if (!wtOpen) return
+      void (async () => {
+        const s = (await $.state.get(snap)).value ?? null
+        const r = await wtReadLive($, s?.root ?? null)
+        await $.state.set(live, r.state)
+        await $.state.set(liveError, r.why)
+      })()
+    })
+  }
+  await $.ui.open({ id: WT_PANE, title: 'sdd worktrees', closeOnEscape: true, columns: 110 })
+  const s = (await $.state.get(snap)).value ?? null
+  const r = await wtReadLive($, s?.root ?? null)
+  await $.state.set(live, r.state)
+  await $.state.set(liveError, r.why)
+  await $.state.set(offset, 0)
+}
 
 /** Reads repowatch's state file in the workspace. Missing = repowatch has not scanned yet. */
 async function wtReadLive($: EngineInterface, root: string | null): Promise<Live> {
@@ -328,25 +378,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'sdd-worktrees' }, async ($, e) => {
     if (!desktopReady) return { text: 'The sdd worktrees page works in the Claude Desktop app only.' }
-    wtOpen = true
-    if (!wtTimer) {
-      wtTimer = true
-      $.clock.every(WT_REFRESH_MS, () => {
-        if (!wtOpen) return
-        void (async () => {
-          const s = (await $.state.get(snap)).value ?? null
-          const r = await wtReadLive($, s?.root ?? null)
-          await $.state.set(live, r.state)
-          await $.state.set(liveError, r.why)
-        })()
-      })
-    }
-    await $.ui.open({ id: WT_PANE, title: 'sdd worktrees', closeOnEscape: true, columns: 110 })
-    const s = (await $.state.get(snap)).value ?? null
-    const r = await wtReadLive($, s?.root ?? null)
-    await $.state.set(live, r.state)
-    await $.state.set(liveError, r.why)
-    await $.state.set(offset, 0)
+    await openWorktreesPage($)
     return { text: 'sdd worktrees opened.' }
   })
 
@@ -491,20 +523,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'sdd-view' }, async ($, e) => {
     if (!desktopReady) return { text: 'The sdd view works in the Claude Desktop app only.' }
-    const [, num, rest] = /^(\d+)?\s*(.*)$/s.exec(e.args.trim()) ?? []
-    const folder = (rest ?? '').trim().replace(/^["']|["']$/g, '')
-    if (folder) await $.state.set(place, folder)
-    // every get of one dispatch reads its start, so use what was just parsed
-    const where = folder || ((await $.state.get(place)).value ?? null)
-    const id = num ? Number(num) : ((await $.state.get(mine)).value ?? null)
-    await $.state.set(selected, id)
-    await $.state.set(stage, null)
-    await $.state.set(doc, null)
-    await openPane($, id)
-    const v = await loadView($, id, (await $.state.get(snap)).value ?? null, where)
-    await $.state.set(snap, v.out)
-    await $.state.set(error, v.why)
-    return { text: `sdd view${id != null ? ` of ${id}` : ''} opened${where ? ` on ${where}` : ''}.` }
+    return { text: await openSddView($, e.args) }
   })
 
   on('ui.close', async ($, e, next) => {
@@ -689,8 +708,28 @@ export const register: Register = on => {
     const own = (await $.state.get(mine)).value ?? null
     // this chat's item while its flow runs: always which flow and path, and loud when it waits on you
     const first = (s?.items ?? []).find(i => i.id === own && !!i.progress && !['done', 'abandoned'].includes(i.progress.status))
-    if (e.props.hasSurvey || !first) return next(e)
+    if (!desktopReady || e.props.hasSurvey) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
+    // the launcher: always there, so a panel opens without typing a command
+    const openWorktrees = () => openWorktreesPage($)
+    const openRepowatch = () => showRepowatch($)
+    const launcher = (
+      <Box flexShrink={0} flexDirection="row" gap={1}>
+        <Button key="band-worktrees" label="Worktrees" onPress={openWorktrees} />
+        <Button key="band-repowatch" label="repowatch" onPress={openRepowatch} />
+      </Box>
+    )
+    if (!first) {
+      return (
+        <Box flexDirection="row" gap={1} width={e.props.bodyColumns}>
+          <Box key="band-text" flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden"><Text dimColor wrap="truncate-end">Open a panel</Text></Box>
+          <Box flexShrink={0}>
+            <Button key="band-open" label="sdd view" onPress={() => void openSddView($, '')} />
+          </Box>
+          {launcher}
+        </Box>
+      )
+    }
     const tag = flowTag(s?.flows[first.flow], first)
     const waiting = first.progress?.status === 'waiting'
     return (
@@ -711,7 +750,7 @@ export const register: Register = on => {
           <Text bold color={contextTone(ctx.percent) === 'high' ? C.revoked : C.now}>{`context ${ctx.percent}%`}</Text>
         )}
         <Box flexShrink={0}>
-        <Button key="band-open" label="Open sdd view" onPress={() => void (async () => {
+        <Button key="band-open" label="sdd view" onPress={() => void (async () => {
           await $.state.set(selected, first.id)
           await $.state.set(stage, null)
           await $.state.set(doc, null)
@@ -721,6 +760,7 @@ export const register: Register = on => {
           await $.state.set(error, v.why)
         })()} />
         </Box>
+        {launcher}
       </Box>
     )
   })
