@@ -31,7 +31,7 @@ installs with sdd.
   the same check. Results are cached by the two shas, so only a branch that moved is recomputed. A toast
   fires when a branch turns to "will conflict"; the row's button asks Claude to do the merge. Needs git
   2.38 or later; older git shows nothing.
-- **Sync view** (`/repowatch sync`): for each repo with two or more `team/*` branches on origin, the branches
+- **Sync view** (`/repowatch sync`), one line per hop (a colour dot, `repo · from → to`, a word such as `2 to take`, `stopped`, `on origin`, `up to date`) under coloured counts; press a line to open its fixes and buttons (**Sync…**, **Finish…**, **Abort…**, **History**): for each repo with two or more `team/*` branches on origin, the branches
   sorted by version (`0.0.2` before `0.0.10`) and, for each hop to the next newer one, the commits the
   newer one lacks, grouped into fixes by ADO id (`AB#n`, `ADO n`, or `Related work items: #n`). A commit
   whose patch is already there under another sha counts as applied. The hop says whether merging the
@@ -56,7 +56,7 @@ installs with sdd.
   `syncPattern`, `syncWindowDays` and `syncMaxFixes` in `repowatch.json` tune it; `repowatch.py sync` reads
   it by hand, and `plan|apply sync-hop|sync-finish|sync-abort|sync-skip|sync-unskip --repo NAME --hop OLDER:NEWER`
   does the actions.
-- **History** (a **History** button on a repo, a worktree and a sync hop): the branch's history drawn the way
+- **History** (a **History** button on a repo, a worktree and a sync hop; a long subject is cut to the pane and the commit's author shows when it opens): the branch's history drawn the way
   `git log --graph` draws it, with the lanes in colour, `HEAD`, branch, remote and tag labels, and merge commits
   as `◆`. With a base (a worktree's base, the default branch, or the older team branch of a hop) each commit is
   coloured by where it is: green only on the branch, blue only on the base, grey on both, so the fork point and

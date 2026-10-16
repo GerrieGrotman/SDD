@@ -10,7 +10,7 @@ import {
   actionArgs, ago, baseText, branchText, bulkRows, classLabel, conflictToast, dedupePrune, flagLabel, forecastText, isUrgent,
   fixGlyph, fixLine, hopKey, hopLine, hopRows, mergeAskText, page, planArgs, planGist, resolveAskText, resultLine, sddRemoveText,
   statusText, stepText, syncArgs, undoArgs, undoLabel, visibleRepos, worktreeRows,
-  commitMeta, graphArgs, agoShort, repoCounts, repoTone, repoWord, clipboardArgv, wtCounts, wtFacts, wtWord, parseHistoryArgs, parseWorktreeArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory,
+  commitMeta, graphArgs, agoShort, hopCounts, hopTone, hopWord, repoCounts, repoTone, repoWord, clipboardArgv, wtCounts, wtFacts, wtWord, parseHistoryArgs, parseWorktreeArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory,
 } from './view/model'
 import type { GraphTarget } from './view/model'
 
@@ -404,17 +404,23 @@ export const register: Register = on => {
           {legend && <Text dimColor>{legend}</Text>}
           {g.rows.map((r, i) => (
             <Box key={`g${i}`} flexDirection="column">
-              <Box>
+              <Box alignItems="center">
                 {graphSegments(r, width).map((seg, j) => (
                   <Text key={`s${j}`} color={seg.lane >= 0 ? LANE_COLORS[seg.lane] : undefined}>{seg.text}</Text>
                 ))}
                 {r.sha && <Button key={`c-${r.sha.slice(0, 7)}`} label={r.sha.slice(0, 7)} onPress={showCommit(g.repo, r.sha)} />}
-                {r.sha && refNames(r).map(x => <Text key={`${r.sha}-${x.name}`} color={REF_COLOR[x.kind]} bold={x.kind === 'head'}> [{x.name}]</Text>)}
-                {r.sha && <Text color={SIDE_COLOR[r.side ?? 'both']} dimColor={r.side === 'both'}> {(r.subject ?? '').slice(0, 72)}</Text>}
-                {r.sha && <Text dimColor>  {commitMeta(r, now)}</Text>}
+                {r.sha && (
+                  <Box flexGrow={1} flexShrink={1} minWidth={0} marginLeft={1} overflow="hidden">
+                    <Text wrap="truncate-end" color={SIDE_COLOR[r.side ?? 'both']} dimColor={r.side === 'both'}>
+                      {refNames(r).map(x => `[${x.name}] `).join('')}{r.subject ?? ''}
+                    </Text>
+                  </Box>
+                )}
+                {r.sha && <Text dimColor>{agoShort(r.time, now).padStart(4)}</Text>}
               </Box>
               {r.sha && shown?.sha === r.sha && (
                 <Box flexDirection="column" marginLeft={width + 2}>
+                  <Text dimColor>{commitMeta(r, now)}</Text>
                   {shown.text.split('\n').slice(0, 30).map((line, k) => <Text key={`d${k}`} dimColor>{line}</Text>)}
                 </Box>
               )}
@@ -429,14 +435,21 @@ export const register: Register = on => {
     if (mode === 'sync') {
       const sy = s.sync
       const rows = hopRows(sy, only)
+      const hcn = hopCounts(sy)
       const p = page(rows, from, Math.max(2, Math.floor(size / 2)))
       return (
         <Box flexDirection="column">
           {header}
           {sy ? (
-            <Text dimColor>
-              {sy.summary.repos} repos with a team chain · {sy.summary.hopsPending} hops to sync · {sy.summary.fixesPending} fixes · {sy.summary.conflictHops} would conflict · read {ago(sy.generated, now)}
-            </Text>
+            <Box flexDirection="column">
+              <Box gap={2}>
+                {hcn.conflict > 0 && <Text color={COLORS.urgent}>● {hcn.conflict} conflict</Text>}
+                {hcn.busy > 0 && <Text color={COLORS.warn}>● {hcn.busy} in progress</Text>}
+                {hcn.pending > 0 && <Text color={COLORS.warn}>● {hcn.pending} to sync</Text>}
+                <Text color={COLORS.dim}>● {hcn.clean} up to date</Text>
+              </Box>
+              <Text dimColor>{sy.summary.repos} repos with a team chain · {sy.summary.hopsPending} hops to sync · {sy.summary.fixesPending} fixes · read {ago(sy.generated, now)}</Text>
+            </Box>
           ) : <Text dimColor>Branch sync has not been read yet.</Text>}
           <Button key="refresh-sync" label="Refresh sync" onPress={() => sync(false, 'sync')} />
           {confirmPanel}
@@ -445,48 +458,63 @@ export const register: Register = on => {
             const key = hopKey(r)
             const isOpen = opened === key
             const conflict = forecastText(r.hop.forecast)
+            const tone = { urgent: COLORS.urgent, warn: COLORS.warn, dim: COLORS.dim }[hopTone(r.hop)]
             return (
               <Box key={key} flexDirection="column">
-                <Box>
-                  <Button key={`hop-${key}`} label={`${isOpen ? '▾' : '▸'} ${r.repo}  ${r.hop.from} → ${r.hop.to}`}
-                    onPress={() => $.state.set(open, isOpen ? null : key)} />
-                  <Text color={r.hop.missing ? COLORS.warn : COLORS.dim}>  {hopLine(r.hop)}  </Text>
-                  {r.hop.mode === 'cherry-pick' && <Text dimColor>cherry-pick hop  </Text>}
-                  <Button key={`hist-${key}`} label="History" onPress={openGraph(hopHistory(r.repo, r.hop))} />
+                <Box gap={1} alignItems="center">
+                  <Text color={tone}>●</Text>
+                  <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                    <Button key={`hop-${key}`} label={`${r.repo} · ${r.hop.from} → ${r.hop.to}`}
+                      onPress={() => $.state.set(open, isOpen ? null : key)} />
+                  </Box>
+                  <Text color={tone}>{hopWord(r.hop)}</Text>
                 </Box>
-                {conflict && <Text color={COLORS.urgent}>      {conflict}</Text>}
-                {r.hop.inProgress ? (
-                  <Box marginLeft={6}>
-                    <Text color={COLORS.warn}>{r.hop.inProgress.state === 'conflict' ? 'stopped on conflicts' : 'resolved, ready to finish'} in {r.hop.inProgress.path}  </Text>
-                    {r.hop.inProgress.state === 'conflict' && !pending && (
-                      <Button key={`ask-${key}`} label="Ask Claude to resolve" onPress={() => $.prompt.fill({ text: resolveAskText(r) })} />
-                    )}
-                    {!pending && <Button key={`fin-${key}`} label="Finish…" onPress={propose([syncArgs('sync-finish', r.repo, r.hop)])} />}
-                    {!pending && <Button key={`abt-${key}`} label="Abort…" onPress={propose([syncArgs('sync-abort', r.repo, r.hop)])} />}
-                  </Box>
-                ) : r.hop.pushed ? (
-                  <Text dimColor>      {r.hop.pushed} is on origin: open its pull request, or merge it</Text>
-                ) : r.hop.missing && !pending ? (
-                  <Box marginLeft={6}>
-                    <Button key={`go-${key}`} label="Sync…" onPress={propose([syncArgs('sync-hop', r.repo, r.hop)])} />
-                  </Box>
-                ) : null}
-                {isOpen && (r.hop.fixes ?? []).map(f => (
-                  <Box key={`${key}-${f.key}`} flexDirection="column" marginLeft={4}>
-                    <Text color={f.state === 'skipped' ? COLORS.dim : COLORS.warn}>{fixGlyph(f)} {fixLine(f)}</Text>
-                    {f.commits.filter(c => c.state !== 'applied').map(c => (
-                      <Box key={c.sha} marginLeft={4}>
-                        <Text dimColor>{c.sha.slice(0, 8)} {c.subject.slice(0, 60)}{c.state === 'skipped' ? `  (skipped: ${c.reason ?? 'no reason given'})` : ''}  </Text>
-                        {!pending && !r.hop.inProgress && (
-                          <Button key={`sk-${c.sha}`} label={c.state === 'skipped' ? 'Take again…' : 'Do not take…'}
-                            onPress={propose([syncArgs(c.state === 'skipped' ? 'sync-unskip' : 'sync-skip', r.repo, r.hop, c.sha)])} />
-                        )}
+                {isOpen && (
+                  <Box flexDirection="row" alignItems="stretch">
+                    <Box key={`hrail-${key}`} width={2} flexShrink={0} flexDirection="row">
+                      <Box width="25%" flexShrink={0} />
+                      <Box width="20%" flexShrink={0} backgroundColor={tone} />
+                    </Box>
+                    <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} marginBottom={1}>
+                      <Text dimColor wrap="wrap">{hopLine(r.hop)}{r.hop.mode === 'cherry-pick' ? ' · cherry-pick hop' : ''}</Text>
+                      {conflict && <Text color={COLORS.urgent} wrap="wrap">{conflict}</Text>}
+                      {r.hop.inProgress && (
+                        <Text color={COLORS.warn} wrap="wrap">{r.hop.inProgress.state === 'conflict' ? 'stopped on conflicts' : 'resolved, ready to finish'} in {r.hop.inProgress.path}</Text>
+                      )}
+                      {!r.hop.inProgress && r.hop.pushed && <Text dimColor wrap="wrap">{r.hop.pushed} is on origin: open its pull request, or merge it</Text>}
+                      {(r.hop.fixes ?? []).map(f => (
+                        <Box key={`${key}-${f.key}`} flexDirection="column">
+                          <Text color={f.state === 'skipped' ? COLORS.dim : COLORS.warn} wrap="wrap">{fixGlyph(f)} {fixLine(f)}</Text>
+                          {f.commits.filter(c => c.state !== 'applied').map(c => (
+                            <Box key={c.sha} marginLeft={2} gap={1} flexWrap="wrap">
+                              <Text dimColor wrap="wrap">{c.sha.slice(0, 8)} {c.subject.slice(0, 60)}{c.state === 'skipped' ? `  (skipped: ${c.reason ?? 'no reason given'})` : ''}</Text>
+                              {!pending && !r.hop.inProgress && (
+                                <Button key={`sk-${c.sha}`} label={c.state === 'skipped' ? 'Take again…' : 'Do not take…'}
+                                  onPress={propose([syncArgs(c.state === 'skipped' ? 'sync-unskip' : 'sync-skip', r.repo, r.hop, c.sha)])} />
+                              )}
+                            </Box>
+                          ))}
+                        </Box>
+                      ))}
+                      {r.hop.truncated && <Text dimColor>more fixes than are listed</Text>}
+                      {(r.hop.outsideWindow ?? 0) > 0 && <Text dimColor>{r.hop.outsideWindow} older commits are outside the window</Text>}
+                      <Box gap={1} flexWrap="wrap">
+                        <Button key={`hist-${key}`} label="History" onPress={openGraph(hopHistory(r.repo, r.hop))} />
+                        {r.hop.inProgress ? (
+                          <Box gap={1} flexWrap="wrap">
+                            {r.hop.inProgress.state === 'conflict' && !pending && (
+                              <Button key={`ask-${key}`} label="Ask Claude to resolve" onPress={() => $.prompt.fill({ text: resolveAskText(r) })} />
+                            )}
+                            {!pending && <Button key={`fin-${key}`} label="Finish…" onPress={propose([syncArgs('sync-finish', r.repo, r.hop)])} />}
+                            {!pending && <Button key={`abt-${key}`} label="Abort…" onPress={propose([syncArgs('sync-abort', r.repo, r.hop)])} />}
+                          </Box>
+                        ) : !r.hop.pushed && r.hop.missing && !pending ? (
+                          <Button key={`go-${key}`} label="Sync…" onPress={propose([syncArgs('sync-hop', r.repo, r.hop)])} />
+                        ) : null}
                       </Box>
-                    ))}
+                    </Box>
                   </Box>
-                ))}
-                {isOpen && r.hop.truncated && <Text dimColor>    more fixes than are listed</Text>}
-                {isOpen && (r.hop.outsideWindow ?? 0) > 0 && <Text dimColor>    {r.hop.outsideWindow} older commits are outside the window</Text>}
+                )}
               </Box>
             )
           })}

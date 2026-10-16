@@ -341,6 +341,33 @@ export function hopLine(h: RwSyncHop): string {
   return parts.length ? parts.join(', ') : 'up to date'
 }
 
+/** The colour of a sync row: red for a conflict or an error, amber for a hop with commits to take or one in progress, grey for up to date. */
+export function hopTone(h: RwSyncHop): 'urgent' | 'warn' | 'dim' {
+  if (h.error || h.forecast?.state === 'conflict' || h.inProgress?.state === 'conflict') return 'urgent'
+  return h.missing || h.inProgress || h.pushed ? 'warn' : 'dim'
+}
+
+/** The word at the end of a sync row. */
+export function hopWord(h: RwSyncHop): string {
+  if (h.error) return 'cannot read'
+  if (h.inProgress) return h.inProgress.state === 'conflict' ? 'stopped' : 'ready to finish'
+  if (h.pushed) return 'on origin'
+  if (h.forecast?.state === 'conflict') return `${h.missing ?? 0} to take ⚠`
+  return h.missing ? `${h.missing} to take` : 'up to date'
+}
+
+/** Hops by what they need, for the counts above the list. */
+export function hopCounts(sync: RwSyncState | undefined): { conflict: number; pending: number; busy: number; clean: number } {
+  const n = { conflict: 0, pending: 0, busy: 0, clean: 0 }
+  for (const r of Object.values(sync?.repos ?? {})) for (const h of r.hops) {
+    if (h.error || h.forecast?.state === 'conflict') n.conflict++
+    else if (h.inProgress || h.pushed) n.busy++
+    else if (h.missing) n.pending++
+    else n.clean++
+  }
+  return n
+}
+
 export function fixGlyph(f: RwSyncFix): string {
   return { missing: '○', partial: '◐', skipped: '↷', applied: '✓' }[f.state]
 }

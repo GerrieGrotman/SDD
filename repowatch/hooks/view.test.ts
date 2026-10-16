@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { RwGraph, RwPlan, RwRepo, RwResult, RwSummary, RwSyncFix, RwSyncState, RwWorktree, WorktreeClass } from '../types'
-import { parseHistoryArgs, commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory, actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows, normPath, parseWorktreeArgs, agoShort, repoCounts, repoTone, repoWord, wtCounts, wtFacts, wtWord, clipboardArgv } from './view/model'
+import { parseHistoryArgs, commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory, actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows, normPath, parseWorktreeArgs, agoShort, hopCounts, hopTone, hopWord, repoCounts, repoTone, repoWord, wtCounts, wtFacts, wtWord, clipboardArgv } from './view/model'
 
 const repo = (name: string, flags: string[], extra: Partial<RwRepo> = {}): RwRepo => ({ name, path: `/ws/${name}`, scannedAt: 0, flags, ...extra })
 
@@ -277,4 +277,19 @@ test('a repo row: colour from its worst flag, its first flag as the word, and co
   expect([repoTone(repo('d', ['stale-fetch'])), repoWord(repo('d', ['stale-fetch']))]).toEqual(['dim', 'not fetched lately'])   // noise alone is no alarm
   const state = { repos: { a: repo('a', ['conflicted']), b: repo('b', ['dirty']), c: repo('c', ['behind']), d: repo('d', ['unpushed']), e: repo('e', []) } } as never
   expect(repoCounts(state)).toEqual({ urgent: 1, dirty: 1, behind: 1, other: 1, clean: 1 })
+})
+
+test('a sync row: colour and word say what the hop needs, and the counts add up', () => {
+  const hop = (extra: Record<string, unknown>) => ({ from: 'a', to: 'b', ...extra }) as never
+  expect([hopTone(hop({ missing: 2 })), hopWord(hop({ missing: 2 }))]).toEqual(['warn', '2 to take'])
+  expect([hopTone(hop({})), hopWord(hop({}))]).toEqual(['dim', 'up to date'])
+  const clash = hop({ missing: 1, forecast: { state: 'conflict', base: 'b', files: [] } })
+  expect([hopTone(clash), hopWord(clash)]).toEqual(['urgent', '1 to take ⚠'])
+  expect(hopWord(hop({ inProgress: { state: 'conflict', path: 'p', branch: 'x' } }))).toBe('stopped')
+  expect(hopWord(hop({ inProgress: { state: 'ready', path: 'p', branch: 'x' } }))).toBe('ready to finish')
+  expect(hopWord(hop({ pushed: 'sync/a-b' }))).toBe('on origin')
+  expect(hopWord(hop({ error: 'no ref' }))).toBe('cannot read')
+  const sy = { generated: 0, repos: { r: { branches: [], hops: [hop({ missing: 1 }), hop({}), clash, hop({ pushed: 'x' })] } } } as never
+  expect(hopCounts(sy)).toEqual({ conflict: 1, pending: 1, busy: 1, clean: 1 })
+  expect(hopCounts(undefined)).toEqual({ conflict: 0, pending: 0, busy: 0, clean: 0 })
 })
