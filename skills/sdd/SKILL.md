@@ -1,13 +1,13 @@
 ---
 name: sdd
-description: 'Entry point for the spec-driven development workflows on Azure DevOps work items in a multi-repo workspace. `/sdd:sdd` with no arguments, or `/sdd help`, sends the one help page (a first-time walk-through and every command); `/sdd init` checks and (per item, with permission) installs or configures everything the workflows need, including the workspace CLAUDE.md block. `/sdd <id>` reads the work item type and routes Bug/Issue to the bug flow, story/tech story/change request/feature/epic to the spec flow, and an Ai Agent Request (a hand-over between AI agents) to the request triage, which reports on the hand-over, asks spec or bug, and sends the work to the open item it names or to a new Tech Story or Bug; `/sdd bug <id>`, `/sdd spec <id>`, `/sdd sync [<id>|all]`, `/sdd impact <id>` (or `/sdd impact all` for the whole spec, after a token-cost warning), `/sdd status <id>` reports where an item stands (so work started in one chat can resume in another), `/sdd harness <create|onboard|audit|maintain>` sets up and audits the Claude Code harness (CLAUDE.md, allowlists, hooks) of a repo or workspace, `/sdd done <id>` cleans up, `/sdd abandon <id>` stops an item, and `/sdd <id> feedback <stage>: <text>` (or the sdd view''s message "sdd feedback for <id>, stage <stage>: <text>") sends an item back to a stage with the user''s feedback, the view''s "sdd answer for <id>, stage <stage>: …" is the user''s answer to a gate question, and the view''s "sdd approve for <id>, stage <stage>" is the user''s go-ahead at a spec flow stop — each refuses and explains when the item''s state does not allow it. Use whenever the user types /sdd or asks to "sdd" a work item.'
+description: 'Entry point for the spec-driven development workflows on Azure DevOps work items in a multi-repo workspace. `/sdd:sdd` with no arguments, `/sdd:help`, or `/sdd help` sends the one help page (a first-time walk-through and every command); `/sdd init` checks and (per item, with permission) installs or configures everything the workflows need, including the workspace CLAUDE.md block. `/sdd <id>` reads the work item type and routes Bug/Issue to the bug flow, story/tech story/change request/feature/epic to the spec flow, and an Ai Agent Request (a hand-over between AI agents) to the request triage, which reports on the hand-over, asks spec or bug, and sends the work to the open item it names or to a new Tech Story or Bug; `/sdd bug <id>`, `/sdd spec <id>`, `/sdd sync [<id>|all]`, `/sdd impact <id>` (or `/sdd impact all` for the whole spec, after a token-cost warning), `/sdd status <id>` reports where an item stands (so work started in one chat can resume in another), `/sdd harness <create|onboard|audit|maintain>` sets up and audits the Claude Code harness (CLAUDE.md, allowlists, hooks) of a repo or workspace, `/sdd done <id>` cleans up, `/sdd abandon <id>` stops an item, and `/sdd <id> feedback <stage>: <text>` (or the sdd view''s message "sdd feedback for <id>, stage <stage>: <text>") sends an item back to a stage with the user''s feedback, the view''s "sdd answer for <id>, stage <stage>: …" is the user''s answer to a gate question, and the view''s "sdd approve for <id>, stage <stage>" is the user''s go-ahead at a spec flow stop — each refuses and explains when the item''s state does not allow it. Use whenever the user types /sdd or asks to "sdd" a work item.'
 ---
 
 # /sdd — one entry point for every sdd workflow
 
 | Command | Skill it runs | What happens |
 | --- | --- | --- |
-| `/sdd:sdd` (no arguments) / `/sdd help` | this skill | The one help page: first-time walk-through and every command — no checks, no changes |
+| `/sdd:sdd` (no arguments) / `/sdd:help` / `/sdd help` | this skill | The one help page: first-time walk-through and every command — no checks, no changes |
 | `/sdd init` | this skill | Check every requirement; fix each missing one only after the user says yes |
 | `/sdd next <epic or feature id> [version]` | `sdd:next` | Which item to take next under the dev's epic or feature: free items with their version, blocked ones judged, ranked by dev priority — the user picks |
 | `/sdd <id>` | decided by type, see below | |
@@ -28,9 +28,9 @@ description: 'Entry point for the spec-driven development workflows on Azure Dev
 
 Scripts are in `${CLAUDE_PLUGIN_ROOT}/scripts/`; `${CLAUDE_PLUGIN_ROOT}/skills/workspace/SKILL.md` documents them.
 
-## `/sdd:sdd` and `/sdd help` — the help page
+## `/sdd:sdd`, `/sdd:help` and `/sdd help` — the help page
 
-`/sdd:sdd` with nothing after it, and `/sdd help`, do the same: they send **one page** that holds the
+`/sdd:sdd` with nothing after it, `/sdd:help` (its own small skill) and `/sdd help` all do the same: they send **one page** that holds the
 first-time walk-through (init, sync, impact, a first bug, a first spec item) and every command. Never
 send a second file or tell the user to run another command for more help.
 
