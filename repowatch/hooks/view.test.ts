@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { RwGraph, RwPlan, RwRepo, RwResult, RwSummary, RwSyncFix, RwSyncState, RwWorktree, WorktreeClass } from '../types'
-import { parseHistoryArgs, commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory, actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows, normPath, parseWorktreeArgs } from './view/model'
+import { parseHistoryArgs, commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory, actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows, normPath, parseWorktreeArgs, agoShort, wtCounts, wtFacts, wtWord, clipboardArgv } from './view/model'
 
 const repo = (name: string, flags: string[], extra: Partial<RwRepo> = {}): RwRepo => ({ name, path: `/ws/${name}`, scannedAt: 0, flags, ...extra })
 
@@ -234,4 +234,38 @@ test('/repowatch history reads words typed by hand or the JSON another plugin se
   expect(parseHistoryArgs(JSON.stringify({ repo: 'my app', refs: ['a', 'b'], title: 'T' }))).toEqual({ repo: 'my app', refs: ['a', 'b'], title: 'T' })
   for (const bad of ['', 'app', '{', '{"repo":"a"}', '{"repo":"a","refs":[]}', '{"repo":"a","refs":["a","b","c"]}', 'app --all', '{"repo":"a","refs":["--exec=x"]}', '{"repo":1,"refs":["a"]}'])
     expect(parseHistoryArgs(bad)).toBe(null)
+})
+
+const wtr = (cls: WorktreeClass, extra: Partial<RwWorktree> = {}) => ({ repo: 'app', wt: { path: `/w/${cls}`, branch: `b/${cls}`, class: cls, reasons: [], ...extra } as RwWorktree })
+
+test('a list row keeps its age to a few characters', () => {
+  expect(agoShort(null, 1000)).toBe('-')
+  expect(agoShort(990, 1000)).toBe('now')
+  expect(agoShort(1000 - 600, 1000)).toBe('10m')
+  expect(agoShort(1000 - 3 * 3600, 1000)).toBe('3h')
+  expect(agoShort(1000 - 9 * 86400, 1000)).toBe('9d')
+})
+
+test('worktree counts split by what to do, and a conflict counts apart', () => {
+  const n = wtCounts([wtr('safe'), wtr('safe'), wtr('review'), wtr('keep'), wtr('prune'),
+    wtr('ok', { forecast: { state: 'conflict', base: 'origin/main', files: ['a'] } as RwWorktree['forecast'] }), wtr('ok')])
+  expect(n).toEqual({ safe: 2, review: 2, conflict: 1, broken: 1, ok: 2 })
+})
+
+test('a row word is short, and a conflict adds a warning sign', () => {
+  expect(wtWord(wtr('safe').wt)).toBe('safe')
+  expect(wtWord(wtr('ok').wt)).toBe('in use')
+  expect(wtWord(wtr('prune').wt)).toBe('broken')
+  expect(wtWord(wtr('ok', { forecast: { state: 'conflict', base: 'm', files: [] } as RwWorktree['forecast'] }).wt)).toBe('in use ⚠')
+})
+
+test('the facts of an open row: why, last commit, base', () => {
+  const w = wtr('review', { reasons: ['2 uncommitted'], lastCommit: 1000 - 86400 * 3, baseRef: 'origin/main', behindBase: 3, aheadBase: 1 }).wt
+  expect(wtFacts(w, 1000)).toEqual(['2 uncommitted', 'last commit 3d ago', '3 behind origin/main, 1 ahead'])
+  expect(wtFacts(wtr('ok', { missing: true }).wt, 1000)).toEqual(['in use'])
+})
+
+test('the copy command quotes a path for Windows and for the others', () => {
+  expect(clipboardArgv('C:/w/a b')).toEqual(['powershell', '-NoProfile', '-Command', "Set-Clipboard -Value 'C:\\w\\a b'"])
+  expect(clipboardArgv("/w/it's")[2]).toContain("printf %s '/w/it'\\''s'")
 })

@@ -79,6 +79,16 @@ export function branchText(r: RwRepo): string {
   return r.ahead || r.behind ? `${where} +${r.ahead ?? 0}/-${r.behind ?? 0}` : where
 }
 
+/** The age as a few characters for a list row: `now`, `5m`, `3h`, `9d`; `-` when unknown. */
+export function agoShort(epochSeconds: number | null | undefined, nowSeconds: number): string {
+  if (!epochSeconds) return '-'
+  const d = Math.max(0, nowSeconds - epochSeconds)
+  if (d < 90) return 'now'
+  if (d < 3600 * 1.5) return `${Math.round(d / 60)}m`
+  if (d < 86400 * 1.5) return `${Math.round(d / 3600)}h`
+  return `${Math.round(d / 86400)}d`
+}
+
 export function page<T>(rows: T[], offset: number, size: number): { rows: T[]; from: number; to: number; total: number } {
   const total = rows.length
   const from = Math.min(Math.max(0, offset), Math.max(0, total - 1))
@@ -107,6 +117,43 @@ export function worktreeRows(state: RwState | null, hideInUse: boolean, focus: s
     .filter(x => want || !hideInUse || x.wt.class !== 'ok' || x.wt.forecast?.state === 'conflict')  // in use, but its merge will conflict
     .sort((a, b) => CLASS_ORDER.indexOf(a.wt.class) - CLASS_ORDER.indexOf(b.wt.class)
       || a.repo.localeCompare(b.repo) || (a.wt.branch ?? '').localeCompare(b.wt.branch ?? ''))
+}
+
+/** Worktrees by what to do with them; a conflict counts apart (it can sit on an in-use one). */
+export function wtCounts(rows: WtRow[]): { safe: number; review: number; conflict: number; broken: number; ok: number } {
+  const n = { safe: 0, review: 0, conflict: 0, broken: 0, ok: 0 }
+  for (const { wt } of rows) {
+    if (wt.class === 'safe') n.safe++
+    else if (wt.class === 'review' || wt.class === 'keep') n.review++
+    else if (wt.class === 'prune') n.broken++
+    else n.ok++
+    if (wt.forecast?.state === 'conflict') n.conflict++
+  }
+  return n
+}
+
+/** The word at the end of a list row; the colour carries the rest. A merge that would conflict adds a warning sign. */
+export function wtWord(w: RwWorktree): string {
+  const word = { safe: 'safe', prune: 'broken', review: 'review', keep: 'keep', ok: 'in use' }[w.class]
+  return w.forecast?.state === 'conflict' ? `${word} ⚠` : word
+}
+
+/** The facts a row shows when it is open, as short pieces. */
+export function wtFacts(w: RwWorktree, nowSeconds: number): string[] {
+  const out = [w.reasons.join('; ') || 'in use']
+  if (!w.missing) out.push(`last commit ${ago(w.lastCommit, nowSeconds)}`)
+  const base = baseText(w)
+  if (base) out.push(base)
+  return out
+}
+
+/** The argv that copies a path to the clipboard (PowerShell on Windows, else pbcopy, wl-copy or xclip). */
+export function clipboardArgv(path: string): string[] {
+  if (/^[A-Za-z]:[\\/]/.test(path)) {
+    const native = path.replace(/\//g, '\\')
+    return ['powershell', '-NoProfile', '-Command', `Set-Clipboard -Value '${native.replace(/'/g, "''")}'`]
+  }
+  return ['sh', '-c', `printf %s '${path.replace(/'/g, "'\\''")}' | (pbcopy 2>/dev/null || wl-copy 2>/dev/null || xclip -selection clipboard)`]
 }
 
 /** A path as one comparable string: forward slashes, no trailing slash, Windows drive letters in lower case. */

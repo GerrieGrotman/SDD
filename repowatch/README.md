@@ -7,6 +7,7 @@ installs with sdd.
   uncommitted files, stashes, worktrees, branches whose upstream is gone. Click a row for details.
 - **Status line**: `repos 40 · 2 behind · 1 dirty · 1 old worktree`; clear when all is well.
 - **Worktrees view** (`/repowatch worktrees`): every worktree of every repo, each classed from the evidence:
+  The list is one line per worktree: a colour dot, `repo · branch`, a state word and its age, under coloured counts. Press a line to open its facts and buttons (📋 copy path, History, Remove…, Ask Claude to merge); one line is open at a time.
 
   | Class | Means | Button |
   | --- | --- | --- |
