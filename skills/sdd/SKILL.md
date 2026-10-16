@@ -7,7 +7,7 @@ description: 'Entry point for the spec-driven development workflows on Azure Dev
 
 | Command | Skill it runs | What happens |
 | --- | --- | --- |
-| `/sdd help` | this skill | The tour guide below — no checks, no changes |
+| `/sdd help` / `/sdd help start` | this skill | The quick guide, or the first-time walk-through — no checks, no changes |
 | `/sdd init` | this skill | Check every requirement; fix each missing one only after the user says yes |
 | `/sdd next <epic or feature id> [version]` | `sdd:next` | Which item to take next under the dev's epic or feature: free items with their version, blocked ones judged, ranked by dev priority — the user picks |
 | `/sdd <id>` | decided by type, see below | |
@@ -30,13 +30,16 @@ Scripts are in `${CLAUDE_PLUGIN_ROOT}/scripts/`; `${CLAUDE_PLUGIN_ROOT}/skills/w
 
 ## `/sdd help` — the tour guide
 
-The guide is `HELP.md` next to this file. Change nothing and run nothing else.
+The reference is `HELP.md` next to this file; the step-by-step walk-through for a new user (init, sync,
+impact, a first bug, a first spec item) is `GETTING-STARTED.md`. Change nothing and run nothing else.
+`/sdd help start` (or "getting started", "first time") sends `GETTING-STARTED.md`; a plain `/sdd help`
+sends `HELP.md`, which points to it.
 
 It must work on a phone too (the user may follow the session remotely), so:
 
-1. **`SendUserFile` available** (desktop app, remote or mobile session): send `HELP.md` with
+1. **`SendUserFile` available** (desktop app, remote or mobile session): send the guide with
    `display: "render"` and `status: "normal"`. That reaches the phone. Do not paste the guide.
-2. **Not available** (plain terminal): read `HELP.md` and paste its content as your reply,
+2. **Not available** (plain terminal): read the guide and paste its content as your reply,
    unchanged. It is written as short lists with no wide tables, so it renders on any screen.
 3. Either way, add one line with this workspace's values from `.claude/sdd.json` when it exists:
    the spec folder and the ADO projects. A local path link is optional extra — never the only

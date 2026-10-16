@@ -40,6 +40,7 @@ make the decisions.
 
 **Help**
 - `/sdd help` — this page.
+- `/sdd help start` — a step-by-step walk-through for a new user: init, sync, impact, a first bug, a first spec item.
 
 **Update sdd**
 Get the newest version from a chat. Type each line with a `!` in front, so it runs as a shell command:
@@ -69,6 +70,8 @@ Spec folder: `specRoot` in `.claude/sdd.json`, then `**/<id>-<TYPE>-<slug>/` (TY
 - Never edit in the main checkout. Only in `src/<Repo>/`.
 
 ## A typical first session
+
+The full walk-through is `/sdd help start`. In short:
 
 1. `/sdd init` — say yes to the fixes you want.
 2. `/sdd sync <your epic id>` — confirm when it says how many folders it writes.
