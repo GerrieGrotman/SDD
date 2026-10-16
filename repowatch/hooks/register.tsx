@@ -10,7 +10,7 @@ import {
   actionArgs, ago, baseText, branchText, bulkRows, classLabel, conflictToast, dedupePrune, flagLabel, forecastText, isUrgent,
   fixGlyph, fixLine, hopKey, hopLine, hopRows, mergeAskText, page, planArgs, planGist, resolveAskText, resultLine, sddRemoveText,
   statusText, stepText, syncArgs, undoArgs, undoLabel, visibleRepos, worktreeRows,
-  commitMeta, graphArgs, agoShort, clipboardArgv, wtCounts, wtFacts, wtWord, parseHistoryArgs, parseWorktreeArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory,
+  commitMeta, graphArgs, agoShort, repoCounts, repoTone, repoWord, clipboardArgv, wtCounts, wtFacts, wtWord, parseHistoryArgs, parseWorktreeArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory,
 } from './view/model'
 import type { GraphTarget } from './view/model'
 
@@ -598,52 +598,72 @@ export const register: Register = on => {
     // ---- the repos
     const rows = visibleRepos(s, only)
     const p = page(rows, from, size)
+    const rcn = repoCounts(s)
 
     return (
       <Box flexDirection="column">
         {header}
         {sum && (
-          <Text dimColor>
-            {sum.repos} repos · {sum.attention} need attention · {sum.worktrees} worktrees · scanned {ago(s.generated, now)}
-          </Text>
+          <Box flexDirection="column">
+            <Box gap={2}>
+              {rcn.urgent > 0 && <Text color={COLORS.urgent}>● {rcn.urgent} conflict</Text>}
+              {rcn.dirty > 0 && <Text color={COLORS.warn}>● {rcn.dirty} uncommitted</Text>}
+              {rcn.behind > 0 && <Text color={LANE_COLORS[0]}>● {rcn.behind} behind</Text>}
+              {rcn.other > 0 && <Text color={COLORS.warn}>● {rcn.other} other</Text>}
+              <Text color={COLORS.dim}>● {rcn.clean} clean</Text>
+            </Box>
+            <Text dimColor>{sum.repos} repos · {sum.attention} need attention · {sum.worktrees} worktrees · scanned {ago(s.generated, now)}</Text>
+          </Box>
         )}
         {confirmPanel}
         {p.rows.length === 0 && <Text color={COLORS.ok}>{only ? 'Nothing needs attention.' : 'No repos.'}</Text>}
         {p.rows.map(r => {
           const isOpen = opened === r.name
+          const tone = { urgent: COLORS.urgent, warn: COLORS.warn, dim: COLORS.dim }[repoTone(r)]
           return (
             <Box key={r.name} flexDirection="column">
-              <Box>
-                <Button key={`row-${r.name}`} label={`${isOpen ? '▾' : '▸'} ${r.name}`}
-                  onPress={() => $.state.set(open, isOpen ? null : r.name)} />
-                <Text dimColor>  {branchText(r)}  </Text>
-                {r.flags.map(f => (
-                  <Text key={f} color={isUrgent(f) ? COLORS.urgent : f === 'stale-fetch' ? COLORS.dim : COLORS.warn}>{flagLabel(f)}  </Text>
-                ))}
+              <Box gap={1} alignItems="center">
+                <Text color={tone}>●</Text>
+                <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                  <Button key={`row-${r.name}`} label={`${r.name} · ${branchText(r)}`}
+                    onPress={() => $.state.set(open, isOpen ? null : r.name)} />
+                </Box>
+                <Text color={tone}>{repoWord(r)}</Text>
+                <Text dimColor>{agoShort(r.lastFetch, now).padStart(4)}</Text>
               </Box>
               {isOpen && (
-                <Box flexDirection="column" marginLeft={3}>
-                  <Box>
-                    <Text dimColor>{r.path}  </Text>
-                    {repoHistory(r) && <Button key={`hist-${r.name}`} label="History" onPress={openGraph(repoHistory(r))} />}
+                <Box flexDirection="row" alignItems="stretch">
+                  <Box key={`rrail-${r.name}`} width={2} flexShrink={0} flexDirection="row">
+                    <Box width="25%" flexShrink={0} />
+                    <Box width="20%" flexShrink={0} backgroundColor={tone} />
                   </Box>
-                  <Text dimColor>
-                    default {r.defaultBranch ?? '?'} · fetched {ago(r.lastFetch, now)} · {r.dirty ?? 0} uncommitted · {r.stashes ?? 0} stashes · {r.branches ?? 0} branches
-                  </Text>
-                  {r.error && <Text color={COLORS.urgent}>{r.error}</Text>}
-                  {r.fetchError && <Text color={COLORS.warn}>fetch: {r.fetchError}</Text>}
-                  {forecastText(r.forecast) && <Text color={COLORS.urgent}>diverged from {r.upstream}: {forecastText(r.forecast)}</Text>}
-                  {(r.goneBranches ?? []).map(b => (
-                    <Box key={`gone-${b}`}>
-                      <Text dimColor>upstream gone: {b}  </Text>
-                      {!pending && <Button key={`del-${b}`} label="Delete…" onPress={propose([['delete-branch', '--repo', r.name, '--branch', b]])} />}
-                    </Box>
-                  ))}
-                  {(r.worktrees ?? []).map(w => (
-                    <Text key={w.path} dimColor>
-                      worktree {w.branch ?? '(detached)'} · {classLabel(w.class)} · {w.dirty ? `${w.dirty} uncommitted` : 'clean'} · last commit {ago(w.lastCommit, now)}{w.missing ? ' · folder missing' : ''}
+                  <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} marginBottom={1}>
+                    <Text dimColor wrap="wrap">{r.path}</Text>
+                    <Text dimColor wrap="wrap">
+                      default {r.defaultBranch ?? '?'} · fetched {ago(r.lastFetch, now)} · {r.dirty ?? 0} uncommitted · {r.stashes ?? 0} stashes · {r.branches ?? 0} branches
                     </Text>
-                  ))}
+                    <Text wrap="wrap">
+                      {r.flags.map(f => <Text key={f} color={isUrgent(f) ? COLORS.urgent : f === 'stale-fetch' ? COLORS.dim : COLORS.warn}>{flagLabel(f)}  </Text>)}
+                    </Text>
+                    {r.error && <Text color={COLORS.urgent}>{r.error}</Text>}
+                    {r.fetchError && <Text color={COLORS.warn}>fetch: {r.fetchError}</Text>}
+                    {forecastText(r.forecast) && <Text color={COLORS.urgent} wrap="wrap">diverged from {r.upstream}: {forecastText(r.forecast)}</Text>}
+                    {(r.goneBranches ?? []).map(b => (
+                      <Box key={`gone-${b}`}>
+                        <Text dimColor>upstream gone: {b}  </Text>
+                        {!pending && <Button key={`del-${b}`} label="Delete…" onPress={propose([['delete-branch', '--repo', r.name, '--branch', b]])} />}
+                      </Box>
+                    ))}
+                    {(r.worktrees ?? []).map(w => (
+                      <Text key={w.path} dimColor wrap="wrap">
+                        worktree {w.branch ?? '(detached)'} · {classLabel(w.class)} · {w.dirty ? `${w.dirty} uncommitted` : 'clean'} · last commit {ago(w.lastCommit, now)}{w.missing ? ' · folder missing' : ''}
+                      </Text>
+                    ))}
+                    <Box gap={1} flexWrap="wrap">
+                      <Button key={`copy-${r.name}`} label="📋" onPress={() => copyPath($, r.path)} />
+                      {repoHistory(r) && <Button key={`hist-${r.name}`} label="History" onPress={openGraph(repoHistory(r))} />}
+                    </Box>
+                  </Box>
                 </Box>
               )}
             </Box>

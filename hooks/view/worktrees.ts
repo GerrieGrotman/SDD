@@ -112,3 +112,43 @@ export function historyArgs(l: WtLine): string {
   const refs = historyRefs(l)
   return 'history ' + JSON.stringify({ repo: l.repoName, refs, title: `${l.item.id} · ${l.repoName} · ${refs[0]} against ${refs[1]}` })
 }
+
+/** The colour class of a worktree line: red for a conflict, green to clean up, amber to review or uncommitted, grey otherwise. */
+export function lineTone(l: WtLine): 'conflict' | 'cleanup' | 'review' | 'ok' {
+  const w = l.live
+  if (w?.forecast?.state === 'conflict') return 'conflict'
+  if (w && (w.class === 'safe')) return 'cleanup'
+  if (w && (w.class === 'review' || w.class === 'prune' || w.dirty)) return 'review'
+  return 'ok'
+}
+
+/** The word at the end of a list row: short, the colour carries the rest. */
+export function lineWord(l: WtLine): string {
+  const w = l.live
+  if (!w) return 'not scanned'
+  if (w.forecast?.state === 'conflict') return 'will conflict'
+  if (w.class === 'safe') return 'to clean up'
+  if (w.class === 'prune') return 'broken'
+  if (w.class === 'review') return 'review'
+  return w.dirty ? `${w.dirty} uncommitted` : 'clean'
+}
+
+/** The age of the last commit in a few characters: `now`, `5m`, `3h`, `9d`; `-` when unknown. */
+export function ageShort(epochSeconds: number | undefined, nowSeconds: number): string {
+  if (!epochSeconds) return '-'
+  const d = Math.max(0, nowSeconds - epochSeconds)
+  if (d < 90) return 'now'
+  if (d < 3600 * 1.5) return `${Math.round(d / 60)}m`
+  if (d < 86400 * 1.5) return `${Math.round(d / 3600)}h`
+  return `${Math.round(d / 86400)}d`
+}
+
+/** The key of a line in the page's open-row state. */
+export function lineKey(l: WtLine): string {
+  return `${l.item.id}:${l.repo}`
+}
+
+/** The folder of a line on disk: the work item's folder and the repo's path in it. */
+export function linePath(l: WtLine): string {
+  return `${l.item.folder}/${l.item.repos?.[l.repo]?.path ?? ''}`.replace(/\/+$/, '')
+}

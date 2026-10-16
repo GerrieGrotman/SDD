@@ -134,6 +134,22 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await ui.find({ key: 'row-web' })).toBe(undefined) // clean, hidden by the attention filter
   })
 
+  test(`${surface}: a repo is one line, and a press opens its details and buttons under it`, async ($: any, on: any) => {
+    const calls = fakeScript(on)
+    const ui = await mountPane($, 'repos', calls)
+    if (!ui) return
+    const t = await texts(ui)
+    expect(t).toContain('● 1 conflict')
+    expect(t).toContain('will conflict')
+    expect(await ui.find({ key: 'copy-app' })).toBe(undefined)
+    expect(await ui.find({ key: 'del-feat/gone' })).toBe(undefined)
+    await ui.press({ key: 'row-app' })
+    expect(await ui.find({ key: 'copy-app' })).toBeTruthy()
+    expect(await ui.find({ key: 'del-feat/gone' })).toBeTruthy()
+    await ui.press({ key: 'row-app' })
+    expect(await ui.find({ key: 'copy-app' })).toBe(undefined)
+  })
+
   test(`${surface}: a clean-up shows its plan and runs nothing until Confirm`, async ($: any, on: any) => {
     const calls = fakeScript(on)
     const ui = await mountPane($, 'worktrees', calls)

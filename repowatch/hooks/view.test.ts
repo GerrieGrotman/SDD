@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { RwGraph, RwPlan, RwRepo, RwResult, RwSummary, RwSyncFix, RwSyncState, RwWorktree, WorktreeClass } from '../types'
-import { parseHistoryArgs, commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory, actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows, normPath, parseWorktreeArgs, agoShort, wtCounts, wtFacts, wtWord, clipboardArgv } from './view/model'
+import { parseHistoryArgs, commitMeta, graphArgs, graphSegments, graphWidth, hopHistory, refNames, repoHistory, sideLegend, worktreeHistory, actionArgs, ago, baseText, resolveAskText, resultLine, syncArgs, fixGlyph, fixLine, hopKey, hopLine, hopRows, branchText, conflictToast, forecastText, mergeAskText, newConflicts, undoLabel, bulkRows, dedupePrune, needsAttention, page, planArgs, planGist, sddRemoveText, sortRepos, statusText, stepText, visibleRepos, worktreeRows, normPath, parseWorktreeArgs, agoShort, repoCounts, repoTone, repoWord, wtCounts, wtFacts, wtWord, clipboardArgv } from './view/model'
 
 const repo = (name: string, flags: string[], extra: Partial<RwRepo> = {}): RwRepo => ({ name, path: `/ws/${name}`, scannedAt: 0, flags, ...extra })
 
@@ -268,4 +268,13 @@ test('the facts of an open row: why, last commit, base', () => {
 test('the copy command quotes a path for Windows and for the others', () => {
   expect(clipboardArgv('C:/w/a b')).toEqual(['powershell', '-NoProfile', '-Command', "Set-Clipboard -Value 'C:\\w\\a b'"])
   expect(clipboardArgv("/w/it's")[2]).toContain("printf %s '/w/it'\\''s'")
+})
+
+test('a repo row: colour from its worst flag, its first flag as the word, and counts by need', () => {
+  expect([repoTone(repo('a', ['will-conflict', 'dirty'])), repoWord(repo('a', ['dirty', 'will-conflict']))]).toEqual(['urgent', 'will conflict +1'])
+  expect([repoTone(repo('b', ['dirty'])), repoWord(repo('b', ['dirty']))]).toEqual(['warn', 'uncommitted'])
+  expect([repoTone(repo('c', [])), repoWord(repo('c', []))]).toEqual(['dim', 'clean'])
+  expect([repoTone(repo('d', ['stale-fetch'])), repoWord(repo('d', ['stale-fetch']))]).toEqual(['dim', 'not fetched lately'])   // noise alone is no alarm
+  const state = { repos: { a: repo('a', ['conflicted']), b: repo('b', ['dirty']), c: repo('c', ['behind']), d: repo('d', ['unpushed']), e: repo('e', []) } } as never
+  expect(repoCounts(state)).toEqual({ urgent: 1, dirty: 1, behind: 1, other: 1, clean: 1 })
 })
