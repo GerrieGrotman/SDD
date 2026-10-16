@@ -9,7 +9,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
 import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, railBarColor, costBar, clipboardArgv, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
-import { agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, sortLines } from './view/worktrees'
+import { ageShort, agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, lineKey, linePath, lineTone, lineWord, sortLines } from './view/worktrees'
 
 const PANE = 'sdd-view'
 const snap = { plugin: 'sdd', key: 'snap' } as const
@@ -233,6 +233,7 @@ const WT_REFRESH_MS = 30_000
 const live = { plugin: 'sdd', key: 'wtLive' } as const
 const liveError = { plugin: 'sdd', key: 'wtError' } as const
 const offset = { plugin: 'sdd', key: 'wtOffset' } as const
+const wtLineState = { plugin: 'sdd', key: 'wtLine' } as const
 let wtOpen = false
 let wtTimer = false
 
@@ -389,6 +390,7 @@ export const register: Register = on => {
     const liveState = (await $.state.get(live)).value ?? null
     const why = (await $.state.get(liveError)).value ?? null
     const from = (await $.state.get(offset)).value ?? 0
+    const openLine = (await $.state.get(wtLineState)).value ?? null
     const now = Math.floor(Date.now() / 1000)
 
     const reload = async () => {
@@ -442,34 +444,60 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {header}
-        <Text dimColor>
-          {c.items} work items · {c.worktrees} worktrees · {c.cleanup} to clean up · {c.conflicts} will conflict · {c.dirty} with uncommitted files
-          {liveState ? ` · scanned ${agoText(liveState.generated, now).replace('last commit ', '')}` : ''}
-        </Text>
+        <Box gap={2}>
+          <Text color={WT_COLORS.dim}>● {c.items} work items</Text>
+          {c.cleanup > 0 && <Text color={WT_COLORS.ok}>● {c.cleanup} to clean up</Text>}
+          {c.conflicts > 0 && <Text color={WT_COLORS.urgent}>● {c.conflicts} will conflict</Text>}
+          {c.dirty > 0 && <Text color={WT_COLORS.warn}>● {c.dirty} with uncommitted files</Text>}
+          <Text dimColor>{c.worktrees} worktrees{liveState ? ` · scanned ${agoText(liveState.generated, now).replace('last commit ', '')}` : ''}</Text>
+        </Box>
         {blocks.length === 0 && <Text dimColor>No work item has a worktree folder.</Text>}
         {shown.map(b => {
           const flow = s.flows[b.item.flow]
           return (
-            <Box key={`item-${b.item.id}`} flexDirection="column">
-              <Box>
+            <Box key={`item-${b.item.id}`} flexDirection="column" marginTop={1}>
+              <Box gap={1} alignItems="center">
                 <Button key={`open-${b.item.id}`} label={`${b.item.id}`} onPress={openItem(b.item.id)} />
-                <Text>  {b.item.title.slice(0, 60)}  </Text>
+                <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                  <Text wrap="truncate-end">{b.item.title}</Text>
+                </Box>
                 <Text color={b.item.progress?.status === 'waiting' ? WT_COLORS.warn : WT_COLORS.dim}>
                   {phaseLabel(flow, b.item) || 'not started'} · {statusWord(b.item)}
                 </Text>
               </Box>
               {b.lines.map(l => {
+                const key = lineKey(l)
+                const isOpen = openLine === key
+                const tone = { conflict: WT_COLORS.urgent, cleanup: WT_COLORS.ok, review: WT_COLORS.warn, ok: WT_COLORS.dim }[lineTone(l)]
                 const note = cleanupNote(l)
                 const clash = conflictNote(l)
                 return (
-                  <Box key={`${l.item.id}-${l.repo}`} flexDirection="column" marginLeft={4}>
-                    <Box>
-                      <Text>{l.repo} · {l.branch}  </Text>
-                      <Button key={`hist-${l.item.id}-${l.repo}`} label="History" onPress={showHistory(historyArgs(l))} />
+                  <Box key={`${l.item.id}-${l.repo}`} flexDirection="column" marginLeft={2}>
+                    <Box gap={1} alignItems="center">
+                      <Text color={tone}>●</Text>
+                      <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                        <Button key={`wt-${key}`} label={`${l.repo} · ${l.branch}`} onPress={() => $.state.set(wtLineState, isOpen ? null : key)} />
+                      </Box>
+                      <Text color={tone}>{lineWord(l)}</Text>
+                      <Text dimColor>{ageShort(l.live?.lastCommit, now).padStart(4)}</Text>
                     </Box>
-                    <Text dimColor>  {lineFacts(l, now).join(' · ')}</Text>
-                    {note && <Text color={WT_COLORS.warn}>  {note}</Text>}
-                    {clash && <Text color={WT_COLORS.urgent}>  {clash}</Text>}
+                    {isOpen && (
+                      <Box flexDirection="row" alignItems="stretch">
+                        <Box key={`wtrail-${key}`} width={2} flexShrink={0} flexDirection="row">
+                          <Box width="25%" flexShrink={0} />
+                          <Box width="20%" flexShrink={0} backgroundColor={tone} />
+                        </Box>
+                        <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0} marginBottom={1}>
+                          <Text dimColor wrap="wrap">{lineFacts(l, now).join(' · ')}</Text>
+                          {note && <Text color={WT_COLORS.warn} wrap="wrap">{note}</Text>}
+                          {clash && <Text color={WT_COLORS.urgent} wrap="wrap">{clash}</Text>}
+                          <Box gap={1} flexWrap="wrap">
+                            <Button key={`copy-${key}`} label="📋" onPress={() => copyPath($, linePath(l))} />
+                            <Button key={`hist-${l.item.id}-${l.repo}`} label="History" onPress={showHistory(historyArgs(l))} />
+                          </Box>
+                        </Box>
+                      </Box>
+                    )}
                   </Box>
                 )
               })}

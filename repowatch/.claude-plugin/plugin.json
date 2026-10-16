@@ -1,6 +1,6 @@
 {
   "name": "repowatch",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Keep track of many git repos and their worktrees: branch, ahead/behind, dirty files, stale worktrees, in a pane and the status line.",
   "types": "./types/index.d.ts"
 }

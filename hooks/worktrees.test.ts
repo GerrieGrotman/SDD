@@ -26,10 +26,11 @@ const ok = (value: unknown) => ({ value })
 
 function engine(on: any, liveFile = true) {
   const reads: string[] = []
+  const runs: string[][] = []
   const opened: string[] = []
   const commands: Array<{ command: string; args: string }> = []
   let filled = ''
-  on('process.run', (() => ok({ exitCode: 0, stdout: JSON.stringify(SNAP), stderr: '', isStdoutTruncated: false, isStderrTruncated: false })) as never)
+  on('process.run', ((_$: unknown, e: { argv: string[] }) => { runs.push(e.argv); return ok({ exitCode: 0, stdout: JSON.stringify(SNAP), stderr: '', isStdoutTruncated: false, isStderrTruncated: false }) }) as never)
   on('fs.read', ((_$: unknown, e: { path: string }) => {
     reads.push(e.path)
     if (!liveFile) throw new Error('ENOENT')
@@ -44,7 +45,7 @@ function engine(on: any, liveFile = true) {
   on('ui.toast', (() => ok(undefined)) as never)
   on('command.run', ((_$: unknown, e: { command: string; args: string }) => { commands.push({ command: e.command, args: e.args }); return { text: 'History opened.' } }) as never)
   on('prompt.fill', ((_$: unknown, e: { text: string }) => { filled = e.text; return { isFilled: true } }) as never)
-  return { reads, opened, commands, filled: () => filled }
+  return { reads, runs, opened, commands, filled: () => filled }
 }
 
 const texts = async (ui: { findAll: (q: { type: string }) => Promise<Array<{ text?: string }>> }) =>
@@ -63,9 +64,13 @@ for (const surface of ['desktop'] as const) {
     const ui = await mountPage($)
     await ui.press({ key: 'reload' })
     expect(world.reads).toContain('/ws/.claude/repowatch/state.json')
-    const t = await texts(ui)
+    let t = await texts(ui)
     expect(t).toContain('1 work items')
     expect(t).toContain('Fix the thing')
+    expect(t).toContain('will conflict')            // the row's word
+    expect(t).not.toContain('from team/0.0.1')      // the facts wait until the row is opened
+    await ui.press({ key: 'wt-1:Repo' })
+    t = await texts(ui)
     expect(t).toContain('from team/0.0.1')
     expect(t).toContain('PR 55')
     expect(t).toContain('4 behind origin/team/0.0.1')
@@ -79,7 +84,30 @@ for (const surface of ['desktop'] as const) {
     await ui.press({ key: 'reload' })
     const t = await texts(ui)
     expect(t).toContain('repowatch has not scanned this workspace yet')
-    expect(t).toContain('repowatch has not seen it')
+    expect(t).toContain('not scanned')
+    await ui.press({ key: 'wt-1:Repo' })
+    expect(await texts(ui)).toContain('repowatch has not seen it')
+  })
+
+  test(`${surface}: a press opens a row and a second press closes it`, async ($: any, on: any) => {
+    engine(on)
+    const ui = await mountPage($)
+    await ui.press({ key: 'reload' })
+    expect(await ui.find({ key: 'hist-1-Repo' })).toBe(undefined)
+    await ui.press({ key: 'wt-1:Repo' })
+    expect(await ui.find({ key: 'hist-1-Repo' })).toBeTruthy()
+    await ui.press({ key: 'wt-1:Repo' })
+    expect(await ui.find({ key: 'hist-1-Repo' })).toBe(undefined)
+  })
+
+  test(`${surface}: the copy button puts the worktree's folder on the clipboard`, async ($: any, on: any) => {
+    const world = engine(on)
+    const ui = await mountPage($)
+    await ui.press({ key: 'reload' })
+    await ui.press({ key: 'wt-1:Repo' })
+    await ui.press({ key: 'copy-1:Repo' })
+    const run = world.runs.find(a => /pbcopy|Set-Clipboard/.test(a.join(' ')))
+    expect(run?.[2]).toContain('/ws/.claude/worktrees/1-a/src/Repo')
   })
 
   test(`${surface}: the item button opens that item's sdd view, and the page only reads`, async ($: any, on: any) => {
@@ -95,6 +123,7 @@ for (const surface of ['desktop'] as const) {
     const world = engine(on)
     const ui = await mountPage($)
     await ui.press({ key: 'reload' })
+    await ui.press({ key: 'wt-1:Repo' })
     await ui.press({ key: 'hist-1-Repo' })
     expect(world.commands.length).toBe(1)
     expect(world.commands[0].command).toBe('repowatch')
