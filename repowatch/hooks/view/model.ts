@@ -49,6 +49,34 @@ export function isUrgent(flag: string): boolean {
   return FLAGS.find(f => f.flag === flag)?.urgent ?? false
 }
 
+/** The colour of a repo's list row: red for an urgent flag, amber for any other that needs a look, grey for clean. */
+export function repoTone(r: RwRepo): 'urgent' | 'warn' | 'dim' {
+  if (r.flags.some(isUrgent)) return 'urgent'
+  return needsAttention(r) ? 'warn' : 'dim'
+}
+
+/** The word at the end of a repo row: its first flag (the order of FLAGS), and how many more there are; `clean` for none. */
+export function repoWord(r: RwRepo): string {
+  const flags = [...r.flags].sort((a, b) => (RANK.get(a) ?? 50) - (RANK.get(b) ?? 50))
+  const real = flags.filter(f => f !== 'stale-fetch')
+  const shown = real.length ? real : flags
+  if (!shown.length) return 'clean'
+  return `${flagLabel(shown[0])}${shown.length > 1 ? ` +${shown.length - 1}` : ''}`
+}
+
+/** Repos by what they need, for the counts above the list. */
+export function repoCounts(state: RwState | null): { urgent: number; dirty: number; behind: number; other: number; clean: number } {
+  const n = { urgent: 0, dirty: 0, behind: 0, other: 0, clean: 0 }
+  for (const r of Object.values(state?.repos ?? {})) {
+    if (r.flags.some(isUrgent)) n.urgent++
+    else if (r.flags.includes('dirty')) n.dirty++
+    else if (r.flags.includes('behind')) n.behind++
+    else if (needsAttention(r)) n.other++
+    else n.clean++
+  }
+  return n
+}
+
 /** The status line: empty when everything is fine, so the line stays clear. */
 export function statusText(s: RwSummary | undefined, sync?: RwSyncState['summary']): string | undefined {
   if (!s || s.repos === 0) return undefined

@@ -157,6 +157,8 @@ declare module 'claude-code' {
       wtError: string | null
       /** First item of the Worktrees page shown. */
       wtOffset: number
+      /** The worktree line opened on the Worktrees page (`<item id>:<repo>`), or null. */
+      wtLine: string | null
     }
   }
 }

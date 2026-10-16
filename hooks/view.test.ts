@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import type { SddItem, SddSnapshot } from '../types'
 import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendHead, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, railSlice, stageWord, flowAlt, RAIL, railBarColor, clipboardArgv, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
-import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines } from './view/worktrees'
+import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines, lineTone, lineWord, ageShort, lineKey, linePath, type WtLine } from './view/worktrees'
 
 const SPEC = {
   label: 'Spec flow',
@@ -480,4 +480,27 @@ test('the icon lines: the same numbers, each kind led by its icon', () => {
   expect(spendHead(spend, 'Tok', true)).toBe('🔁 1 turn')
   expect(spendHead(spend, 'Missing', true)).toBe(null)
   expect(tokensLine(spendTokens(spend.Design), true)).toBe('📥 in 12k · 📤 out 3.4k · ⚡ cache read 1.2M · 💾 cache write 80k')
+})
+
+const wl = (live: Record<string, unknown> | null): WtLine => ({
+  item: { id: 7, folder: '/ws/f/7', repos: { R: { path: 'src/R', branch: 'b', base: 'main' } } } as never,
+  repo: 'R', branch: 'b', base: 'main', prId: null, live: live as never, repoName: 'R',
+})
+
+test('a worktree row: colour, word and age say it in a glance', () => {
+  expect([lineTone(wl(null)), lineWord(wl(null))]).toEqual(['ok', 'not scanned'])
+  expect([lineTone(wl({ class: 'ok', dirty: 0 })), lineWord(wl({ class: 'ok', dirty: 0 }))]).toEqual(['ok', 'clean'])
+  expect([lineTone(wl({ class: 'ok', dirty: 3 })), lineWord(wl({ class: 'ok', dirty: 3 }))]).toEqual(['review', '3 uncommitted'])
+  expect([lineTone(wl({ class: 'safe' })), lineWord(wl({ class: 'safe' }))]).toEqual(['cleanup', 'to clean up'])
+  expect(lineWord(wl({ class: 'prune' }))).toBe('broken')
+  const clash = wl({ class: 'safe', forecast: { state: 'conflict', base: 'm', files: [] } })
+  expect([lineTone(clash), lineWord(clash)]).toEqual(['conflict', 'will conflict'])   // a conflict outranks the clean-up
+  expect(ageShort(undefined, 1000)).toBe('-')
+  expect(ageShort(1000 - 2 * 86400, 1000)).toBe('2d')
+  expect(ageShort(1000 - 3 * 3600, 1000)).toBe('3h')
+})
+
+test('a worktree row has a key and a folder of its own', () => {
+  expect(lineKey(wl(null))).toBe('7:R')
+  expect(linePath(wl(null))).toBe('/ws/f/7/src/R')
 })
