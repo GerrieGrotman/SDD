@@ -344,7 +344,7 @@ export function gateChips(item: SddItem, stage: SddStage, derived: string[], pen
 // ---------------------------------------------------------------- the flow picture
 // The flow as one vertical picture for the apps that draw an SVG: a node per stage on a rail, with its state, cost,
 // last activity, latest note and gates on its row, and the picked stage outlined. The pane lays it out for the width it
-// has, so a resize re-draws it: wide gets cost bars and times, narrow keeps the essentials and shortens the text.
+// has, so a resize re-draws it: narrow keeps the essentials and shortens the text. Cost and times live in the opened stage's detail, not on its row.
 // It only shows. The stage picker under it, and the detail of the picked stage, are what a person presses.
 
 export type FlowPicture = { source: string; alt: string; width: number; height: number }
@@ -423,14 +423,6 @@ export function clipboardArgv(path: string): string[] {
     return ['powershell', '-NoProfile', '-Command', `Set-Clipboard -Value '${native.replace(/'/g, "''")}'`]
   }
   return ['sh', '-c', `printf %s '${path.replace(/'/g, "'\\''")}' | (pbcopy 2>/dev/null || wl-copy 2>/dev/null || xclip -selection clipboard)`]
-}
-
-/** The small bar that shows what a stage cost against the dearest stage. */
-export function costBar(input: { usd: number; max: number; mark: Mark; colors: SddColors }): FlowPicture {
-  const { usd, max, mark, colors } = input
-  const bw = max > 0 ? Math.max(3, Math.round((usd / max) * 64)) : 0
-  return { source: `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="6" viewBox="0 0 64 6"><rect width="64" height="6" rx="3" fill="${colors.dim}" opacity="0.25"/>`
-    + `<rect width="${bw}" height="6" rx="3" fill="${stageTone(mark, colors)}"/></svg>`, alt: moneyText(usd), width: 64, height: 6 }
 }
 
 /** The word after a stage's name: its state, and the open-question count. Done and next say nothing: the colour does. */
@@ -572,19 +564,31 @@ export function spendTokens(rows: SpendRow | SpendRow[] | Spend): Tokens {
     cacheRead: t.cacheRead + (r.cacheRead ?? 0), cacheWrite: t.cacheWrite + (r.cacheWrite ?? 0) }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
 }
 
-/** `in 12k · out 3.4k · cache read 1.2M · cache write 80k`: the kinds with tokens, in that order. Null when none. */
-export function tokensLine(t: Tokens): string | null {
-  const parts = ([['in', t.input], ['out', t.output], ['cache read', t.cacheRead], ['cache write', t.cacheWrite]] as const)
-    .filter(([, n]) => n > 0).map(([label, n]) => `${label} ${tokenText(n)}`)
+/** The icons of the cost lines: one for each kind of number, so a line reads without its label. */
+export const SPEND_ICON = { money: '💰', turns: '🔁', input: '📥', output: '📤', cacheRead: '⚡', cacheWrite: '💾', time: '🕒', context: '🧠', tokens: '🔢' }
+
+/** `in 12k · out 3.4k · cache read 1.2M · cache write 80k`: the kinds with tokens, in that order. Null when none.
+ *  With `icons`, each kind leads with its icon: `📥 in 12k · 📤 out 3.4k`. */
+export function tokensLine(t: Tokens, icons = false): string | null {
+  const parts = ([['in', t.input, 'input'], ['out', t.output, 'output'], ['cache read', t.cacheRead, 'cacheRead'], ['cache write', t.cacheWrite, 'cacheWrite']] as const)
+    .filter(([, n]) => n > 0).map(([label, n, kind]) => `${icons ? `${SPEND_ICON[kind]} ` : ''}${label} ${tokenText(n)}`)
   return parts.length ? parts.join(' · ') : null
+}
+
+/** `$1.23 over 4 turns` (tokens only: `4 turns`); with `icons`, `💰 $1.23 · 🔁 4 turns`. Null when the stage has cost nothing. */
+export function spendHead(spend: Spend, key: string, icons = false): string | null {
+  const v = spend[key]
+  if (!v || !(v.usd > 0 || tokensLine(spendTokens(v)))) return null
+  const turns = `${v.turns} turn${v.turns === 1 ? '' : 's'}`
+  if (icons) return [v.usd > 0 ? `${SPEND_ICON.money} ${moneyText(v.usd)}` : '', `${SPEND_ICON.turns} ${turns}`].filter(Boolean).join(' · ')
+  return v.usd > 0 ? `${moneyText(v.usd)} over ${turns}` : turns
 }
 
 /** The line for a stage: `$1.23 over 4 turns · in 12k · out 3k · cache read 1.2M · cache write 80k`. Null when the
  *  stage has cost nothing. */
 export function spendLine(spend: Spend, key: string): string | null {
-  const v = spend[key]
-  const tokens = v ? tokensLine(spendTokens(v)) : null
-  if (!v || !(v.usd > 0 || tokens)) return null
-  const head = v.usd > 0 ? `${moneyText(v.usd)} over ${v.turns} turn${v.turns === 1 ? '' : 's'}` : `${v.turns} turn${v.turns === 1 ? '' : 's'}`
+  const head = spendHead(spend, key)
+  if (!head) return null
+  const tokens = tokensLine(spendTokens(spend[key]))
   return tokens ? `${head} · ${tokens}` : head
 }

@@ -7,7 +7,7 @@ import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
-import { GLYPH, agentRows, contextTone, moneyText, spendLine, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, railBarColor, costBar, clipboardArgv, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
+import { GLYPH, agentRows, contextTone, moneyText, spendHead, SPEND_ICON, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, railBarColor, clipboardArgv, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { ageShort, agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, lineKey, linePath, lineTone, lineWord, sortLines } from './view/worktrees'
 
@@ -226,7 +226,6 @@ async function listAgents($: EngineInterface): Promise<AgentInfoLike[]> {
 
 // The picture is laid out for the pane's width in pixels. The app tells the pane its width in columns; a column is about
 // this many pixels. If the guess is high the picture is scaled down to fit the pane, if low it leaves a margin.
-const PX_PER_COLUMN = 8
 const WT_PANE = 'sdd-worktrees'
 const WT_COLORS = { urgent: '#c0503f', warn: '#c98a12', ok: '#3f9a63', dim: '#7b8794', work: '#4a7fc4' }
 const WT_REFRESH_MS = 30_000
@@ -964,12 +963,12 @@ export const register: Register = on => {
           {spendTotal(spend) <= 0 && !tokensLine(spendTokens(spend)) && (
             <Text dimColor wrap="wrap">{`No cost recorded for this item yet${costWhy ? `: ${costWhy}` : '. It shows after the next turn in a chat on this item.'}`}</Text>
           )}
-          {tokensLine(spendTokens(spend)) && <Text dimColor wrap="wrap">{`Tokens: ${tokensLine(spendTokens(spend))}`}</Text>}
+          {tokensLine(spendTokens(spend)) && <Text dimColor wrap="wrap">{`${SPEND_ICON.tokens} Tokens: ${tokensLine(spendTokens(spend), true)}`}</Text>}
           {(spendTotal(spend) > 0 || ctx) && (
             <Box flexDirection="row" gap={2}>
-              {spendTotal(spend) > 0 && <Text dimColor>{`Spent ${moneyText(spendTotal(spend))} on this item`}</Text>}
+              {spendTotal(spend) > 0 && <Text dimColor>{`${SPEND_ICON.money} Spent ${moneyText(spendTotal(spend))} on this item`}</Text>}
               {ctx && <Text color={{ ok: undefined, warn: C.now, high: C.revoked }[contextTone(ctx.percent)]} dimColor={contextTone(ctx.percent) === 'ok'}>
-                {`Context ${ctx.percent}%${contextTone(ctx.percent) === 'ok' ? '' : ' full'}`}
+                {`${SPEND_ICON.context} Context ${ctx.percent}%${contextTone(ctx.percent) === 'ok' ? '' : ' full'}`}
               </Text>}
             </Box>
           )}
@@ -1027,12 +1026,7 @@ export const register: Register = on => {
                 open: isOpen, prevOpen: i > 0 && rows[i - 1].stage.key === shownKey })
               const word = stageWord(flow, item, r)
               const sum = stageSummary(flow, item, key)
-              const sp = spend[key]
-              const money = sp && (sp.usd > 0 ? moneyText(sp.usd) : spendLine(spend, key) ? 'tokens' : '')
-              const at = shortStamp(sum.lastAt)
-              const wide = (e.props.bodyColumns ?? 100) * PX_PER_COLUMN >= 500
               const tint = /^#[0-9a-f]{6}$/i.test(C.work) ? `${C.work}22` : undefined
-              const maxUsd = Math.max(0, ...rows.map(x => spend[x.stage.key]?.usd ?? 0))
               return (
                 <Box key={`stagebox-${key}`} flexDirection="column">
                   <Box key={`stagerow-${key}`} flexDirection="row" gap={1} alignItems="center" paddingRight={2} backgroundColor={isOpen ? tint : undefined}>
@@ -1047,13 +1041,6 @@ export const register: Register = on => {
                           dimColor={!(word.warn || ['waiting', 'missed', 'blocked'].includes(r.mark))}>{word.text}</Text>
                       </Box>
                     )}
-                    <Box flexGrow={1} />
-                    {wide && sp && sp.usd > 0 && (() => {
-                      const bar = costBar({ usd: sp.usd, max: maxUsd, mark: r.mark, colors: C })
-                      return <Svg source={bar.source} alt={bar.alt} width={bar.width} height={bar.height} />
-                    })()}
-                    {money && <Text dimColor>{money}</Text>}
-                    {wide && at && <Text dimColor>{at}</Text>}
                   </Box>
                   {isOpen && (
                     <Box key={`stagewrap-${key}`} flexDirection="row" alignItems="stretch">
@@ -1118,10 +1105,15 @@ export const register: Register = on => {
     function drawStageDetail(r: StageRow) {
       const gates = decidedGates(r.stage, s!.derived)
       const lkey = `log:${r.stage.key}`
+      const lastStamp = shortStamp(stageSummary(flow, item, r.stage.key).lastAt)
       return (
         <Box flexDirection="column">
-          {spendLine(spend, r.stage.key) && (
-            <Box marginLeft={2}><Text dimColor wrap="wrap">{`Spent ${spendLine(spend, r.stage.key)}`}</Text></Box>
+          {(spendHead(spend, r.stage.key) || lastStamp) && (
+            <Box flexDirection="column" marginLeft={2}>
+              {spendHead(spend, r.stage.key) && <Text dimColor wrap="wrap">{spendHead(spend, r.stage.key, true)}</Text>}
+              {tokensLine(spendTokens(spend[r.stage.key] ?? [])) && <Text dimColor wrap="wrap">{tokensLine(spendTokens(spend[r.stage.key]), true)}</Text>}
+              {lastStamp && <Text dimColor wrap="wrap">{`${SPEND_ICON.time} Last activity ${lastStamp}`}</Text>}
+            </Box>
           )}
           <Box flexDirection="column" marginLeft={2}>
             <Box key={`row-${lkey}`} flexDirection="row" gap={1} width="100%">

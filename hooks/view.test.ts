@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SddItem, SddSnapshot } from '../types'
-import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, railSlice, costBar, stageWord, flowAlt, RAIL, railBarColor, clipboardArgv, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
+import { contextTone, moneyText, spendTokens, tokenText, tokensLine, spendLine, spendHead, spendTotal, agentRows, itemOptions, itemSuggestions, gateChips, MARK_WORD, railSlice, stageWord, flowAlt, RAIL, railBarColor, clipboardArgv, defaultStage, stepStage, shortStamp, flowTag, spinnerNote, yourTurn, questionBadge, answerMessage, answersFor, approveAnswers, approveFor, approveMessage, fileLinks, flowFinished, fileTarget, gateStory, idFromArgs, idFromScript, pendingGate, reviewLinks, stamp, phaseKey, refLink, stageRows, stageSummary } from './view/model'
 import type { SddLiveState } from '../types'
 import { historyArgs, historyRefs, agoText, cleanupNote, conflictNote, counts, groupByItem, joinWorktrees, lineFacts, pathKey, sortLines, lineTone, lineWord, ageShort, lineKey, linePath, type WtLine } from './view/worktrees'
 
@@ -449,14 +449,6 @@ test('the clipboard command quotes the path for the shell it runs in', () => {
   expect(clipboardArgv("/home/o'brien/wt")[2]).toContain("printf %s '/home/o'\\''brien/wt' |")
 })
 
-test('the cost bar is as long as the stage cost is of the dearest stage, and never empty', () => {
-  const bar = (usd: number) => costBar({ usd, max: 2, mark: 'done', colors: PIC_COLORS })
-  expect(bar(2).source).toContain('<rect width="64" height="6" rx="3" fill="#3f9a63"/>')
-  expect(bar(1).source).toContain('<rect width="32"')
-  expect(bar(0.001).source).toContain('<rect width="3"')
-  expect(bar(1).width).toBe(64)
-})
-
 test('the stage the pane opens on, and the stage before and after', () => {
   const at = (phase: string, status: 'active' | 'waiting' | 'done' | 'blocked') => stageRows(SPEC, { ...ITEM, gates: {}, progress: { ...ITEM.progress!, phase, status } })
   expect(defaultStage(at('Design', 'waiting'))).toBe('Design')
@@ -480,6 +472,14 @@ test('short stamp: month/day hour:minute in this computer\'s time zone', () => {
   expect(shortStamp('2026-10-01T12:41:15Z')).toBe(`${two(d.getMonth() + 1)}/${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`)
   expect(shortStamp(undefined)).toBe('')
   expect(shortStamp('not a date')).toBe('')
+})
+
+test('the icon lines: the same numbers, each kind led by its icon', () => {
+  const spend = { Design: { usd: 1.234, turns: 4, input: 12_000, output: 3400, cacheRead: 1_200_000, cacheWrite: 80_000 }, Tok: { usd: 0, turns: 1, output: 9 } }
+  expect(spendHead(spend, 'Design', true)).toBe('💰 $1.23 · 🔁 4 turns')
+  expect(spendHead(spend, 'Tok', true)).toBe('🔁 1 turn')
+  expect(spendHead(spend, 'Missing', true)).toBe(null)
+  expect(tokensLine(spendTokens(spend.Design), true)).toBe('📥 in 12k · 📤 out 3.4k · ⚡ cache read 1.2M · 💾 cache write 80k')
 })
 
 const wl = (live: Record<string, unknown> | null): WtLine => ({

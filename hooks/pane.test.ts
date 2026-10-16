@@ -281,9 +281,9 @@ test('desktop: a picked stage lapses when the item moves to another stage, and t
   }
 })
 
-// a resize re-draws the pane at its new width: the rail slices stay one size, and the wide pane adds the cost bars and the times
-for (const [cols, bars] of [[20, 0], [50, 0], [61, 0], [63, 3], [100, 3], [140, 3]] as const) {
-  test(`desktop: at ${cols} columns the stage rows have ${bars ? 'cost bars' : 'no cost bars'}`, async ($: any, on: any) => {
+// a resize re-draws the pane at its new width: the rail slices stay one size, and no width puts cost on the stage rows
+for (const cols of [20, 61, 100, 140]) {
+  test(`desktop: at ${cols} columns the stage rows carry no cost bars`, async ($: any, on: any) => {
     const f = fake(on, [])
     f.spend = { Specify: { usd: 0.5, turns: 1, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, Design: { usd: 1, turns: 2, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       Review: { usd: 0.25, turns: 1, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }
@@ -291,7 +291,7 @@ for (const [cols, bars] of [[20, 0], [50, 0], [61, 0], [63, 3], [100, 3], [140, 
     if (!ui) return
     const svgs = await ui.findAll({ type: 'Svg' })
     expect(svgs.filter((x: any) => x.props.width === 40 && x.props.height === 46)).toHaveLength(3)
-    expect(svgs.filter((x: any) => x.props.width === 64)).toHaveLength(bars)
+    expect(svgs.filter((x: any) => x.props.width === 64)).toHaveLength(0)
   })
 }
 
@@ -413,14 +413,12 @@ for (const surface of ['desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'sdd', surface, component: 'Pane', props: { title: 'sdd', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never,
       requestId: 'sdd-view', viewport: { columns: 100, rows: 40 } })
     for (let i = 0; i < 100 && !(await texts(ui)).includes('Spent'); i++) await new Promise(r => setTimeout(r, 10))
-    expect(await texts(ui)).toContain('Spent $2.00 on this item')
+    expect(await texts(ui)).toContain('💰 Spent $2.00 on this item')
     await turn($, f, 1.5)                                                                     // 0.50 more: the pane reads the new total at once
     for (let i = 0; i < 100 && !(await texts(ui)).includes('Spent $2.50'); i++) await new Promise(r => setTimeout(r, 10))
     const t = await texts(ui)
-    expect(t).toContain('Spent $2.50 on this item')
-    expect(t).toContain('$2.50')                         // the Design row
-    expect(t).toContain('<$0.01')                        // the Specify row: a tiny cost still shows
-    expect(t).toContain('Context 12%')
+    expect(t).toContain('💰 Spent $2.50 on this item')
+        expect(t).toContain('Context 12%')
     expect(t).not.toContain('$50')
   })
 }
@@ -496,9 +494,9 @@ test('the pane shows the token split for the item, and for the stage it is on', 
   const ui = await $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'Pane', props: { title: 'sdd', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} } as never,
     requestId: 'sdd-view', viewport: { columns: 100, rows: 40 } })
   for (let i = 0; i < 100 && !(await texts(ui)).includes('Tokens'); i++) await new Promise(r => setTimeout(r, 10))
-  expect(await texts(ui)).toContain('Tokens: in 12k · out 3.4k · cache read 1.2M · cache write 80k')
-  for (let i = 0; i < 100 && !(await texts(ui)).includes('Spent $2.00 over'); i++) await new Promise(r => setTimeout(r, 10))
-  expect(await texts(ui)).toContain('Spent $2.00 over 3 turns · in 12k · out 3.4k · cache read 1.2M · cache write 80k')
+  expect(await texts(ui)).toContain('🔢 Tokens: 📥 in 12k · 📤 out 3.4k · ⚡ cache read 1.2M · 💾 cache write 80k')
+  for (let i = 0; i < 100 && !(await texts(ui)).includes('💰 $2.00 · 🔁 3 turns'); i++) await new Promise(r => setTimeout(r, 10))
+  expect(await texts(ui)).toContain('💰 $2.00 · 🔁 3 turns')
 })
 
 test('the band above the prompt: a long text shrinks and is cut, and the button keeps its room', async ($: any, on: any) => {
