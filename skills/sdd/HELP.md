@@ -40,7 +40,7 @@ make the decisions.
 
 **Help**
 - `/sdd help` — this page.
-- `/sdd help start` — a step-by-step walk-through for a new user: init, sync, impact, a first bug, a first spec item.
+- `/sdd help start` — a page that walks a new user through init, sync, impact, a first bug and a first spec item.
 
 **Update sdd**
 Get the newest version from a chat. Type each line with a `!` in front, so it runs as a shell command:

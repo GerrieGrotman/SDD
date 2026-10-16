@@ -23,7 +23,16 @@ def wi(i, title, parent=None, rels=(), desc="", typ="User Story", rev=1, state="
         "System.State": state, "System.Rev": rev, "System.Description": desc}}
 
 
+def check_help_copy():
+    with tempfile.TemporaryDirectory() as t:
+        out = env.help_copy(Path(t) / ".claude" / "sdd" / "help")
+        assert [p.name for p in out] == ["HELP.md", "getting-started.html"]
+        assert all(p.is_file() and p.stat().st_size > 0 for p in out)
+        assert "<html" in out[1].read_text(encoding="utf-8")
+
+
 def main():
+    check_help_copy()
     assert parse_remote("https://Org@dev.azure.com/Org/My.Proj/_git/Repo_1") == ("Org", "My.Proj", "Repo_1")
     assert parse_remote("git@ssh.dev.azure.com:v3/Org/Proj/Repo") == ("Org", "Proj", "Repo")
     assert slug("Help Materials: AI Knowledge!") == "help-materials-ai-knowledge"
