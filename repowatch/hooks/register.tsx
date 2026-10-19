@@ -1,8 +1,11 @@
 // repowatch: a pane and a status line for many git repos. It reads .claude/repowatch/state.json, which
-// `repowatch.py scan` writes; the scan itself runs on a timer (local facts every minute, a few fetches
-// every few minutes). Scan and Fetch only read or fetch. A clean-up (remove a worktree, prune) runs
-// only when the person presses its button, and only after the pane has shown the plan and been
-// confirmed: `repowatch.py plan` builds it from the live repo, `repowatch.py apply` checks again.
+// `repowatch.py scan` writes. The session reads the autoSync setting when it starts. On, it keeps a timer that
+// ticks once a minute with `scan --auto`, which runs git only when a scan is due and no other session is making
+// it (local facts every two minutes, a few fetches every five). Off, there is no timer: Sync now does it all on a
+// press. The Auto sync toggle writes the setting and starts or stops the timer; a tick that finds the setting
+// off (another session turned it off) stops its own. Scan, Fetch and Sync now only read or fetch. A clean-up
+// (remove a worktree, prune) runs only when the person presses its button, and only after the pane has shown
+// the plan and been confirmed: `repowatch.py plan` builds it from the live repo, `repowatch.py apply` checks again.
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { RwGraph, RwPlan, RwResult, RwState } from '../types'
@@ -24,13 +27,13 @@ const wtOpen = { plugin: 'repowatch', key: 'wtOpen' } as const
 const offset = { plugin: 'repowatch', key: 'offset' } as const
 const open = { plugin: 'repowatch', key: 'open' } as const
 const busy = { plugin: 'repowatch', key: 'busy' } as const
+const auto = { plugin: 'repowatch', key: 'auto' } as const
 const view = { plugin: 'repowatch', key: 'view' } as const
 const plans = { plugin: 'repowatch', key: 'plans' } as const
 const graph = { plugin: 'repowatch', key: 'graph' } as const
 const commit = { plugin: 'repowatch', key: 'commit' } as const
 
-const SCAN_EVERY_MS = 60_000
-const FETCH_EVERY_SCANS = 5
+const TICK_MS = 60_000
 const COLORS = { urgent: '#c0503f', warn: '#c98a12', ok: '#3f9a63', dim: '#7b8794' }
 const LANE_COLORS = ['#4a7fc4', '#3f9a63', '#c98a12', '#8a73c9', '#c0503f', '#2aa5a5']
 const SIDE_COLOR = { branch: '#3f9a63', base: '#4a7fc4', both: undefined } as const
@@ -65,12 +68,26 @@ async function load($: EngineInterface): Promise<RwState | null> {
   return Object.keys(parsed.repos).length ? parsed : null
 }
 
-type Sweep = { s: RwState | null; why: string | null }
+/** `auto` is the autoSync setting the script read, when it answered. */
+type Sweep = { s: RwState | null; why: string | null; auto?: boolean }
+type Timer = ReturnType<EngineInterface['clock']['every']>
 
-/** Scans (and sometimes fetches), then reads the state back. The hooks store the result: $.state is theirs. */
-async function refresh($: EngineInterface, fetch: boolean, withSync: boolean = fetch): Promise<Sweep> {
+/** Runs a command that prints status --json (status, scan --auto, config) and reads it. */
+async function readStatus($: EngineInterface, args: string[], timeoutMs: number): Promise<Sweep> {
   try {
-    await run($, fetch ? ['scan', '--fetch', '--json'] : ['scan', '--json'], fetch ? 300_000 : 120_000)
+    const parsed = JSON.parse(await run($, args, timeoutMs)) as RwState
+    return { s: parsed.repos && Object.keys(parsed.repos).length ? parsed : null, why: null, auto: parsed.autoSync !== false }
+  } catch (err) {
+    return { s: null, why: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+/** Scans (and sometimes fetches: a few repos, or with `all` every one), then reads the state back. The hooks store
+ *  the result: $.state is theirs. */
+async function refresh($: EngineInterface, fetch: boolean, withSync: boolean = fetch, all: boolean = false): Promise<Sweep> {
+  try {
+    const args = fetch ? ['scan', '--fetch', ...(all ? ['--fetch-all'] : []), '--json'] : ['scan', '--json']
+    await run($, args, all ? 600_000 : fetch ? 300_000 : 120_000)
     if (withSync) await run($, ['sync', '--json'], 300_000)
     return { s: await load($), why: null }
   } catch (err) {
@@ -138,35 +155,64 @@ function resultText(rs: RwResult[]): string {
   return `${ok} done${bad.length ? `, ${bad.length} not done: ${bad.map(r => r.error ?? '?').join(' | ').slice(0, 200)}` : ''}`
 }
 
-export const register: Register = on => {
-  let scans = 0
+// this session's tick, only while auto sync is on; module state, and a reload cancels the old module's timers
+let timer: Timer | null = null
+let ticking = false  // a tick still running when the next one is due is not doubled
 
+/** Stores what a status read said, and starts or stops this session's timer to match the setting. */
+async function learn($: EngineInterface, r: Sweep, toastFrom?: RwState | null): Promise<void> {
+  if (toastFrom !== undefined) {
+    const toast = conflictToast(toastFrom, r.s)
+    if (toast) $.ui.toast(toast)
+  }
+  if (r.s) await $.state.set(state, r.s)
+  await $.state.set(error, r.why)
+  $.ui.status(statusText(r.s?.summary, r.s?.sync?.summary))
+  if (r.auto === undefined) return
+  await $.state.set(auto, r.auto)
+  follow($, r.auto)
+}
+
+/** The tick: `scan --auto` does what is due (often nothing) and prints the state. */
+async function tick($: EngineInterface): Promise<void> {
+  if (ticking) return
+  ticking = true
+  try {
+    const before = (await $.state.get(state)).value ?? null
+    await learn($, await readStatus($, ['scan', '--auto'], 540_000), before)
+  } finally {
+    ticking = false
+  }
+}
+
+/** Starts this session's timer (it ticks at once), or stops it. */
+function follow($: EngineInterface, wanted: boolean): void {
+  if (wanted && !timer) {
+    timer = $.clock.every(TICK_MS, () => void tick($))
+    void tick($)
+  } else if (!wanted && timer) {
+    timer.cancel()
+    timer = null
+  }
+}
+
+export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'repowatch',
       description: 'Show the git repos of this workspace in a pane; "worktrees" lists every worktree, "sync" the team branch sync, "history <repo> <branch> [<base>]" draws a branch, "scan" or "fetch" refreshes',
       argumentHint: '[worktrees|sync|scan|fetch|history <repo> <branch> [<base>]]',
     })
-    const sync = async (fetch: boolean) => {
-      const before = (await $.state.get(state)).value ?? null
-      const r = await refresh($, fetch)
-      const toast = conflictToast(before, r.s)
-      if (toast) $.ui.toast(toast)
-      if (r.s) await $.state.set(state, r.s)
-      await $.state.set(error, r.why)
-      $.ui.status(statusText(r.s?.summary, r.s?.sync?.summary))
-    }
-    void sync(false)
-    $.clock.every(SCAN_EVERY_MS, () => {
-      scans += 1
-      void sync(scans % FETCH_EVERY_SCANS === 0)
-    })
+    // read the last scan and the setting (no git runs); the timer starts only when auto sync is on
+    void readStatus($, ['status', '--json'], 20_000).then(r => learn($, r)).catch(() => undefined)
     return next(e)
   })
 
   on('command.run', { command: 'repowatch' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
     await $.ui.open({ id: PANE, title: 'repowatch', closeOnEscape: true, columns: 110 })
+    // the setting may have changed in the file or in another session since this one read it
+    if (!timer) void readStatus($, ['status', '--json'], 20_000).then(r => learn($, r)).catch(() => undefined)
     if (arg === 'history' || arg.startsWith('history ')) {
       // another plugin (sdd's Worktrees page) asks this way, or a person types it
       const target = parseHistoryArgs(e.args.trim().slice('history'.length))
@@ -225,6 +271,7 @@ export const register: Register = on => {
     const from = (await $.state.get(offset)).value ?? 0
     const opened = (await $.state.get(open)).value ?? null
     const working = (await $.state.get(busy)).value ?? null
+    const autoOn = (await $.state.get(auto)).value ?? null
     const mode = (await $.state.get(view)).value ?? 'repos'
     const pending = (await $.state.get(plans)).value ?? null
     const g = (await $.state.get(graph)).value ?? null
@@ -232,15 +279,27 @@ export const register: Register = on => {
     const now = Math.floor(Date.now() / 1000)
 
     // what the presses do; they run after the drawing, so they may write
-    const sync = async (fetch: boolean, label: string) => {
+    const sync = async (fetch: boolean, label: string, all: boolean = false) => {
       await $.state.set(busy, label)
-      const r = await refresh($, fetch, fetch || label === 'sync')
+      const r = await refresh($, fetch, fetch || label === 'sync', all)
       const toast = conflictToast(s, r.s)
       if (toast) $.ui.toast(toast)
       if (r.s) await $.state.set(state, r.s)
       await $.state.set(error, r.why)
       await $.state.set(busy, null)
       $.ui.status(statusText(r.s?.summary, r.s?.sync?.summary))
+    }
+    // the toggle writes the setting to .claude/repowatch.json; learn() then starts or stops the timer
+    const setAuto = (wanted: boolean) => async () => {
+      await $.state.set(busy, wanted ? 'turning auto sync on' : 'turning auto sync off')
+      const r = await readStatus($, ['config', '--auto-sync', wanted ? 'on' : 'off'], 20_000)
+      await $.state.set(busy, null)
+      if (r.auto === undefined) {
+        await $.state.set(note, `Could not change the setting: ${r.why ?? '?'}`)
+        return
+      }
+      await $.state.set(note, null)
+      await learn($, r)
     }
     // a button asks for the plan; nothing runs until the person confirms it
     const propose = (argLists: string[][]) => async () => {
@@ -326,11 +385,16 @@ export const register: Register = on => {
           <Text> </Text>
           <Button key="fetch" label="Fetch a few" onPress={() => sync(true, 'fetch')} />
           <Text> </Text>
+          <Button key="sync-now" label="Sync now" onPress={() => sync(true, 'syncing', true)} />
+          <Text> </Text>
+          {autoOn !== null && <Button key="auto-sync" label={autoOn ? 'Auto sync: on' : 'Auto sync: off'} onPress={setAuto(!autoOn)} />}
+          {autoOn !== null && <Text> </Text>}
           <Button key="filter" label={only ? 'Show all' : 'Needs attention'} onPress={async () => {
             await $.state.set(onlyAttention, !only)
             await $.state.set(offset, 0)
           }} />
         </Box>
+        {autoOn === false && <Text dimColor>Auto sync is off: nothing is scanned or fetched until you press Sync now, or turn Auto sync on.</Text>}
         {working && <Text color={COLORS.warn}>{working === 'fetch' ? 'Fetching…' : working === 'scan' ? 'Scanning…' : `${working[0].toUpperCase()}${working.slice(1)}…`}</Text>}
         {why && <Text color={COLORS.urgent}>{why}</Text>}
         {said && <Text color={COLORS.urgent}>{said}</Text>}
@@ -341,7 +405,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           {header}
-          <Text dimColor>{why ? '' : 'No repos found yet. Run from a folder that holds git repos, or list them in .claude/repowatch.json.'}</Text>
+          <Text dimColor>{why ? '' : 'No repos found yet. Press Sync now to scan, run from a folder that holds git repos, or list them in .claude/repowatch.json.'}</Text>
         </Box>
       )
     }

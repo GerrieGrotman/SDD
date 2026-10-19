@@ -212,6 +212,8 @@ export type RwState = {
   undoable?: RwUndo[]
   /** Branch sync, from `repowatch.py sync`; absent until it has run. */
   sync?: RwSyncState
+  /** false when "autoSync" is off in .claude/repowatch.json: nothing runs until Sync now is pressed. */
+  autoSync?: boolean
   repos: Record<string, RwRepo>
 }
 
@@ -234,6 +236,8 @@ declare module 'claude-code' {
       open: string | null
       /** A scan, fetch or clean-up is running. */
       busy: string | null
+      /** The autoSync setting as this session last read it: on, it keeps a timer; null = not read yet. */
+      auto: boolean | null
       /** What the pane lists: the repos, or every worktree. */
       view: 'repos' | 'worktrees' | 'sync' | 'graph'
       /** Plans waiting for the person's confirm; null = none. */

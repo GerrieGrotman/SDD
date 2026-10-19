@@ -268,7 +268,7 @@ async function wtReadLive($: EngineInterface, root: string | null): Promise<Live
     const parsed = JSON.parse(await $.fs.read(`${root}/.claude/repowatch/state.json`)) as SddLiveState
     return { state: parsed, why: null }
   } catch {
-    return { state: null, why: 'repowatch has not scanned this workspace yet. It scans by itself once a minute; /repowatch scan does it now.' }
+    return { state: null, why: 'repowatch has not scanned this workspace yet. It scans by itself every few minutes while Auto sync is on in /repowatch; Sync now there does it now.' }
   }
 }
 

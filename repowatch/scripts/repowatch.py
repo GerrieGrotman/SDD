@@ -1,6 +1,9 @@
 """repowatch: keep track of many git repos and their worktrees. Mechanics only; the mod draws it.
 
     python repowatch.py scan [--fetch] [--fetch-batch N] [--only NAME ...] [--json]
+    python repowatch.py scan --auto        (the pane's timer: does what is due, prints status --json)
+    python repowatch.py scan --fetch --fetch-all   (Sync now: fetches every repo; then run `sync`)
+    python repowatch.py config --auto-sync on|off  (the pane's toggle: writes "autoSync" to .claude/repowatch.json)
     python repowatch.py status [--json]
     python repowatch.py plan  remove-worktree|prune-worktrees|delete-branch --repo NAME [--path P] [--branch B] [--delete-branch]
     python repowatch.py apply <same arguments> [--allow-review]
@@ -15,6 +18,16 @@
 writes them to <workspace>/.claude/repowatch/state.json. With --fetch it also fetches the repos that
 were fetched longest ago, a few at a time, so a sweep of dozens of repos is spread over many scans
 and never stalls. It never pulls, merges or checks out anything.
+
+Background scan: a session whose pane found auto sync on runs `scan --auto` each minute. It costs nothing until a scan is due
+(`scanEverySeconds` after the last one, from any session), and only one session scans at a time
+(.claude/repowatch/scan.lock). A repo whose refs did not move (checked with stat, no git) then only has
+`git status` read again, for itself and each worktree; the rest is kept. Every `fullScanEverySeconds`
+it reads everything; every `fetchEverySeconds` it fetches a few repos, reads everything and the branch sync.
+Each git command is a process, and on a Windows machine with a virus scanner each one is costly.
+With "autoSync": false in .claude/repowatch.json (the pane's Auto sync toggle writes it, through
+`config`) no session keeps a timer, `scan --auto` runs no git at all, and nothing is scanned, fetched
+or synced until the person presses Sync now in the pane.
 
 Merge-conflict forecast: for each worktree (and each diverged repo) `scan` asks git, with
 `merge-tree --write-tree`, whether merging the base branch in would conflict, and in which files. No
@@ -57,6 +70,7 @@ Workspace: the first folder up from the current one that holds .claude/repowatch
 sdd.json, else every folder up to two levels down that holds a .git folder.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -85,10 +99,19 @@ DEFAULTS = {
     "syncMaxFixes": 200,       # fixes listed per hop
     "adoLookup": True,         # ask ADO whether a deleted branch's pull request was completed (squash merges)
     "adoLookupCacheSeconds": 3600,  # how long "no completed PR" is remembered; "no az login" is asked again after 5 minutes
+    # the background scan (`scan --auto`, run by every open session's timer) does work only when it is due,
+    # and only one session at a time does it. false = manual only: nothing runs until Sync now is pressed
+    "autoSync": True,
+    "scanEverySeconds": 120,       # local facts: `git status` of each repo and worktree
+    "fullScanEverySeconds": 900,   # everything again, even for a repo whose refs did not move
+    "fetchEverySeconds": 300,      # fetch the `fetchBatch` repos fetched longest ago, then read the branch sync
 }
 JOURNAL_REL = Path(".claude") / "repowatch" / "journal.jsonl"
 SYNC_STATE_REL = Path(".claude") / "repowatch" / "sync-state.json"
 SYNC_DECISIONS_REL = Path(".claude") / "repowatch" / "sync.json"
+SCAN_LOCK_REL = Path(".claude") / "repowatch" / "scan.lock"
+SCAN_LOCK_STALE = 600  # seconds: a lock this old was left by a scan that was killed
+STATUS_KEYS = ("branch", "detached", "upstream", "ahead", "behind", "staged", "unstaged", "untracked", "conflicted", "dirty")
 SKIP_DIRS = {".claude", "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build", "bin", "obj"}
 
 
@@ -296,6 +319,43 @@ def fetch_time(path):
         return None
 
 
+def refs_key(path, remote=False):
+    """A fingerprint of what a scan reads besides the working files: HEAD, the refs, packed-refs, FETCH_HEAD
+    and the linked worktrees' records (with `remote`, only the remote refs). Read with stat alone: no git runs.
+    Git writes a ref to a lock file and renames it, so a moved ref changes a file's or a folder's time.
+    None when the repo's .git is not a folder: then nothing is reused."""
+    gd = Path(path) / ".git"
+    if not gd.is_dir():
+        return None
+    seen = []
+
+    def add(p):
+        try:
+            st = p.stat()
+        except OSError:
+            return
+        seen.append("%s %d %d" % (posix(p.relative_to(gd)), st.st_mtime_ns, st.st_size))
+
+    add(gd / "packed-refs")
+    for top, dirs, files in os.walk(str(gd / "refs" / "remotes" if remote else gd / "refs")):
+        dirs.sort()
+        add(Path(top))
+        for f in sorted(files):
+            add(Path(top) / f)
+    if not remote:
+        add(gd / "HEAD")
+        add(gd / "FETCH_HEAD")
+        add(gd / "worktrees")
+        try:
+            names = sorted(os.listdir(str(gd / "worktrees")))
+        except OSError:
+            names = []
+        for n in names:
+            for f in ("HEAD", "locked", "gitdir"):
+                add(gd / "worktrees" / n / f)
+    return hashlib.sha1("\n".join(seen).encode("utf-8")).hexdigest()
+
+
 def branch_info(path):
     """(number of local branches, [branches whose upstream is gone])."""
     gone, count = [], 0
@@ -471,18 +531,60 @@ def worktree_facts(repo, wt, default, gone, cfg, now, prev=None):
     if info["class"] == "review" and info.get("gone") and info.get("unique") and cfg.get("adoLookup") \
             and info.get("sha") and wt["branch"]:
         # a squash merge leaves the commits on no remote: ask ADO whether the branch's PR was completed
-        pr = completed_pr(repo, wt["branch"], info["sha"], (prev or {}).get("prCheck"), now, cfg["adoLookupCacheSeconds"])
-        info["prCheck"] = pr
-        if pr["state"] == "completed":
-            info["class"], info["reasons"] = "safe", ["its pull request %s was completed (a squash merge)" % pr["id"]]
-        elif pr["state"] == "other":
-            info["reasons"] = info["reasons"] + ["a pull request from it was completed, but later commits are on no remote"]
+        info["prCheck"] = completed_pr(repo, wt["branch"], info["sha"], (prev or {}).get("prCheck"), now, cfg["adoLookupCacheSeconds"])
+        settle_pr(info)
     return info
 
 
-def scan_repo(name, path, cfg, now=None, prev=None):
-    """Everything the pane shows about one repo. Never raises: a failure is recorded in `error`."""
+def settle_pr(info):
+    """Moves a `review` worktree to `safe` when ADO said its pull request was completed."""
+    pr = info.get("prCheck")
+    if info.get("class") != "review" or not pr:
+        return
+    if pr["state"] == "completed":
+        info["class"], info["reasons"] = "safe", ["its pull request %s was completed (a squash merge)" % pr["id"]]
+    elif pr["state"] == "other":
+        info["reasons"] = info["reasons"] + ["a pull request from it was completed, but later commits are on no remote"]
+
+
+def quick_scan(path, cfg, now, prev):
+    """The repo again when no ref moved since `prev`: only `git status` of the repo and of each worktree runs,
+    the rest is kept. None when that is not enough (a worktree folder came or went), and a full scan runs."""
+    rc, out, _ = git(["status", "--porcelain=v2", "--branch"], path)
+    if rc != 0:
+        return None
+    rec = dict(prev, scannedAt=now)
+    rec.pop("fetchError", None)
+    s = parse_status(out)
+    rec.update({k: s[k] for k in STATUS_KEYS})
+    wts = []
+    for w in prev.get("worktrees", []):
+        w = dict(w)
+        if bool(w.get("missing")) != (not Path(w["path"]).is_dir()):
+            return None
+        if not w.get("missing"):
+            rc, out, _ = git(["status", "--porcelain=v2", "--branch"], w["path"])
+            if rc != 0:
+                return None
+            s = parse_status(out)
+            w.update(dirty=s["dirty"], ahead=s["ahead"], behind=s["behind"], upstream=s["upstream"])
+        w["class"], w["reasons"] = classify(w, cfg, now)
+        settle_pr(w)
+        wts.append(w)
+    rec["worktrees"] = wts
+    rec["flags"] = flags_for(rec, cfg, now)
+    return rec
+
+
+def scan_repo(name, path, cfg, now=None, prev=None, quick=False):
+    """Everything the pane shows about one repo. Never raises: a failure is recorded in `error`.
+    With `quick`, a repo whose refs did not move since `prev` only has its `git status` read again."""
     now = int(now or time.time())
+    key = refs_key(path)
+    if quick and key and prev and prev.get("refsKey") == key and not prev.get("error"):
+        rec = quick_scan(path, cfg, now, prev)
+        if rec is not None:
+            return rec
     rec = {"name": name, "path": posix(path), "scannedAt": now}
     rc, out, err = git(["status", "--porcelain=v2", "--branch"], path)
     if rc != 0:
@@ -490,8 +592,7 @@ def scan_repo(name, path, cfg, now=None, prev=None):
         rec["flags"] = ["error"]
         return rec
     s = parse_status(out)
-    rec.update({k: s[k] for k in ("branch", "detached", "upstream", "ahead", "behind", "staged", "unstaged",
-                                  "untracked", "conflicted", "dirty")})
+    rec.update({k: s[k] for k in STATUS_KEYS})
     rec["defaultBranch"] = default_branch(path)
     rec["lastFetch"] = fetch_time(path)
     rc, out, _ = git(["stash", "list"], path)
@@ -510,6 +611,8 @@ def scan_repo(name, path, cfg, now=None, prev=None):
         if head:
             rec["forecast"] = forecast(path, head, rec["upstream"], (prev or {}).get("forecast"))
     rec["flags"] = flags_for(rec, cfg, now)
+    if key:
+        rec["refsKey"] = key
     return rec
 
 
@@ -949,8 +1052,33 @@ def sync_state_of(wt):
     return "ready"
 
 
+def in_progress(root, name, older, newer):
+    """The hop's sync worktree when one is open, else None."""
+    wt = sync_worktree_path(root, name, older, newer) if root else None
+    if wt is None or not wt.is_dir():
+        return None
+    return {"path": posix(wt), "branch": sync_branch_name(older, newer), "state": sync_state_of(wt)}
+
+
 def sync_repo(name, path, cfg, now, prev, decisions, root=None):
-    """The sync facts of one repo, or None when it has fewer than two matching branches."""
+    """The sync facts of one repo, or None when it has fewer than two matching branches. What git says
+    depends on the remote refs and the person's decisions only, so while neither changed `prev` is kept
+    and only the open sync worktrees are looked at again."""
+    key = refs_key(path, remote=True)
+    if key:
+        mine = [decisions.get(name), cfg["syncPattern"], cfg["syncWindowDays"], cfg["syncMaxFixes"]]
+        key = hashlib.sha1((key + json.dumps(mine, sort_keys=True)).encode("utf-8")).hexdigest()
+    if key and prev and prev.get("refsKey") == key:
+        hops = []
+        for h in prev.get("hops", []):
+            h = dict(h)
+            h.pop("inProgress", None)
+            if "error" not in h:
+                ip = in_progress(root, name, h["from"], h["to"])
+                if ip:
+                    h["inProgress"] = ip
+            hops.append(h)
+        return dict(prev, hops=hops)
     names = sync_branches(path, cfg)
     if len(names) < 2:
         return None
@@ -968,9 +1096,9 @@ def sync_repo(name, path, cfg, now, prev, decisions, root=None):
         hop.update(missing=count("missing"), applied=count("applied"), skipped=count("skipped"),
                    outsideWindow=outside, fixes=fixes, truncated=cut,
                    mode="cherry-pick" if skipped else "merge")
-        wt = sync_worktree_path(root, name, older, newer) if root else None
-        if wt is not None and wt.is_dir():
-            hop["inProgress"] = {"path": posix(wt), "branch": sync_branch_name(older, newer), "state": sync_state_of(wt)}
+        ip = in_progress(root, name, older, newer)
+        if ip:
+            hop["inProgress"] = ip
         rtip = rev(path, "refs/remotes/origin/" + sync_branch_name(older, newer))
         if rtip:
             # still on origin: its PR is open, unless it was merged already, then the branch is just stale
@@ -980,7 +1108,10 @@ def sync_repo(name, path, cfg, now, prev, decisions, root=None):
             ysha = rev(path, "refs/remotes/origin/" + newer)
             hop["forecast"] = forecast(path, ysha, "origin/" + older, (before.get((older, newer)) or {}).get("forecast"))
         hops.append(hop)
-    return {"branches": names, "hops": hops}
+    out = {"branches": names, "hops": hops}
+    if key:
+        out["refsKey"] = key
+    return out
 
 
 def sync_summary(repos):
@@ -1491,17 +1622,16 @@ def cmd_show(a):
 
 # --- commands ------------------------------------------------------------------------------------
 
-def cmd_scan(a):
-    root = find_workspace()
-    cfg = load_config(root)
-    repos = [(n, p) for n, p in discover(root, cfg) if not a.only or n in a.only]
+def scan(root, cfg, fetch=False, fetch_batch=None, only=(), quick=False):
+    """Fetches (when asked), scans and writes state.json. (state, scanned records, {repo: fetch error})."""
+    repos = [(n, p) for n, p in discover(root, cfg) if not only or n in only]
     state = read_state(root)
     known = state["repos"]
 
     fetch_errors = {}
-    if a.fetch:
+    if fetch:
         due = pick_for_fetch([known.get(n, {"name": n, "path": posix(p)}) for n, p in repos],
-                             a.fetch_batch if a.fetch_batch is not None else cfg["fetchBatch"])
+                             fetch_batch if fetch_batch is not None else cfg["fetchBatch"])
         with ThreadPoolExecutor(max_workers=max(1, cfg["fetchWorkers"])) as ex:
             for name, err in ex.map(lambda r: fetch_repo(r, cfg), due):
                 if err:
@@ -1509,22 +1639,93 @@ def cmd_scan(a):
 
     now = int(time.time())
     with ThreadPoolExecutor(max_workers=max(1, cfg["workers"])) as ex:
-        recs = list(ex.map(lambda np_: scan_repo(np_[0], np_[1], cfg, now, known.get(np_[0])), repos))
+        recs = list(ex.map(lambda np_: scan_repo(np_[0], np_[1], cfg, now, known.get(np_[0]), quick), repos))
     for rec in recs:
         if rec["name"] in fetch_errors:
             rec["fetchError"] = fetch_errors[rec["name"]]
             rec["flags"] = rec.get("flags", []) + ["fetch-failed"]
         known[rec["name"]] = rec
-    if not a.only:  # a full scan forgets repos that are gone
+    if not only:  # a full scan forgets repos that are gone
         live = {n for n, _ in repos}
         for n in list(known):
             if n not in live:
                 del known[n]
     state["generated"] = now
+    if fetch:
+        state["fetched"] = now
+    if not quick and not only:
+        state["fullScanned"] = now
     state["root"] = posix(root)
     state["summary"] = summarize(known)
     state["undoable"] = undoable(root)
     write_state(root, state)
+    return state, recs, fetch_errors
+
+
+def take_lock(root, now):
+    """The scan lock's path once this process holds it, else None: another session is scanning. A lock
+    older than SCAN_LOCK_STALE was left by a scan that was killed, and is taken over."""
+    path = root / SCAN_LOCK_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                if now - path.stat().st_mtime < SCAN_LOCK_STALE:
+                    return None
+                path.unlink()
+            except OSError:
+                return None
+            continue
+        except OSError:
+            return None
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        os.close(fd)
+        return path
+    return None
+
+
+def auto_scan(root, cfg):
+    """The background tick. Every open session runs it each minute, so most ticks run no git at all: a scan
+    is due only `scanEverySeconds` after the last one, whichever session made it, and one session at a
+    time makes it (scan.lock). A due scan reads `git status` alone for a repo whose refs did not move;
+    every `fullScanEverySeconds`, and after a fetch, it reads everything. Every `fetchEverySeconds` it
+    fetches a few repos and then reads the branch sync."""
+    if not cfg["autoSync"]:  # manual only: the person presses Sync now
+        return
+    now = time.time()
+    if now - read_state(root).get("generated", 0) < cfg["scanEverySeconds"]:
+        return
+    lock = take_lock(root, now)
+    if not lock:
+        return
+    try:
+        state = read_state(root)  # another session may have finished a scan while this one waited for the lock
+        if now - state.get("generated", 0) < cfg["scanEverySeconds"]:
+            return
+        # the first scan of a workspace does not fetch, so the pane fills quickly
+        fetch = bool(state.get("generated")) and now - state.get("fetched", 0) >= cfg["fetchEverySeconds"]
+        full = fetch or now - state.get("fullScanned", 0) >= cfg["fullScanEverySeconds"]
+        scan(root, cfg, fetch=fetch, quick=not full)
+        if fetch:
+            run_sync(root, cfg, [])
+    finally:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+
+
+def cmd_scan(a):
+    root = find_workspace()
+    cfg = load_config(root)
+    if a.auto:
+        auto_scan(root, cfg)
+        print(json.dumps(status_json(root, cfg)))
+        return 0
+    batch = 10 ** 6 if a.fetch_all else a.fetch_batch
+    state, recs, fetch_errors = scan(root, cfg, a.fetch, batch, a.only)
     if a.json:
         print(json.dumps(state["summary"]))
     else:
@@ -1536,15 +1737,47 @@ def cmd_scan(a):
     return 0
 
 
+def cmd_config(a):
+    """Writes the settings given into .claude/repowatch.json, keeping every other key, then prints status --json.
+    A file that is not a JSON object is left alone: it is the person's, and a rewrite would lose what is in it."""
+    root = find_workspace()
+    path = root / ".claude" / "repowatch.json"
+    data = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print("cannot read %s, so it was not changed: %s" % (posix(path), e), file=sys.stderr)
+            return 1
+        if not isinstance(data, dict):
+            print("%s is not a JSON object, so it was not changed" % posix(path), file=sys.stderr)
+            return 1
+    if a.auto_sync:
+        data["autoSync"] = a.auto_sync == "on"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.replace(str(tmp), str(path))
+    print(json.dumps(status_json(root)))
+    return 0
+
+
+def status_json(root, cfg=None):
+    """state.json with the branch sync's state under `sync`, and whether the background scan runs: what the pane draws."""
+    state = read_state(root)
+    state["autoSync"] = bool((cfg or load_config(root))["autoSync"])
+    sync = _read_json(root / SYNC_STATE_REL)
+    if sync.get("repos") is not None:
+        state["sync"] = {"generated": sync.get("generated", 0), "repos": sync["repos"], "summary": sync.get("summary", {})}
+    return state
+
+
 def cmd_status(a):
     root = find_workspace()
-    state = read_state(root)
     if a.json:
-        sync = _read_json(root / SYNC_STATE_REL)
-        if sync.get("repos") is not None:
-            state["sync"] = {"generated": sync.get("generated", 0), "repos": sync["repos"], "summary": sync.get("summary", {})}
-        print(json.dumps(state))
+        print(json.dumps(status_json(root)))
         return 0
+    state = read_state(root)
     repos = sorted(state["repos"].values(), key=lambda r: (-len(r.get("flags", [])), r["name"]))
     if not repos:
         print("nothing scanned yet: run `repowatch.py scan`")
@@ -1569,12 +1802,18 @@ def main(argv=None):
     s = sp.add_parser("scan")
     s.add_argument("--fetch", action="store_true", help="also fetch the repos fetched longest ago")
     s.add_argument("--fetch-batch", type=int, default=None)
+    s.add_argument("--fetch-all", action="store_true", help="with --fetch: fetch every repo, not only the few fetched longest ago")
     s.add_argument("--only", nargs="*", default=[])
     s.add_argument("--json", action="store_true")
+    s.add_argument("--auto", action="store_true",
+                   help="the background tick: scan, fetch and read the sync only when due, then print status --json")
     s.set_defaults(fn=cmd_scan)
     s = sp.add_parser("status")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
+    s = sp.add_parser("config")
+    s.add_argument("--auto-sync", choices=("on", "off"), help="on: sessions scan by themselves; off: only Sync now")
+    s.set_defaults(fn=cmd_config)
     s = sp.add_parser("graph")
     s.add_argument("--repo", required=True)
     s.add_argument("--ref", action="append", help="the branch, then (optionally) its base")
