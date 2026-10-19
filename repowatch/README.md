@@ -67,8 +67,11 @@ installs with sdd.
   `show --repo NAME --sha SHA` do it by hand; refs that start with `-` are refused.
 - **One worktree**: `/repowatch worktree <path>` (or `worktree {"path": "..."}`) opens the Worktrees list on that one worktree,
   in use or not, with a **Show all worktrees** button. sdd's spanner button on a work item's worktree uses it.
-- **Background scan**: local facts every minute; every fifth scan also fetches the four repos fetched
-  longest ago, so dozens of repos are covered without a stall. Nothing is pulled, merged or deleted.
+- **Background scan**: local facts every two minutes; every five minutes it also fetches the four repos
+  fetched longest ago and reads the branch sync, so dozens of repos are covered without a stall. Nothing is
+  pulled, merged or deleted. Every open session ticks, but one scan serves them all: a tick runs no git while
+  the last scan is fresh or another session is scanning (`.claude/repowatch/scan.lock`). A repo whose branches
+  did not move only has `git status` read again; everything is read again every 15 minutes, and after a fetch.
 
 ## What it never does to a remote
 
@@ -100,9 +103,11 @@ the worktree folder (ignored files such as build output are not restored).
 
 Repos come from `repos` in `.claude/repowatch.json`, else `repoDirs` in `.claude/sdd.json`, else every
 folder up to two levels down that holds a `.git` folder. Other keys: `workers`, `fetchWorkers`,
-`fetchBatch`, `fetchTimeout`, `staleFetchHours`, `staleWorktreeDays`.
+`fetchBatch`, `fetchTimeout`, `staleFetchHours`, `staleWorktreeDays`, and for the background scan
+`scanEverySeconds` (120), `fullScanEverySeconds` (900), `fetchEverySeconds` (300).
 
-By hand: `python scripts/repowatch.py scan [--fetch] [--only NAME]` and `status [--json]`.
+By hand: `python scripts/repowatch.py scan [--fetch] [--only NAME]` and `status [--json]`. `scan --auto` is the
+background tick: it does what is due and prints `status --json`.
 
 Install: `/plugin install repowatch --marketplace ruadrauflessa/SDD` (it comes with sdd).
 

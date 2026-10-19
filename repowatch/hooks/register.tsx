@@ -1,6 +1,7 @@
 // repowatch: a pane and a status line for many git repos. It reads .claude/repowatch/state.json, which
-// `repowatch.py scan` writes; the scan itself runs on a timer (local facts every minute, a few fetches
-// every few minutes). Scan and Fetch only read or fetch. A clean-up (remove a worktree, prune) runs
+// `repowatch.py scan` writes. Each session ticks once a minute with `scan --auto`, which runs git only when a
+// scan is due and no other session is making it (local facts every two minutes, a few fetches every five).
+// Scan and Fetch only read or fetch. A clean-up (remove a worktree, prune) runs
 // only when the person presses its button, and only after the pane has shown the plan and been
 // confirmed: `repowatch.py plan` builds it from the live repo, `repowatch.py apply` checks again.
 import type { EngineInterface, Register } from 'claude-code'
@@ -29,8 +30,7 @@ const plans = { plugin: 'repowatch', key: 'plans' } as const
 const graph = { plugin: 'repowatch', key: 'graph' } as const
 const commit = { plugin: 'repowatch', key: 'commit' } as const
 
-const SCAN_EVERY_MS = 60_000
-const FETCH_EVERY_SCANS = 5
+const TICK_MS = 60_000
 const COLORS = { urgent: '#c0503f', warn: '#c98a12', ok: '#3f9a63', dim: '#7b8794' }
 const LANE_COLORS = ['#4a7fc4', '#3f9a63', '#c98a12', '#8a73c9', '#c0503f', '#2aa5a5']
 const SIDE_COLOR = { branch: '#3f9a63', base: '#4a7fc4', both: undefined } as const
@@ -73,6 +73,16 @@ async function refresh($: EngineInterface, fetch: boolean, withSync: boolean = f
     await run($, fetch ? ['scan', '--fetch', '--json'] : ['scan', '--json'], fetch ? 300_000 : 120_000)
     if (withSync) await run($, ['sync', '--json'], 300_000)
     return { s: await load($), why: null }
+  } catch (err) {
+    return { s: null, why: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+/** The background tick: `scan --auto` does what is due (often nothing) and prints the state. */
+async function tick($: EngineInterface): Promise<Sweep> {
+  try {
+    const parsed = JSON.parse(await run($, ['scan', '--auto'], 540_000)) as RwState
+    return { s: parsed.repos && Object.keys(parsed.repos).length ? parsed : null, why: null }
   } catch (err) {
     return { s: null, why: String(err instanceof Error ? err.message : err) }
   }
@@ -139,7 +149,7 @@ function resultText(rs: RwResult[]): string {
 }
 
 export const register: Register = on => {
-  let scans = 0
+  let ticking = false  // a tick still running when the next one is due is not doubled
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -147,20 +157,23 @@ export const register: Register = on => {
       description: 'Show the git repos of this workspace in a pane; "worktrees" lists every worktree, "sync" the team branch sync, "history <repo> <branch> [<base>]" draws a branch, "scan" or "fetch" refreshes',
       argumentHint: '[worktrees|sync|scan|fetch|history <repo> <branch> [<base>]]',
     })
-    const sync = async (fetch: boolean) => {
-      const before = (await $.state.get(state)).value ?? null
-      const r = await refresh($, fetch)
-      const toast = conflictToast(before, r.s)
-      if (toast) $.ui.toast(toast)
-      if (r.s) await $.state.set(state, r.s)
-      await $.state.set(error, r.why)
-      $.ui.status(statusText(r.s?.summary, r.s?.sync?.summary))
+    const sync = async () => {
+      if (ticking) return
+      ticking = true
+      try {
+        const before = (await $.state.get(state)).value ?? null
+        const r = await tick($)
+        const toast = conflictToast(before, r.s)
+        if (toast) $.ui.toast(toast)
+        if (r.s) await $.state.set(state, r.s)
+        await $.state.set(error, r.why)
+        $.ui.status(statusText(r.s?.summary, r.s?.sync?.summary))
+      } finally {
+        ticking = false
+      }
     }
-    void sync(false)
-    $.clock.every(SCAN_EVERY_MS, () => {
-      scans += 1
-      void sync(scans % FETCH_EVERY_SCANS === 0)
-    })
+    void sync()
+    $.clock.every(TICK_MS, () => void sync())
     return next(e)
   })
 

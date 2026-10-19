@@ -75,7 +75,7 @@ function fakeScript(on: (event: 'process.run', hook: (...a: never[]) => unknown)
     // another plugin's script (sdd's env.py view, when this file runs at the repo root) gets an empty snapshot
     if (!String(e.argv[1]).endsWith('repowatch.py')) out = JSON.stringify({ root: '/ws', specRoot: 'docs/spec', flows: {}, derived: [], items: [], done: [] })
     const mine = String(e.argv[1]).endsWith('repowatch.py')
-    if (mine && args[0] === 'status') out = JSON.stringify(STATE)
+    if (mine && (args[0] === 'status' || (args[0] === 'scan' && args.includes('--auto')))) out = JSON.stringify(STATE)
     let exitCode = 0
     if (mine && args[0] === 'graph') {
       out = calls.graphError ? JSON.stringify({ error: calls.graphError }) : JSON.stringify({ repo: flag('--repo'), rows: HISTORY, more: true })
@@ -122,6 +122,15 @@ for (const surface of ['terminal', 'desktop'] as const) {
     if (view !== 'repos') await ui.press({ key: view })
     return ui
   }
+
+  test(`${surface}: the session's timer runs only scan --auto, which decides what is due`, async ($: any, on: any) => {
+    const calls = fakeScript(on)
+    const ui = await mountPane($, 'repos', calls)
+    if (!ui) return
+    expect(calls.some(c => c[0] === 'scan' && c[1] === '--auto')).toBe(true)
+    expect(calls.some(c => c[0] === 'scan' && !c.includes('--auto'))).toBe(false)
+    expect(calls.some(c => c[0] === 'status' || c[0] === 'sync')).toBe(false)
+  })
 
   test(`${surface}: the repos view lists the repo that needs attention first`, async ($: any, on: any) => {
     const calls = fakeScript(on)

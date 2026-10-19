@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -505,6 +506,115 @@ def test_sync():
         assert rw.work_items("Merged PR 5: t", "") == []
 
 
+class CountGit:
+    """Counts the git commands repowatch runs, and still runs them."""
+    def __init__(self):
+        self.calls = []
+        self.real = rw.git
+
+    def __enter__(self):
+        def counted(args, cwd, timeout=60):
+            self.calls.append(list(args))
+            return self.real(args, cwd, timeout)
+        rw.git = counted
+        return self
+
+    def __exit__(self, *exc):
+        rw.git = self.real
+
+
+def test_auto_scan():
+    """The background tick runs no git while a scan is fresh or another session holds the lock, and a repo
+    whose refs did not move only has its `git status` read again."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        gitcfg = tmp / "gitconfig"
+        gitcfg.write_text("[user]\n\tname = Dev\n\temail = dev@x.co\n[init]\n\tdefaultBranch = main\n")
+        os.environ["GIT_CONFIG_GLOBAL"] = str(gitcfg)
+        ws, origins = tmp / "ws", tmp / "origins"
+        for d in (ws, origins, ws / ".claude"):
+            d.mkdir()
+        (ws / ".claude" / "repowatch.json").write_text("{}")
+        app = make_repo(ws, origins, "app")
+        wt = ws / "app-wt"
+        add_worktree(app, wt, "feat/x", push=True, commit_file="f.txt")
+        cfg = rw.load_config(ws)
+
+        # the first tick scans everything, and does not fetch
+        with CountGit() as g:
+            rw.auto_scan(ws, cfg)
+        st = rw.read_state(ws)
+        assert g.calls and st["fullScanned"] == st["generated"] and "fetched" not in st, st.keys()
+        assert st["repos"]["app"]["refsKey"] and not (ws / rw.SCAN_LOCK_REL).exists()
+        # a fresh scan, from this session or another, is not repeated
+        with CountGit() as g:
+            rw.auto_scan(ws, cfg)
+        assert g.calls == [], g.calls
+        # status --json and scan --auto print the same thing when nothing is due
+        assert json.loads(run_cli(ws, "scan", "--auto")) == json.loads(run_cli(ws, "status", "--json"))
+
+        # another session is scanning: the tick waits for it
+        old = dict(st, generated=st["generated"] - 1000)
+        rw.write_state(ws, old)
+        lock = ws / rw.SCAN_LOCK_REL
+        lock.write_text("1")
+        with CountGit() as g:
+            rw.auto_scan(ws, cfg)
+        assert g.calls == [] and lock.exists(), g.calls
+        # a lock left by a scan that was killed is taken over
+        t = time.time() - rw.SCAN_LOCK_STALE - 5
+        os.utime(str(lock), (t, t))
+        with CountGit() as g:
+            rw.auto_scan(ws, cfg)
+        assert g.calls and not lock.exists()
+
+        # nothing moved: only `git status` runs, of the repo and of its worktree, and a new file is seen
+        cfg = dict(cfg, scanEverySeconds=0, fetchEverySeconds=10 ** 9, fullScanEverySeconds=10 ** 9)
+        (wt / "wip.txt").write_text("w\n")
+        with CountGit() as g:
+            rw.auto_scan(ws, cfg)
+        assert [c[0] for c in g.calls] == ["status", "status"], g.calls
+        w = rw.read_state(ws)["repos"]["app"]["worktrees"][0]
+        assert w["dirty"] == 1 and w["class"] == "keep", w
+        # a commit moves a ref: that repo is read in full again
+        commit(wt, "wip.txt")
+        with CountGit() as g:
+            rw.auto_scan(ws, cfg)
+        assert len(g.calls) > 2, g.calls
+        w = rw.read_state(ws)["repos"]["app"]["worktrees"][0]
+        assert w["dirty"] == 0 and w["ahead"] == 1 and w["class"] == "keep", w
+        # a worktree folder that went away is noticed too
+        shutil.rmtree(str(wt))
+        with CountGit() as g:
+            rw.auto_scan(ws, cfg)
+        assert len(g.calls) > 2 and rw.read_state(ws)["repos"]["app"]["worktrees"][0]["class"] == "prune"
+
+        # a fetch is due: it fetches, reads everything and the branch sync
+        sh(["git", "worktree", "prune"], app)
+        for b in ("team/0.0.1", "team/0.0.2"):
+            sh(["git", "push", "-q", "origin", "main:refs/heads/" + b], app)
+        sh(["git", "checkout", "-q", "-b", "team/0.0.1", "origin/team/0.0.1"], app)
+        commit(app, "fix.txt", "f\n", "A fix ADO 7")
+        sh(["git", "push", "-q", "origin", "team/0.0.1"], app)
+        sh(["git", "checkout", "-q", "main"], app)
+        cfg = dict(cfg, fetchEverySeconds=0)
+        rw.auto_scan(ws, cfg)
+        st = rw.status_json(ws)
+        assert st["fetched"] == st["fullScanned"] == st["generated"], st.keys()
+        assert st["sync"]["repos"]["app"]["hops"][0]["missing"] == 1, st["sync"]
+        # the sync again with no remote ref moved: no git runs, the same answer
+        with CountGit() as g:
+            again = rw.run_sync(ws, cfg, [])
+        assert g.calls == [] and again["repos"] == st["sync"]["repos"], g.calls
+        # a decision changes the answer, so it is read again
+        sha = git_out(app, "rev-parse", "origin/team/0.0.1")
+        (ws / ".claude" / "repowatch" / "sync.json").write_text(json.dumps(
+            {"app": {"team/0.0.1>team/0.0.2": {"skipped": {sha: "not for 0.0.2"}}}}))
+        with CountGit() as g:
+            hop = rw.run_sync(ws, cfg, [])["repos"]["app"]["hops"][0]
+        assert g.calls and hop["skipped"] == 1 and hop["mode"] == "cherry-pick", hop
+
+
 def test_sync_actions():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -785,6 +895,7 @@ def main():
     test_worktrees()
     test_forecast()
     test_sync()
+    test_auto_scan()
     test_sync_actions()
     test_graph()
     print("ok")
