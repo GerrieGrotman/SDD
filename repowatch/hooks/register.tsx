@@ -1,7 +1,8 @@
 // repowatch: a pane and a status line for many git repos. It reads .claude/repowatch/state.json, which
 // `repowatch.py scan` writes. Each session ticks once a minute with `scan --auto`, which runs git only when a
 // scan is due and no other session is making it (local facts every two minutes, a few fetches every five).
-// Scan and Fetch only read or fetch. A clean-up (remove a worktree, prune) runs
+// With "autoSync": false in .claude/repowatch.json nothing runs on its own: Sync now does it all on a press.
+// Scan, Fetch and Sync now only read or fetch. A clean-up (remove a worktree, prune) runs
 // only when the person presses its button, and only after the pane has shown the plan and been
 // confirmed: `repowatch.py plan` builds it from the live repo, `repowatch.py apply` checks again.
 import type { EngineInterface, Register } from 'claude-code'
@@ -31,6 +32,7 @@ const graph = { plugin: 'repowatch', key: 'graph' } as const
 const commit = { plugin: 'repowatch', key: 'commit' } as const
 
 const TICK_MS = 60_000
+const MANUAL_RECHECK_TICKS = 10  // with auto sync off, the timer only asks every ten minutes whether it was turned back on
 const COLORS = { urgent: '#c0503f', warn: '#c98a12', ok: '#3f9a63', dim: '#7b8794' }
 const LANE_COLORS = ['#4a7fc4', '#3f9a63', '#c98a12', '#8a73c9', '#c0503f', '#2aa5a5']
 const SIDE_COLOR = { branch: '#3f9a63', base: '#4a7fc4', both: undefined } as const
@@ -67,10 +69,12 @@ async function load($: EngineInterface): Promise<RwState | null> {
 
 type Sweep = { s: RwState | null; why: string | null }
 
-/** Scans (and sometimes fetches), then reads the state back. The hooks store the result: $.state is theirs. */
-async function refresh($: EngineInterface, fetch: boolean, withSync: boolean = fetch): Promise<Sweep> {
+/** Scans (and sometimes fetches: a few repos, or with `all` every one), then reads the state back. The hooks store
+ *  the result: $.state is theirs. */
+async function refresh($: EngineInterface, fetch: boolean, withSync: boolean = fetch, all: boolean = false): Promise<Sweep> {
   try {
-    await run($, fetch ? ['scan', '--fetch', '--json'] : ['scan', '--json'], fetch ? 300_000 : 120_000)
+    const args = fetch ? ['scan', '--fetch', ...(all ? ['--fetch-all'] : []), '--json'] : ['scan', '--json']
+    await run($, args, all ? 600_000 : fetch ? 300_000 : 120_000)
     if (withSync) await run($, ['sync', '--json'], 300_000)
     return { s: await load($), why: null }
   } catch (err) {
@@ -150,6 +154,7 @@ function resultText(rs: RwResult[]): string {
 
 export const register: Register = on => {
   let ticking = false  // a tick still running when the next one is due is not doubled
+  let idle = 0
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -159,6 +164,8 @@ export const register: Register = on => {
     })
     const sync = async () => {
       if (ticking) return
+      // auto sync off: running python each minute only to hear "off" is a process for nothing
+      if ((await $.state.get(state)).value?.autoSync === false && ++idle % MANUAL_RECHECK_TICKS !== 0) return
       ticking = true
       try {
         const before = (await $.state.get(state)).value ?? null
@@ -245,9 +252,9 @@ export const register: Register = on => {
     const now = Math.floor(Date.now() / 1000)
 
     // what the presses do; they run after the drawing, so they may write
-    const sync = async (fetch: boolean, label: string) => {
+    const sync = async (fetch: boolean, label: string, all: boolean = false) => {
       await $.state.set(busy, label)
-      const r = await refresh($, fetch, fetch || label === 'sync')
+      const r = await refresh($, fetch, fetch || label === 'sync', all)
       const toast = conflictToast(s, r.s)
       if (toast) $.ui.toast(toast)
       if (r.s) await $.state.set(state, r.s)
@@ -339,11 +346,14 @@ export const register: Register = on => {
           <Text> </Text>
           <Button key="fetch" label="Fetch a few" onPress={() => sync(true, 'fetch')} />
           <Text> </Text>
+          <Button key="sync-now" label="Sync now" onPress={() => sync(true, 'syncing', true)} />
+          <Text> </Text>
           <Button key="filter" label={only ? 'Show all' : 'Needs attention'} onPress={async () => {
             await $.state.set(onlyAttention, !only)
             await $.state.set(offset, 0)
           }} />
         </Box>
+        {s?.autoSync === false && <Text dimColor>Auto sync is off: nothing is scanned or fetched until you press Sync now. "autoSync": true in .claude/repowatch.json turns it on.</Text>}
         {working && <Text color={COLORS.warn}>{working === 'fetch' ? 'Fetching…' : working === 'scan' ? 'Scanning…' : `${working[0].toUpperCase()}${working.slice(1)}…`}</Text>}
         {why && <Text color={COLORS.urgent}>{why}</Text>}
         {said && <Text color={COLORS.urgent}>{said}</Text>}
@@ -354,7 +364,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           {header}
-          <Text dimColor>{why ? '' : 'No repos found yet. Run from a folder that holds git repos, or list them in .claude/repowatch.json.'}</Text>
+          <Text dimColor>{why ? '' : 'No repos found yet. Press Sync now to scan, run from a folder that holds git repos, or list them in .claude/repowatch.json.'}</Text>
         </Box>
       )
     }

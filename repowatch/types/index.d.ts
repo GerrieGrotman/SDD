@@ -212,6 +212,8 @@ export type RwState = {
   undoable?: RwUndo[]
   /** Branch sync, from `repowatch.py sync`; absent until it has run. */
   sync?: RwSyncState
+  /** false when "autoSync" is off in .claude/repowatch.json: nothing runs until Sync now is pressed. */
+  autoSync?: boolean
   repos: Record<string, RwRepo>
 }
 

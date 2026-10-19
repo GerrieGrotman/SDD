@@ -72,6 +72,10 @@ installs with sdd.
   pulled, merged or deleted. Every open session ticks, but one scan serves them all: a tick runs no git while
   the last scan is fresh or another session is scanning (`.claude/repowatch/scan.lock`). A repo whose branches
   did not move only has `git status` read again; everything is read again every 15 minutes, and after a fetch.
+- **Manual only**: set `"autoSync": false` in `.claude/repowatch.json` and nothing is scanned, fetched or synced on
+  its own. Press **Sync now** (at the top of every view) to scan every repo, fetch every repo and read the branch
+  sync in one go; the pane says when auto sync is off. Set `"autoSync": true` (the default) to turn it back on.
+  **Scan** and **Fetch a few** work in both modes.
 
 ## What it never does to a remote
 
@@ -104,7 +108,7 @@ the worktree folder (ignored files such as build output are not restored).
 Repos come from `repos` in `.claude/repowatch.json`, else `repoDirs` in `.claude/sdd.json`, else every
 folder up to two levels down that holds a `.git` folder. Other keys: `workers`, `fetchWorkers`,
 `fetchBatch`, `fetchTimeout`, `staleFetchHours`, `staleWorktreeDays`, and for the background scan
-`scanEverySeconds` (120), `fullScanEverySeconds` (900), `fetchEverySeconds` (300).
+`autoSync` (true), `scanEverySeconds` (120), `fullScanEverySeconds` (900), `fetchEverySeconds` (300).
 
 By hand: `python scripts/repowatch.py scan [--fetch] [--only NAME]` and `status [--json]`. `scan --auto` is the
 background tick: it does what is due and prints `status --json`.

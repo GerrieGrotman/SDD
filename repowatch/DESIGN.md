@@ -40,6 +40,8 @@ can ask ADO whether the PR merged and move it to `safe`.
   no other session holds `scan.lock`. A repo whose refs did not move (stat of `.git`, no git) only has
   `git status` read; the sync of a repo whose remote refs and decisions did not move is kept. Each git
   process is costly on Windows with a virus scanner: a scan per session per minute was too much.
+- `"autoSync": false` in `repowatch.json` makes it manual only: `scan --auto` runs no git, the timer asks only every
+  ten minutes whether it was turned back on, and Sync now (scan, fetch every repo, branch sync) is a press.
 - Actions run only when the person clicks. Each shows its plan (the exact git commands, repos and
   branches), waits for a confirm, re-checks its preconditions, runs, and writes a journal entry to
   `.claude/repowatch/journal.jsonl` (branch name and sha, so a deleted branch can be recreated).

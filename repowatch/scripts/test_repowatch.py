@@ -568,6 +568,26 @@ def test_auto_scan():
             rw.auto_scan(ws, cfg)
         assert g.calls and not lock.exists()
 
+        # manual only: the tick runs no git however old the scan is, and says so to the pane
+        conf = ws / ".claude" / "repowatch.json"
+        conf.write_text(json.dumps({"autoSync": False, "fetchBatch": 0}))
+        rw.write_state(ws, dict(rw.read_state(ws), generated=1))
+        with CountGit() as g:
+            rw.auto_scan(ws, rw.load_config(ws))
+        assert g.calls == [], g.calls
+        out = json.loads(run_cli(ws, "scan", "--auto"))
+        assert out["autoSync"] is False and out["generated"] == 1, out.keys()
+        # Sync now fetches every repo, whatever fetchBatch says
+        head = app / ".git" / "FETCH_HEAD"
+        head.write_text("")
+        os.utime(str(head), (1000, 1000))
+        run_cli(ws, "scan", "--fetch", "--json")
+        assert rw.read_state(ws)["repos"]["app"]["lastFetch"] == 1000  # fetchBatch 0: a few is none
+        run_cli(ws, "scan", "--fetch", "--fetch-all", "--json")
+        assert rw.read_state(ws)["repos"]["app"]["lastFetch"] > 1000, rw.read_state(ws)["repos"]["app"]
+        conf.write_text("{}")
+        assert json.loads(run_cli(ws, "status", "--json"))["autoSync"] is True
+
         # nothing moved: only `git status` runs, of the repo and of its worktree, and a new file is seen
         cfg = dict(cfg, scanEverySeconds=0, fetchEverySeconds=10 ** 9, fullScanEverySeconds=10 ** 9)
         (wt / "wip.txt").write_text("w\n")

@@ -2,6 +2,7 @@
 
     python repowatch.py scan [--fetch] [--fetch-batch N] [--only NAME ...] [--json]
     python repowatch.py scan --auto        (the pane's timer: does what is due, prints status --json)
+    python repowatch.py scan --fetch --fetch-all   (Sync now: fetches every repo; then run `sync`)
     python repowatch.py status [--json]
     python repowatch.py plan  remove-worktree|prune-worktrees|delete-branch --repo NAME [--path P] [--branch B] [--delete-branch]
     python repowatch.py apply <same arguments> [--allow-review]
@@ -23,6 +24,8 @@ Background scan: every open session runs `scan --auto` each minute. It costs not
 `git status` read again, for itself and each worktree; the rest is kept. Every `fullScanEverySeconds`
 it reads everything; every `fetchEverySeconds` it fetches a few repos, reads everything and the branch sync.
 Each git command is a process, and on a Windows machine with a virus scanner each one is costly.
+With "autoSync": false in .claude/repowatch.json, `scan --auto` runs no git at all and nothing is
+scanned, fetched or synced until the person presses Sync now in the pane.
 
 Merge-conflict forecast: for each worktree (and each diverged repo) `scan` asks git, with
 `merge-tree --write-tree`, whether merging the base branch in would conflict, and in which files. No
@@ -95,7 +98,8 @@ DEFAULTS = {
     "adoLookup": True,         # ask ADO whether a deleted branch's pull request was completed (squash merges)
     "adoLookupCacheSeconds": 3600,  # how long "no completed PR" is remembered; "no az login" is asked again after 5 minutes
     # the background scan (`scan --auto`, run by every open session's timer) does work only when it is due,
-    # and only one session at a time does it
+    # and only one session at a time does it. false = manual only: nothing runs until Sync now is pressed
+    "autoSync": True,
     "scanEverySeconds": 120,       # local facts: `git status` of each repo and worktree
     "fullScanEverySeconds": 900,   # everything again, even for a repo whose refs did not move
     "fetchEverySeconds": 300,      # fetch the `fetchBatch` repos fetched longest ago, then read the branch sync
@@ -1686,6 +1690,8 @@ def auto_scan(root, cfg):
     time makes it (scan.lock). A due scan reads `git status` alone for a repo whose refs did not move;
     every `fullScanEverySeconds`, and after a fetch, it reads everything. Every `fetchEverySeconds` it
     fetches a few repos and then reads the branch sync."""
+    if not cfg["autoSync"]:  # manual only: the person presses Sync now
+        return
     now = time.time()
     if now - read_state(root).get("generated", 0) < cfg["scanEverySeconds"]:
         return
@@ -1714,9 +1720,10 @@ def cmd_scan(a):
     cfg = load_config(root)
     if a.auto:
         auto_scan(root, cfg)
-        print(json.dumps(status_json(root)))
+        print(json.dumps(status_json(root, cfg)))
         return 0
-    state, recs, fetch_errors = scan(root, cfg, a.fetch, a.fetch_batch, a.only)
+    batch = 10 ** 6 if a.fetch_all else a.fetch_batch
+    state, recs, fetch_errors = scan(root, cfg, a.fetch, batch, a.only)
     if a.json:
         print(json.dumps(state["summary"]))
     else:
@@ -1728,9 +1735,10 @@ def cmd_scan(a):
     return 0
 
 
-def status_json(root):
-    """state.json with the branch sync's state under `sync`: what the pane draws."""
+def status_json(root, cfg=None):
+    """state.json with the branch sync's state under `sync`, and whether the background scan runs: what the pane draws."""
     state = read_state(root)
+    state["autoSync"] = bool((cfg or load_config(root))["autoSync"])
     sync = _read_json(root / SYNC_STATE_REL)
     if sync.get("repos") is not None:
         state["sync"] = {"generated": sync.get("generated", 0), "repos": sync["repos"], "summary": sync.get("summary", {})}
@@ -1767,6 +1775,7 @@ def main(argv=None):
     s = sp.add_parser("scan")
     s.add_argument("--fetch", action="store_true", help="also fetch the repos fetched longest ago")
     s.add_argument("--fetch-batch", type=int, default=None)
+    s.add_argument("--fetch-all", action="store_true", help="with --fetch: fetch every repo, not only the few fetched longest ago")
     s.add_argument("--only", nargs="*", default=[])
     s.add_argument("--json", action="store_true")
     s.add_argument("--auto", action="store_true",

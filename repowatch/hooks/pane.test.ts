@@ -65,7 +65,7 @@ const PROPS = { title: 'repowatch', isFocused: true, bodyColumns: 110, placement
 type Fake = string[][] & { registered: string[]; graphError: string | null }
 
 /** Records every command the plugin runs; plan and apply answer from the arguments they were given. */
-function fakeScript(on: (event: 'process.run', hook: (...a: never[]) => unknown) => void, level: RwPlan['level'] = 'safe'): Fake {
+function fakeScript(on: (event: 'process.run', hook: (...a: never[]) => unknown) => void, level: RwPlan['level'] = 'safe', state: RwState = STATE): Fake {
   const calls = Object.assign([] as string[][], { registered: [] as string[], graphError: null as string | null })
   on('process.run', ((_$: unknown, e: { argv: string[] }) => {
     const args = e.argv.slice(2)
@@ -75,7 +75,7 @@ function fakeScript(on: (event: 'process.run', hook: (...a: never[]) => unknown)
     // another plugin's script (sdd's env.py view, when this file runs at the repo root) gets an empty snapshot
     if (!String(e.argv[1]).endsWith('repowatch.py')) out = JSON.stringify({ root: '/ws', specRoot: 'docs/spec', flows: {}, derived: [], items: [], done: [] })
     const mine = String(e.argv[1]).endsWith('repowatch.py')
-    if (mine && (args[0] === 'status' || (args[0] === 'scan' && args.includes('--auto')))) out = JSON.stringify(STATE)
+    if (mine && (args[0] === 'status' || (args[0] === 'scan' && args.includes('--auto')))) out = JSON.stringify(state)
     let exitCode = 0
     if (mine && args[0] === 'graph') {
       out = calls.graphError ? JSON.stringify({ error: calls.graphError }) : JSON.stringify({ repo: flag('--repo'), rows: HISTORY, more: true })
@@ -130,6 +130,29 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(calls.some(c => c[0] === 'scan' && c[1] === '--auto')).toBe(true)
     expect(calls.some(c => c[0] === 'scan' && !c.includes('--auto'))).toBe(false)
     expect(calls.some(c => c[0] === 'status' || c[0] === 'sync')).toBe(false)
+  })
+
+  test(`${surface}: with auto sync off the pane says so, and Sync now scans, fetches every repo and reads the sync`, async ($: any, on: any) => {
+    const calls = fakeScript(on, 'safe', { ...STATE, autoSync: false })
+    const ui = await mountPane($, 'repos', calls)
+    if (!ui) return
+    expect(await texts(ui)).toContain('Auto sync is off')
+    expect(calls.some(c => c[0] === 'scan' && c.includes('--fetch'))).toBe(false)
+    await ui.press({ key: 'sync-now' })
+    for (let i = 0; i < 100 && !calls.some(c => c[0] === 'status'); i++) await new Promise(r => setTimeout(r, 10))
+    const at = (pred: (c: string[]) => boolean) => calls.findIndex(pred)
+    const scanned = at(c => c[0] === 'scan' && c.includes('--fetch') && c.includes('--fetch-all'))
+    expect(scanned).toBeGreaterThan(-1)
+    expect(at(c => c[0] === 'sync')).toBeGreaterThan(scanned)
+    expect(at(c => c[0] === 'status')).toBeGreaterThan(at(c => c[0] === 'sync'))
+  })
+
+  test(`${surface}: with auto sync on there is no note about it`, async ($: any, on: any) => {
+    const calls = fakeScript(on)
+    const ui = await mountPane($, 'repos', calls)
+    if (!ui) return
+    expect(await texts(ui)).not.toContain('Auto sync is off')
+    expect(await ui.find({ key: 'sync-now' })).toBeTruthy()
   })
 
   test(`${surface}: the repos view lists the repo that needs attention first`, async ($: any, on: any) => {
