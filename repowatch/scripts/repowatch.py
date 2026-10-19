@@ -3,6 +3,7 @@
     python repowatch.py scan [--fetch] [--fetch-batch N] [--only NAME ...] [--json]
     python repowatch.py scan --auto        (the pane's timer: does what is due, prints status --json)
     python repowatch.py scan --fetch --fetch-all   (Sync now: fetches every repo; then run `sync`)
+    python repowatch.py config --auto-sync on|off  (the pane's toggle: writes "autoSync" to .claude/repowatch.json)
     python repowatch.py status [--json]
     python repowatch.py plan  remove-worktree|prune-worktrees|delete-branch --repo NAME [--path P] [--branch B] [--delete-branch]
     python repowatch.py apply <same arguments> [--allow-review]
@@ -18,14 +19,15 @@ writes them to <workspace>/.claude/repowatch/state.json. With --fetch it also fe
 were fetched longest ago, a few at a time, so a sweep of dozens of repos is spread over many scans
 and never stalls. It never pulls, merges or checks out anything.
 
-Background scan: every open session runs `scan --auto` each minute. It costs nothing until a scan is due
+Background scan: a session whose pane found auto sync on runs `scan --auto` each minute. It costs nothing until a scan is due
 (`scanEverySeconds` after the last one, from any session), and only one session scans at a time
 (.claude/repowatch/scan.lock). A repo whose refs did not move (checked with stat, no git) then only has
 `git status` read again, for itself and each worktree; the rest is kept. Every `fullScanEverySeconds`
 it reads everything; every `fetchEverySeconds` it fetches a few repos, reads everything and the branch sync.
 Each git command is a process, and on a Windows machine with a virus scanner each one is costly.
-With "autoSync": false in .claude/repowatch.json, `scan --auto` runs no git at all and nothing is
-scanned, fetched or synced until the person presses Sync now in the pane.
+With "autoSync": false in .claude/repowatch.json (the pane's Auto sync toggle writes it, through
+`config`) no session keeps a timer, `scan --auto` runs no git at all, and nothing is scanned, fetched
+or synced until the person presses Sync now in the pane.
 
 Merge-conflict forecast: for each worktree (and each diverged repo) `scan` asks git, with
 `merge-tree --write-tree`, whether merging the base branch in would conflict, and in which files. No
@@ -1735,6 +1737,31 @@ def cmd_scan(a):
     return 0
 
 
+def cmd_config(a):
+    """Writes the settings given into .claude/repowatch.json, keeping every other key, then prints status --json.
+    A file that is not a JSON object is left alone: it is the person's, and a rewrite would lose what is in it."""
+    root = find_workspace()
+    path = root / ".claude" / "repowatch.json"
+    data = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print("cannot read %s, so it was not changed: %s" % (posix(path), e), file=sys.stderr)
+            return 1
+        if not isinstance(data, dict):
+            print("%s is not a JSON object, so it was not changed" % posix(path), file=sys.stderr)
+            return 1
+    if a.auto_sync:
+        data["autoSync"] = a.auto_sync == "on"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.replace(str(tmp), str(path))
+    print(json.dumps(status_json(root)))
+    return 0
+
+
 def status_json(root, cfg=None):
     """state.json with the branch sync's state under `sync`, and whether the background scan runs: what the pane draws."""
     state = read_state(root)
@@ -1784,6 +1811,9 @@ def main(argv=None):
     s = sp.add_parser("status")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
+    s = sp.add_parser("config")
+    s.add_argument("--auto-sync", choices=("on", "off"), help="on: sessions scan by themselves; off: only Sync now")
+    s.set_defaults(fn=cmd_config)
     s = sp.add_parser("graph")
     s.add_argument("--repo", required=True)
     s.add_argument("--ref", action="append", help="the branch, then (optionally) its base")

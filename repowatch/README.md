@@ -67,15 +67,17 @@ installs with sdd.
   `show --repo NAME --sha SHA` do it by hand; refs that start with `-` are refused.
 - **One worktree**: `/repowatch worktree <path>` (or `worktree {"path": "..."}`) opens the Worktrees list on that one worktree,
   in use or not, with a **Show all worktrees** button. sdd's spanner button on a work item's worktree uses it.
-- **Background scan**: local facts every two minutes; every five minutes it also fetches the four repos
-  fetched longest ago and reads the branch sync, so dozens of repos are covered without a stall. Nothing is
-  pulled, merged or deleted. Every open session ticks, but one scan serves them all: a tick runs no git while
-  the last scan is fresh or another session is scanning (`.claude/repowatch/scan.lock`). A repo whose branches
-  did not move only has `git status` read again; everything is read again every 15 minutes, and after a fetch.
-- **Manual only**: set `"autoSync": false` in `.claude/repowatch.json` and nothing is scanned, fetched or synced on
-  its own. Press **Sync now** (at the top of every view) to scan every repo, fetch every repo and read the branch
-  sync in one go; the pane says when auto sync is off. Set `"autoSync": true` (the default) to turn it back on.
-  **Scan** and **Fetch a few** work in both modes.
+- **Auto sync** (the toggle at the top of every view, `"autoSync"` in `.claude/repowatch.json`, on by default).
+  A session reads the setting when it starts. **On**, it keeps a timer: local facts every two minutes; every five
+  minutes it also fetches the four repos fetched longest ago and reads the branch sync, so dozens of repos are
+  covered without a stall. One scan serves every open session: a tick runs no git while the last scan is fresh or
+  another session is scanning (`.claude/repowatch/scan.lock`), and a repo whose branches did not move only has
+  `git status` read again; everything is read again every 15 minutes, and after a fetch. **Off**, the session has
+  no timer and nothing is scanned, fetched or synced on its own. Turning the toggle on or off writes the setting
+  and starts or stops this session's timer; another session's timer stops at its next tick, and a session without
+  one reads the setting again when `/repowatch` opens. Nothing is pulled, merged or deleted.
+- **Sync now** (at the top of every view) scans every repo, fetches every repo and reads the branch sync in one go,
+  whatever the setting. **Scan** and **Fetch a few** work either way too.
 
 ## What it never does to a remote
 
@@ -111,7 +113,7 @@ folder up to two levels down that holds a `.git` folder. Other keys: `workers`, 
 `autoSync` (true), `scanEverySeconds` (120), `fullScanEverySeconds` (900), `fetchEverySeconds` (300).
 
 By hand: `python scripts/repowatch.py scan [--fetch] [--only NAME]` and `status [--json]`. `scan --auto` is the
-background tick: it does what is due and prints `status --json`.
+background tick: it does what is due and prints `status --json`. `config --auto-sync on|off` is the toggle.
 
 Install: `/plugin install repowatch --marketplace ruadrauflessa/SDD` (it comes with sdd).
 

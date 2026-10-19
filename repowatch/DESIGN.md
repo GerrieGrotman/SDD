@@ -40,8 +40,12 @@ can ask ADO whether the PR merged and move it to `safe`.
   no other session holds `scan.lock`. A repo whose refs did not move (stat of `.git`, no git) only has
   `git status` read; the sync of a repo whose remote refs and decisions did not move is kept. Each git
   process is costly on Windows with a virus scanner: a scan per session per minute was too much.
-- `"autoSync": false` in `repowatch.json` makes it manual only: `scan --auto` runs no git, the timer asks only every
-  ten minutes whether it was turned back on, and Sync now (scan, fetch every repo, branch sync) is a press.
+- Auto sync is a toggle in the pane, kept as `"autoSync"` in `repowatch.json` (`repowatch.py config` writes it, keeping
+  the other keys, and leaves a file that is not JSON alone). A session reads it at start (`status --json`, no git)
+  and keeps a timer only while it is on; the toggle starts or cancels the timer. A tick that finds it off stops its
+  own timer, so turning it off in one session stops the others within a minute. Off, Sync now (scan, fetch every
+  repo, branch sync) is a press. The timer and its helpers are module-level functions: the engine refuses a `$`
+  that is stored, or passed to anything but a top-level function.
 - Actions run only when the person clicks. Each shows its plan (the exact git commands, repos and
   branches), waits for a confirm, re-checks its preconditions, runs, and writes a journal entry to
   `.claude/repowatch/journal.jsonl` (branch name and sha, so a deleted branch can be recreated).

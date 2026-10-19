@@ -585,6 +585,15 @@ def test_auto_scan():
         assert rw.read_state(ws)["repos"]["app"]["lastFetch"] == 1000  # fetchBatch 0: a few is none
         run_cli(ws, "scan", "--fetch", "--fetch-all", "--json")
         assert rw.read_state(ws)["repos"]["app"]["lastFetch"] > 1000, rw.read_state(ws)["repos"]["app"]
+        # the pane's toggle writes the setting and keeps the other keys
+        out = json.loads(run_cli(ws, "config", "--auto-sync", "on"))
+        assert out["autoSync"] is True and json.loads(conf.read_text()) == {"autoSync": True, "fetchBatch": 0}
+        assert json.loads(run_cli(ws, "config", "--auto-sync", "off"))["autoSync"] is False
+        assert json.loads(conf.read_text())["autoSync"] is False
+        # a file that is not JSON is the person's to fix: it is not overwritten
+        conf.write_text("{ broken")
+        r = subprocess.run([PY, str(HERE / "repowatch.py"), "config", "--auto-sync", "on"], cwd=str(ws), capture_output=True, text=True)
+        assert r.returncode == 1 and "not changed" in r.stderr and conf.read_text() == "{ broken", r.stderr
         conf.write_text("{}")
         assert json.loads(run_cli(ws, "status", "--json"))["autoSync"] is True
 
