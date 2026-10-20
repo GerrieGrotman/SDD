@@ -2,7 +2,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { BugCategory, BugIndex, BugRecord, BugsConfig, SddSnapshot } from '../types'
-import { F, NO_FILTER, analysisKey, analysisPrompt, ago, bugsConfig, categorize, changeLabel, commentProblem, conditionHolds, currentValue,
+import { F, NO_FILTER, UNASSIGNED, analysisKey, assigneeKey, assigneeOptions, analysisPrompt, ago, bugsConfig, categorize, changeLabel, commentProblem, conditionHolds, currentValue,
   filterItems, chipCounts, clipboardArgvFor, countText, saveSummary, sddCommand, inTeamArea, isMine, isTeam, parseTeam, visibleIndex, visibleItems, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
   scriptAnswer, scriptArgv, sddState, severityRank, shortName, sortItems, stageChange, stateOptions, tagOptions, withPending } from './view/bugs'
 
@@ -78,6 +78,21 @@ test('the default categories sort the list, and a team version becomes one categ
   expect(by['version:1.1.0']).toEqual([1, 3])
   expect(categorize(ITEMS, [{ id: 'bad', label: 'B', eachTag: '(' } as BugCategory], ME).length).toBe(0)
   expect(categorize(ITEMS, [{ id: 'team', label: 'Team', eachField: 'type' } as BugCategory], ME).map(c => c.label)).toEqual(['Team Issue', 'Team Bug'])
+})
+
+test('the Assigned to filter: one person, or nobody, and the people to choose from', () => {
+  const cats = categorize(ITEMS, DEFAULTS.categories, ME, NOW)
+  const ids = (assignee: string, over: Partial<typeof NO_FILTER> = {}) => filterItems(ITEMS, { ...NO_FILTER, ...over, assignee }, cats, ME, DEFAULTS.doneStates).map(i => i.id)
+  expect(ids('ann@x.co')).toEqual([2])
+  expect(ids('ANN@X.CO')).toEqual([2])                                                   // case aside
+  expect(ids(UNASSIGNED)).toEqual([3, 4])
+  expect(ids('ann@x.co', { state: 'New' })).toEqual([])                                  // it adds to the other filters
+  expect(ids('')).toEqual([1, 2, 3, 4])
+  expect(assigneeKey({ name: 'Ann Bee', email: 'Ann@x.co' })).toBe('ann@x.co')
+  expect(assigneeKey({ name: 'Ann Bee', email: '' })).toBe('ann bee')                    // no e-mail: the name
+  expect(assigneeKey(null)).toBe('')
+  expect(assigneeOptions(ITEMS)).toEqual({ people: [{ key: 'ann@x.co', name: 'Ann Bee', count: 1 }, { key: 'me@x.co', name: 'Me Myself', count: 1 }], unassigned: 2 })
+  expect(chipCounts(ITEMS, { ...NO_FILTER, assignee: UNASSIGNED }, cats, ME, DEFAULTS.doneStates).all).toBe(2)   // the counts follow it
 })
 
 test('the filters: category, mine, type, state and words', () => {

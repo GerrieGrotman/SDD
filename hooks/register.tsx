@@ -10,7 +10,7 @@ import type { BugAnalysis, BugCategory, BugChange, BugCondition, BugSettings, Bu
 import { GLYPH, agentRows, contextTone, moneyText, spendHead, SPEND_ICON, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, railBarColor, clipboardArgv, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { ageShort, agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, lineKey, linePath, lineTone, lineWord, sortLines } from './view/worktrees'
-import { ANALYSIS_SYSTEM, F, FIELD_NAME, NO_FILTER, ago, analysisKey, analysisNote, analysisPrompt, bugsConfig, categorize, chipCounts, clipboardArgvFor, commentProblem, countText, currentValue, filterItems, isMine,
+import { ANALYSIS_SYSTEM, F, FIELD_NAME, NO_FILTER, UNASSIGNED, ago, analysisKey, analysisNote, analysisPrompt, bugsConfig, assigneeOptions, categorize, chipCounts, clipboardArgvFor, commentProblem, countText, currentValue, filterItems, isMine,
   itemLinks, keepMine, parseJson, parseTeam, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem, scriptAnswer, scriptArgv, sddState,
   saveSummary, sddCommand, severityColor, visibleIndex, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
 import { CATEGORY_TEXT_FIELDS, SECTIONS, addAlternative, addCategory, addToField, applyToDevelopers, applyToSdd, changeCount, conditionOf, conditionRows, describeCategory, fieldKey, fieldsOf,
@@ -1104,11 +1104,13 @@ export const register: Register = on => {
           return (
             <Box key={`fld-${fk}`} flexDirection="column" marginBottom={1}>
               {head}
-              <Box flexDirection="row" gap={1} flexWrap="wrap">
+              <Box flexDirection="row" gap={1} flexWrap="wrap" marginTop={1}>
                 {items.length === 0 && <Text dimColor>none</Text>}
                 {items.map(x => <Button key={`rm-${fk}-${x}`} label={`${x} ✕`} onPress={() => change(s => removeFromField(s, f, x))} />)}
               </Box>
-              <In key={`add-${fk}-${items.length}`} placeholder="Type one to add; a comma adds several" submitLabel="add" onSubmit={val => change(s => addToField(s, f, val))} />
+              <Box marginTop={1}>
+                <In key={`add-${fk}-${items.length}`} placeholder="Type one to add; a comma adds several" submitLabel="add" onSubmit={val => change(s => addToField(s, f, val))} />
+              </Box>
             </Box>
           )
         }
@@ -1116,14 +1118,18 @@ export const register: Register = on => {
           return (
             <Box key={`fld-${fk}`} flexDirection="column" marginBottom={1}>
               {head}
-              <Sel key={`sel-${fk}`} value={String(v)} options={(f.options ?? []).map(o => ({ value: o, label: o }))} onSelect={val => change(s => setField(s, f, val))} />
+              <Box marginTop={1}>
+                <Sel key={`sel-${fk}`} value={String(v)} options={(f.options ?? []).map(o => ({ value: o, label: o }))} onSelect={val => change(s => setField(s, f, val))} />
+              </Box>
             </Box>
           )
         }
         return (
           <Box key={`fld-${fk}`} flexDirection="column" marginBottom={1}>
             {head}
-            <In key={`val-${fk}-${valueText(v)}`} value={valueText(v)} placeholder={f.kind === 'number' ? 'a whole number' : 'none'} submitLabel="set" onSubmit={val => change(s => setField(s, f, val))} />
+            <Box marginTop={1}>
+              <In key={`val-${fk}-${valueText(v)}`} value={valueText(v)} placeholder={f.kind === 'number' ? 'a whole number' : 'none'} submitLabel="set" onSubmit={val => change(s => setField(s, f, val))} />
+            </Box>
           </Box>
         )
       }
@@ -1134,7 +1140,7 @@ export const register: Register = on => {
         const scope = `${cat.id}-${alt ?? 'base'}`
         const rows = conditionRows(cond)
         return (
-          <Box key={`rules-${scope}`} flexDirection="column">
+          <Box key={`rules-${scope}`} flexDirection="column" gap={1}>
             {rows.length === 0 && <Text dimColor wrap="wrap">{alt == null ? 'No rules of its own.' : 'No rules yet: it matches every item.'}</Text>}
             {rows.map(r => (
               <Box key={`rule-${scope}-${r.spec.key}`} flexDirection="row" gap={1} alignItems="center">
@@ -1194,13 +1200,13 @@ export const register: Register = on => {
                     {catText(c, 'color', 'Colour (#rrggbb)', '#3f9a63')}
                     {catText(c, 'eachTag', 'One chip per tag matching', 'a pattern, e.g. ^\\d+\\.\\d+ for versions; {value} in the name is the tag')}
                     {catText(c, 'eachField', 'One chip per value of', 'a field, e.g. area')}
-                    <Box flexDirection="column">
+                    <Box flexDirection="column" gap={1}>
                       <Text bold>Rules</Text>
                       <Text dimColor wrap="wrap">All of these must hold.</Text>
                       {ruleEditor(c, null)}
                     </Box>
                     {(c.any ?? []).map((a, i2) => (
-                      <Box key={`alt-${c.id}-${i2}`} flexDirection="column" borderStyle="round" borderColor={C.line} paddingX={1}>
+                      <Box key={`alt-${c.id}-${i2}`} flexDirection="column" gap={1} borderStyle="round" borderColor={C.line} paddingX={1}>
                         <Box flexDirection="row" gap={1} alignItems="center">
                           <Box flexGrow={1}><Text bold>{`Alternative ${i2 + 1}`}</Text></Box>
                           <Button key={`altrm-${c.id}-${i2}`} label="Remove" onPress={() => change(s => updateCategory(s, c.id, x => removeAlternative(x, i2)))} />
@@ -1259,7 +1265,7 @@ export const register: Register = on => {
                     <Box flexDirection="column" marginTop={1}>
                       {sec.id === 'categories' ? categories : fieldsOf(sec.id).map(fieldEditor)}
                     </Box>
-                    <Box flexDirection="row" gap={1}>
+                    <Box flexDirection="row" gap={1} marginTop={1}>
                       <Button key={`secreset-${sec.id}`} label={sec.id === 'team' ? 'Clear the dev team' : 'Back to the plugin\'s own'} onPress={() => resetSettings(sec.id)} />
                     </Box>
                   </Box>
@@ -1305,6 +1311,13 @@ export const register: Register = on => {
     const areas = pathOptions(index.items, 'area')
     const iterations = pathOptions(index.items, 'iteration')
     const stateColor = (st: string) => /resolv|done|deploy/i.test(st) ? C.done : /activ|progress|commit/i.test(st) ? C.now : /clos|remov/i.test(st) ? C.dim : C.work
+    const assignees = assigneeOptions(index.items)
+    const assigneeChoices = [
+      { value: '*', label: 'Anyone' },
+      ...assignees.people.map(a => ({ value: a.key, label: `${a.name} (${a.count})` })),
+      ...(assignees.unassigned ? [{ value: UNASSIGNED, label: `Unassigned (${assignees.unassigned})` }] : []),
+    ]
+    if (filter.assignee && !assigneeChoices.some(o => o.value === filter.assignee)) assigneeChoices.push({ value: filter.assignee, label: filter.assignee })
     const opt = (values: string[], label = (v: string) => v) => values.map(v => ({ value: v, label: label(v) }))
 
     // ---- filters: words, order, type, state, mine, and the categories as chips
@@ -1340,6 +1353,8 @@ export const register: Register = on => {
               options={[{ value: '*', label: 'All' }, ...opt(cfg.types ?? [])]} />
             <Select key="bugs-state" label="State" value={filter.state || '*'} onSelect={v => setFilter({ state: v === '*' ? '' : v })}
               options={[{ value: '*', label: 'All' }, ...opt(states.includes(filter.state) || !filter.state ? states : [...states, filter.state])]} />
+            <Select key="bugs-assignee" label="Assigned to" value={filter.assignee || '*'} onSelect={v => setFilter({ assignee: v === '*' ? '' : v })}
+              options={assigneeChoices} />
           </Box>
         )}
         <Box flexDirection="row" gap={1} flexWrap="wrap">
@@ -1464,7 +1479,7 @@ export const register: Register = on => {
               <Box width={4} flexShrink={0}><Text dimColor>Age</Text></Box>
             </Box>
           )}
-          {list.length === 0 && <Text dimColor wrap="wrap">{index.items.length ? `Nothing matches these filters.${filter.hideDone ? ' Resolved and closed items are hidden: untick "Hide resolved/closed" to see them.' : ''}${filter.team ? ' Only the dev team\'s developers\' items are shown: untick "Dev team" to see everyone\'s.' : ''}` : 'The query found no bugs or issues. Check "bugs.query" in .claude/sdd.json.'}</Text>}
+          {list.length === 0 && <Text dimColor wrap="wrap">{index.items.length ? `Nothing matches these filters.${filter.hideDone ? ' Resolved and closed items are hidden: untick "Hide resolved/closed" to see them.' : ''}${filter.team ? ' Only the dev team\'s developers\' items are shown: untick "Dev team" to see everyone\'s.' : ''}${filter.assignee ? ' Only one person\'s items are shown: set "Assigned to" back to Anyone.' : ''}` : 'The query found no bugs or issues. Check "bugs.query" in .claude/sdd.json.'}</Text>}
           {page.map(item => drawRow(item))}
         </Box>
         {list.length > size && (

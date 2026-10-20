@@ -301,6 +301,8 @@ export type BugFilter = {
   sort: 'priority' | 'severity' | 'changed' | 'created' | 'id'
   type: string
   state: string
+  /** Only the items assigned to this person: `assigneeKey` of the person, or `UNASSIGNED`. Empty: everyone. */
+  assignee: string
 }
 
 declare module 'claude-code' {
