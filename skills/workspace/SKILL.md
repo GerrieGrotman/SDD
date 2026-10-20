@@ -151,7 +151,7 @@ written into the file at the next session after a plugin update, so they are the
 | `folder` | Where the synced bugs live, under `specRoot` (default `.bugs`) |
 | `types` | The work item types it pulls (default `Bug`, `Issue`) |
 | `query` | `projects` (empty: `ado.projects`), `excludeStates`, `areaPaths` and `iterationPaths` (UNDER), `where` (a WIQL clause), `top` |
-| `developersFile` | The dev team's file for the **Dev team** filter, from the workspace root (default `.claude/developers.json`): `{ "areaPath": "A; A\\B\\*", "developers": ["Display Name", ...] }`, or a plain list of developers. An item is the team's when assigned to a developer (name or e-mail, case aside) or in an area path: `A` is that area only, `A\B\*` that area and everything under it |
+| `developersFile` | The dev team's file, from the workspace root (default `.claude/developers.json`): `{ "areaPath": "A; A\\B\\*", "developers": ["Display Name", ...] }`, or a plain list of developers. The **Dev team** filter shows the items assigned to a developer (name or e-mail, case aside). `areaPath` is a gate on everything shown, with no filter on too: an item outside it is never listed or counted. `A` is that area only, `A\B\*` that area and everything under it. No `areaPath`, no gate |
 | `doneStates` | The states **Hide resolved/closed** hides (default `Resolved`, `Closed`, `Done`, `Removed`) |
 | `extraFields` | More fields to keep on each item, for a category rule (`fields`) or `eachField` |
 | `states`, `severities`, `priorities` | What the triage pickers offer |

@@ -233,7 +233,7 @@ export type BugsConfig = {
 export type BugTeam = {
   /** Display names or e-mails. */
   developers: string[]
-  /** Area paths: `A\B` is that area only; `A\B\*` is that area and everything under it. */
+  /** Area paths: `A\B` is that area only; `A\B\*` is that area and everything under it. An item outside them is never shown. */
   areas: string[]
 }
 
@@ -283,7 +283,7 @@ export type BugFilter = {
   mine: boolean
   /** Hide the items in a "doneStates" state. */
   hideDone: boolean
-  /** Only the dev team's items: assigned to a developer of the dev team file, or in one of its area paths. */
+  /** Only the dev team's items: assigned to a developer of the dev team file. */
   team: boolean
   text: string
   sort: 'priority' | 'severity' | 'changed' | 'created' | 'id'

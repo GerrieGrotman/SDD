@@ -12,7 +12,7 @@ import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { ageShort, agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, lineKey, linePath, lineTone, lineWord, sortLines } from './view/worktrees'
 import { ANALYSIS_SYSTEM, F, FIELD_NAME, NO_FILTER, ago, analysisKey, analysisNote, analysisPrompt, bugsConfig, categorize, chipCounts, clipboardArgvFor, commentProblem, countText, currentValue, filterItems, isMine,
   itemLinks, keepMine, parseJson, parseTeam, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem, scriptAnswer, scriptArgv, sddState,
-  saveSummary, sddCommand, severityColor, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
+  saveSummary, sddCommand, severityColor, visibleIndex, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
 
 const PANE = 'sdd-view'
 const snap = { plugin: 'sdd', key: 'snap' } as const
@@ -778,11 +778,14 @@ export const register: Register = on => {
     const cols = e.props.bodyColumns
     const s = (await $.state.get(snap)).value ?? null
     paint(s?.colors)
-    const index = (await $.state.get(bugsIdx)).value ?? null
+    const indexAll = (await $.state.get(bugsIdx)).value ?? null
     const why = (await $.state.get(bugsErr)).value ?? null
     const cfg = (await $.state.get(bugsCfgS)).value ?? null
     const pending = (await $.state.get(bugsPend)).value ?? []
-    const devTeam = (await $.state.get(bugsTeamS)).value ?? null  // the developers of the dev team file; null = no such file
+    const devTeam = (await $.state.get(bugsTeamS)).value ?? null  // the dev team file's developers and area paths; null = no such file
+    // the file's area paths decide what is shown at all: everything below (list, counts, chips, pickers) works on the items inside them
+    const index = indexAll ? visibleIndex(indexAll, devTeam) : null
+    const outside = indexAll && index ? indexAll.items.length - index.items.length : 0
     const filter = { ...NO_FILTER, ...((await $.state.get(bugsFilt)).value ?? {}) }
     const openId = (await $.state.get(bugsOpenS)).value ?? null
     const editing = (await $.state.get(bugsEditS)).value ?? null
@@ -951,7 +954,7 @@ export const register: Register = on => {
         </Box>
         {index && (
           <Text dimColor wrap="truncate-end">
-            {`${countText(shown ?? index.count, index.count)} · ${index.org}${index.projects.length ? ` / ${index.projects.join(', ')}` : ''} · synced ${ago(index.syncedAt, now) || 'never'}${ago(index.syncedAt, now) && ago(index.syncedAt, now) !== 'now' ? ' ago' : ''}${index.me?.email ? ` · you are ${index.me.email}` : ''}`}
+            {`${countText(shown ?? index.count, index.count)}${outside ? ` (${outside} outside the area path hidden)` : ''} · ${index.org}${index.projects.length ? ` / ${index.projects.join(', ')}` : ''} · synced ${ago(index.syncedAt, now) || 'never'}${ago(index.syncedAt, now) && ago(index.syncedAt, now) !== 'now' ? ' ago' : ''}${index.me?.email ? ` · you are ${index.me.email}` : ''}`}
           </Text>
         )}
         {why && <Text color={C.now} wrap="wrap">{why}</Text>}
@@ -1000,8 +1003,8 @@ export const register: Register = on => {
             onPress={() => setFilter({ mine: !filter.mine })} />
           <Button key="bugs-team" label={`${filter.team ? '☑' : '☐'} Dev team`} variant={filter.team ? 'primary' : undefined}
             onPress={() => {
-              if (!filter.team && !devTeam) {
-                $.ui.toast(`No dev team: ${cfg.developersFile} is missing, or names no developer and no area. It looks like { "areaPath": "A; A\\\\B\\\\*", "developers": ["Name", ...] }.`)
+              if (!filter.team && !devTeam?.developers.length) {
+                $.ui.toast(`No dev team: ${cfg.developersFile} is missing, or lists no developers. It looks like { "areaPath": "A; A\\\\B\\\\*", "developers": ["Name", ...] }.`)
                 return
               }
               setFilter({ team: !filter.team })
@@ -1142,7 +1145,7 @@ export const register: Register = on => {
               <Box width={4} flexShrink={0}><Text dimColor>Age</Text></Box>
             </Box>
           )}
-          {list.length === 0 && <Text dimColor wrap="wrap">{index.items.length ? `Nothing matches these filters.${filter.hideDone ? ' Resolved and closed items are hidden: untick "Hide resolved/closed" to see them.' : ''}${filter.team ? ' Only the dev team\'s items (its developers\', and its area paths\') are shown: untick "Dev team" to see everyone\'s.' : ''}` : 'The query found no bugs or issues. Check "bugs.query" in .claude/sdd.json.'}</Text>}
+          {list.length === 0 && <Text dimColor wrap="wrap">{index.items.length ? `Nothing matches these filters.${filter.hideDone ? ' Resolved and closed items are hidden: untick "Hide resolved/closed" to see them.' : ''}${filter.team ? ' Only the dev team\'s developers\' items are shown: untick "Dev team" to see everyone\'s.' : ''}` : 'The query found no bugs or issues. Check "bugs.query" in .claude/sdd.json.'}</Text>}
           {page.map(item => drawRow(item))}
         </Box>
         {list.length > size && (
