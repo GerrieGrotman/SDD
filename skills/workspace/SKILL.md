@@ -51,7 +51,8 @@ reads the ADO org and projects from each `origin` remote. Show the user the file
 ask them to remove any ADO project that holds no specs (a tooling repo's project, for example).
 Other keys: `worktreeRoot` (default `.claude/worktrees`), `repoDirs` (explicit repo list,
 overrides discovery), `specTypes`, `branchTemplate`, `embeddings`, `agents`, `agentRequest`
-(the Ai Agent Request types, and the type created per flow: `{"bug": "Bug", "spec": "Tech Story"}`).
+(the Ai Agent Request types, and the type created per flow: `{"bug": "Bug", "spec": "Tech Story"}`),
+`bugs` (the bug manager, `/sdd-bugs`: see below).
 
 `agents.models` sets the model each sdd sub-agent runs on — `sonnet`, `opus` or `haiku`:
 
@@ -138,6 +139,29 @@ Both stay silent unless an sdd flow is running: this turn ran an sdd script (oth
 Only a real run counts — `python …/scripts/env.py <command>` as the program. A `grep` or `cat` that names
 the script does not. Installing the plugin installs the hooks.
 Self-check: `python ${CLAUDE_PLUGIN_ROOT}/hooks/test_question_guard.py`.
+
+## The bug manager (`/sdd-bugs`)
+
+`"bugs"` in `.claude/sdd.json` over `scripts/bugs/defaults.json` (an object one level down is merged key
+by key; a list, such as `categories`, replaces the default whole). `folder` and `categories` are
+written into the file at the next session after a plugin update, so they are there to tune.
+
+| Key | What |
+| --- | --- |
+| `folder` | Where the synced bugs live, under `specRoot` (default `.bugs`) |
+| `types` | The work item types it pulls (default `Bug`, `Issue`) |
+| `query` | `projects` (empty: `ado.projects`), `excludeStates`, `areaPaths` and `iterationPaths` (UNDER), `where` (a WIQL clause), `top` |
+| `extraFields` | More fields to keep on each item, for a category rule (`fields`) or `eachField` |
+| `states`, `severities`, `priorities` | What the triage pickers offer |
+| `categories` | `{ id, label, icon, color }` plus a rule. Every key given must hold: `states`, `notStates`, `types`, `boardColumns`, `tags`, `allTags`, `severity` (prefixes: `"1"`), `priority`, `assigned` (`me`, `none`, `anyone`), `areaUnder`, `iterationUnder`, `maxEffort`, `minEffort`, `titleMatches`, `hasPullRequest`, `hasCommits`, `olderThanDays`, `newerThanDays`, `fields`. `any: [rule, ...]`: one of them must hold too. `eachTag: "<regex>"` or `eachField: "<field>"`: one category per value, `{value}` in the label |
+| `analysis` | The probable cause's `model` (default `haiku`), `maxTokens`, `effort` |
+| `newChat` | `mode`: `desktop` (default: a new Claude Code session in the Desktop app, `claude://code/new?q=/sdd:sdd <id>&folder=<workspace>`), `terminal` (a new terminal window runs `claude "/sdd:sdd <id>"`) or `url` (opens `url` with `{id}`, `{prompt}`, `{root}`) |
+| `me` | Your ADO e-mail, when `git config user.email` is not it |
+| `powershell` | The PowerShell to run the scripts with (default `pwsh`, else `powershell`) |
+
+The scripts are `scripts/bugs/*.ps1`: `Sync-Bugs`, `Get-BugDetail`, `Save-BugChanges`, `Find-BugEvidence`,
+`Start-SddChat`. Each prints one JSON line. They run by hand too, from the workspace:
+`pwsh -NoProfile -File <plugin>/scripts/bugs/Sync-Bugs.ps1`.
 
 ## The sdd view
 

@@ -23,8 +23,9 @@ the user's view; this file is for working on the plugin itself.
 | `scripts/spec.py` | The ADO mirror and index, impact, rev-tested ADO writes, `next`, metrics.json, Ai Agent Request `request` / `route` |
 | `scripts/sddlib.py` | Shared helpers, `DEFAULTS` for `.claude/sdd.json`, config upgrade, the output style install |
 | `scripts/adowrite.py`, `proof.py`, `nextpick.py`, `metrics.py` | ADO writes; recorded test runs; next-item rules; metrics.json — logic as plain functions, tested without ADO |
+| `scripts/bugs/` | The bug manager's mechanics (`/sdd-bugs`), in PowerShell: `Sync-Bugs`, `Get-BugDetail`, `Save-BugChanges` (rev-tested batch writes), `Find-BugEvidence` (git, no tokens), `Start-SddChat`; `BugsCommon.ps1` is what they share, `defaults.json` the one source of the `bugs` settings (sddlib, the scripts and the view all read it) |
 | `scripts/fakeado.py` | Offline ADO for tests and evals: on when `SDD_FAKE_ADO` names a JSON world file |
-| `hooks/` | `question_guard.py`, `agent_guard.py`, `edit_guard.py`, and `register.tsx` + `view/model.ts` (the sdd view, a mod), `view/worktrees.ts` (pure helpers of the `/sdd-worktrees` page, whose hooks live in `register.tsx`) |
+| `hooks/` | `question_guard.py`, `agent_guard.py`, `edit_guard.py`, and `register.tsx` + `view/model.ts` (the sdd view, a mod), `view/worktrees.ts` (pure helpers of the `/sdd-worktrees` page, whose hooks live in `register.tsx`), `view/bugs.ts` (pure helpers of the `/sdd-bugs` bug manager: categories, filters, staged changes, the probable-cause prompt) |
 | `agents/` | `investigator` and `skeptic`, the read-only sub-agents |
 | `evals/` | `claude plugin eval` cases; `_fixtures/workspace.py` builds each case's workspace |
 | `repowatch/` | A second, standalone plugin (sdd depends on it, same marketplace): tracks many git repos and worktrees. `scripts/repowatch.py` does the git mechanics and writes `.claude/repowatch/state.json`; `hooks/register.tsx` draws the pane and status line from it, and runs a clean-up only after `plan`, a confirm and `apply` (which re-checks). Has its own `plugin.json` and version |
@@ -36,6 +37,8 @@ the user's view; this file is for working on the plugin itself.
 python scripts/test_sdd.py
 python scripts/test_proof.py         # needs git; real worktrees in temp folders
 python scripts/test_fakeado.py       # the real commands against the offline ADO
+python scripts/test_bugs.py          # needs pwsh or powershell; the bug scripts against the offline ADO over HTTP,
+                                     # and a PowerShell 5.1 compatibility check when PSScriptAnalyzer is installed
 python scripts/check_evals.py        # needs PyYAML; checks the eval cases, runs nothing
 python hooks/test_question_guard.py
 python hooks/test_agent_guard.py
@@ -60,7 +63,11 @@ to trust the plugin directory, and each case is a paid agent run. A full TypeScr
 - **Mechanics go in a script, judgement in a skill.** If a rule can be checked, the script enforces
   it (`env.py can`, `progress --passed`, `env.py pr`) rather than the skill text asking for it.
 - **ADO writes only through `adowrite.py`** (`spec.py claim | handover | sprint | comment | route`): every
-  patch is rev-tested. Never a `#<id>` in text ADO stores — it posts a mention; write `ADO <id>`.
+  patch is rev-tested. Never a `#<id>` in text ADO stores — it posts a mention; write `ADO <id>`. The one
+  other writer is the bug manager's `scripts/bugs/Save-BugChanges.ps1` (the person asked for PowerShell
+  there): it keeps the same rules (a `test /rev` op, re-read and decide again on 412, no `#<id>`).
+- **The bug scripts run on Windows PowerShell 5.1 too**: no `??`, `?:`, `-AsHashtable` or `&&`; ASCII only
+  (5.1 reads a file without a BOM as ANSI; `test_bugs.py` checks); JSON written without a BOM.
 - **Renaming or renumbering a stage** touches `flows.json` (key, `doc`, `reworkTo`), the stage file,
   the skills, `view.test.ts`, the tests, and old `workitem.json` records (see
   `sddlib.renumber_bug_phases` for how the bug phases were migrated on read).
@@ -82,4 +89,6 @@ to trust the plugin directory, and each case is a paid agent run. A full TypeScr
   setup ran. Never set up from a draw hook: the engine refuses state writes while a draw is dispatched.
 - **The view writes one thing**: what each turn cost, in dollars and tokens, through `env.py cost` (one appended
   line in the item's `cost.jsonl`; `view` reports the totals). Otherwise `register.tsx` reads `env.py view` and posts the user's
-  messages. It never passes a gate or runs another state-changing command.
+  messages. It never passes a gate or runs another state-changing command. The bug manager (`/sdd-bugs`) is
+  apart: it writes the staged changes to `<bugs folder>/pending.json` and a probable cause to `items/<id>.analysis.json`,
+  and runs the bug scripts on the person's press; its one model call is the probable cause, on a press.

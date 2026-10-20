@@ -585,22 +585,24 @@ def config_upgrade():
         before = {"specRoot": "docs/spec", "ado": {"org": "Org", "projects": ["P"]}}
         path.write_text(json.dumps(before))
         assert sddlib.load_config(root)["agents"]["models"] == {"investigator": "sonnet", "skeptic": "opus"}
-        assert sddlib.upgrade_config(root) == ["agents.models.investigator", "agents.models.skeptic"] + ["next.weights.priority", "next.weights.severity", "next.weights.complexity", "next.complexity"]
+        assert sddlib.upgrade_config(root) == ["agents.models.investigator", "agents.models.skeptic"] + ["next.weights.priority", "next.weights.severity", "next.weights.complexity", "next.complexity"] + ["bugs.folder", "bugs.categories"]
         got = json.loads(path.read_text())
+        assert got["bugs"] == {"folder": ".bugs", "categories": sddlib.DEFAULTS["bugs"]["categories"]}
         assert got["agents"] == {"models": {"investigator": "sonnet", "skeptic": "opus"}}
         assert got["next"] == {"weights": {"priority": 50, "severity": 30, "complexity": 20}, "complexity": "complex-first"}
         assert {k: got[k] for k in before} == before                    # nothing else written or changed
         assert "view" not in got
         assert sddlib.upgrade_config(root) == []                         # second run: nothing to do
         path.write_text(json.dumps({**before, "agents": {"models": {"skeptic": "sonnet"}, "x": 1},
-                                    "next": {"weights": {"priority": 70}, "complexity": "simple-first"}}))
+                                    "next": {"weights": {"priority": 70}, "complexity": "simple-first"},
+                                    "bugs": {"folder": ".bugs", "categories": []}}))
         assert sddlib.upgrade_config(root) == ["agents.models.investigator", "next.weights.severity",
                                                "next.weights.complexity"]
         assert json.loads(path.read_text())["next"]["weights"]["priority"] == 70     # a tuned weight stays
         assert sddlib.load_config(root)["next"]["complexity"] == "simple-first"
         got = json.loads(path.read_text())
         assert got["agents"] == {"models": {"skeptic": "sonnet", "investigator": "sonnet"}, "x": 1}  # set value kept
-        path.write_text(json.dumps({**before, "agents": "opus", "next": dict(sddlib.DEFAULTS["next"])}))
+        path.write_text(json.dumps({**before, "agents": "opus", "next": dict(sddlib.DEFAULTS["next"]), "bugs": "off"}))
         assert sddlib.upgrade_config(root) == [] and json.loads(path.read_text())["agents"] == "opus"
         assert sddlib.load_config(root)["agents"]["models"]["skeptic"] == "opus"
         path.write_text(json.dumps({**before, "agents": {"models": {"investigator": "gpt-4"}}}))
@@ -609,6 +611,14 @@ def config_upgrade():
         path.write_text(json.dumps({**before, "agentRequest": {"create": {"spec": "User Story"}}}))
         assert sddlib.load_config(root)["agentRequest"] == {"types": ["Ai Agent Request"],
                                                             "create": {"bug": "Bug", "spec": "User Story"}}
+        # the bug manager: an object one level down is merged key by key, a list replaces the default
+        path.write_text(json.dumps({**before, "bugs": {"query": {"top": 50}, "categories": [{"id": "x", "label": "X"}],
+                                                       "states": {"Bug": ["New", "Done"]}}}))
+        bugs = sddlib.load_config(root)["bugs"]
+        assert bugs["query"]["top"] == 50 and bugs["query"]["excludeStates"] == ["Closed", "Removed", "Done"]
+        assert bugs["categories"] == [{"id": "x", "label": "X"}]
+        assert bugs["states"] == {"Bug": ["New", "Done"], "Issue": ["New", "Active", "Resolved", "Closed"]}
+        assert bugs["folder"] == ".bugs" and bugs["analysis"]["model"] == "haiku"
 
 
 if __name__ == "__main__":
