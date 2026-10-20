@@ -323,6 +323,26 @@ test('desktop: Hide resolved/closed shows all the rest, and says so when nothing
   expect(await labels(ui)).toContain('▸ Header typo')
 })
 
+test('desktop: the Assigned to dropdown shows one person\'s items, or the unassigned ones, and the counts follow', async ($: any, on: any) => {
+  const w = world(on)
+  const ui = await mount($, w)
+  if (!ui) return
+  expect(await ui.find({ key: 'bugs-assignee' })).toBeTruthy()
+  await ui.select({ key: 'bugs-assignee', value: 'ann@x.co' })
+  await settle(ui, /1 of 3 items/)
+  let names = await labels(ui)
+  expect(names).toContain('▸ Login hangs')
+  expect(names).not.toContain('▸ Totals lose cents')
+  await ui.select({ key: 'bugs-assignee', value: '__unassigned__' })
+  await settle(ui, /▸ Header typo/)
+  names = await labels(ui)
+  expect(names).toEqual(expect.arrayContaining(['▸ Header typo', 'All 1']))
+  expect(names).not.toContain('▸ Login hangs')
+  await ui.select({ key: 'bugs-assignee', value: '*' })
+  await settle(ui, /3 items/)
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['▸ Totals lose cents', '▸ Login hangs', '▸ Header typo']))
+})
+
 test('desktop: the header and the chips follow the filters', async ($: any, on: any) => {
   const w = world(on)
   const ui = await mount($, w)

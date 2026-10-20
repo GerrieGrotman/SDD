@@ -17,7 +17,30 @@ export const FIELD_NAME: Record<string, string> = {
   [F.severity]: 'Severity', [F.priority]: 'Priority',
 }
 
-export const NO_FILTER: BugFilter = { category: 'all', mine: false, hideDone: false, team: false, text: '', sort: 'priority', type: '', state: '' }
+export const NO_FILTER: BugFilter = { category: 'all', mine: false, hideDone: false, team: false, text: '', sort: 'priority', type: '', state: '', assignee: '' }
+
+/** The assignee filter's value for the items nobody has. */
+export const UNASSIGNED = '__unassigned__'
+
+/** What the assignee filter compares: the e-mail, else the name, in lower case. */
+export const assigneeKey = (p: BugPerson | null | undefined): string => low(p?.email || p?.name || '')
+
+/** The people the items are assigned to, most items first, and how many each has; `unassigned` is how many have nobody. */
+export function assigneeOptions(items: BugRecord[]): { people: Array<{ key: string; name: string; count: number }>; unassigned: number } {
+  const by = new Map<string, { key: string; name: string; count: number }>()
+  let unassigned = 0
+  for (const i of items) {
+    const key = assigneeKey(i.assigned)
+    if (!key) {
+      unassigned++
+      continue
+    }
+    const cur = by.get(key)
+    if (cur) cur.count++
+    else by.set(key, { key, name: i.assigned?.name || i.assigned?.email || key, count: 1 })
+  }
+  return { people: [...by.values()].sort((a, b) => a.name.localeCompare(b.name)), unassigned }
+}
 
 // ---------------------------------------------------------------- settings
 
@@ -202,6 +225,7 @@ export function filterItems(items: BugRecord[], f: BugFilter, cats: Category[], 
     if (f.team && !isTeam(i, team)) return false
     if (f.type && low(i.type) !== low(f.type)) return false
     if (f.state && low(i.state) !== low(f.state)) return false
+    if (f.assignee && (f.assignee === UNASSIGNED ? !!assigneeKey(i.assigned) : assigneeKey(i.assigned) !== low(f.assignee))) return false
     if (words.length) {
       const hay = low(`${i.id} ${i.title} ${i.tags.join(' ')} ${i.assigned?.name ?? ''} ${i.area} ${i.iteration} ${i.state}`)
       if (!words.every(w => hay.includes(w))) return false
