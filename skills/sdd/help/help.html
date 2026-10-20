@@ -190,7 +190,7 @@
     </table>
     <h3>Bugs and issues (Claude Desktop app)</h3>
     <table>
-      <tr><td><code>/sdd-bugs</code></td><td>The bug manager. <b>Sync from ADO</b> pulls the bugs and issues into the spec folder. Pick a category (quick wins, high severity, in progress, ready for deployment, team branch version), filter, and open a row to triage it.</td></tr>
+      <tr><td><code>/sdd-bugs</code></td><td>The bug manager. <b>Sync from ADO</b> pulls the bugs and issues into the spec folder; <b>⚙ Config</b> opens <code>.claude/sdd.json</code>, where the categories are. Pick a category (quick wins, high severity, in progress, ready for deployment, team branch version), filter (by words, type, state, <b>Assigned to me</b>, <b>Hide resolved/closed</b>, or <b>Dev team</b>, the developers and area paths in <code>.claude/developers.json</code>), and open a row to triage it.</td></tr>
       <tr><td><code>/sdd-bugs mine</code></td><td>The same, with only the items assigned to you.</td></tr>
       <tr><td>Triage a row</td><td>State, severity, priority, assignee, area, iteration, tags and a comment. Each change is staged first. <b>Save all to ADO</b> writes the batch; <b>↶</b> reverts one change, <b>Revert item</b> one item, <b>Revert all</b> the batch. Tick rows to change several at once.</td></tr>
       <tr><td>Probable cause</td><td><b>Evidence only</b> searches your repos with git (no tokens). <b>Find probable cause</b> sends the report and that evidence to a small model once, and keeps the answer.</td></tr>

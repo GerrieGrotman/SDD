@@ -9,6 +9,8 @@
     "where": "",
     "top": 1000
   },
+  "developersFile": ".claude/developers.json",
+  "doneStates": ["Resolved", "Closed", "Done", "Removed"],
   "extraFields": [],
   "states": {
     "Bug": ["New", "Active", "Resolved", "Closed"],

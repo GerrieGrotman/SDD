@@ -151,6 +151,8 @@ written into the file at the next session after a plugin update, so they are the
 | `folder` | Where the synced bugs live, under `specRoot` (default `.bugs`) |
 | `types` | The work item types it pulls (default `Bug`, `Issue`) |
 | `query` | `projects` (empty: `ado.projects`), `excludeStates`, `areaPaths` and `iterationPaths` (UNDER), `where` (a WIQL clause), `top` |
+| `developersFile` | The dev team's file for the **Dev team** filter, from the workspace root (default `.claude/developers.json`): `{ "areaPath": "A; A\\B\\*", "developers": ["Display Name", ...] }`, or a plain list of developers. An item is the team's when assigned to a developer (name or e-mail, case aside) or in an area path: `A` is that area only, `A\B\*` that area and everything under it |
+| `doneStates` | The states **Hide resolved/closed** hides (default `Resolved`, `Closed`, `Done`, `Removed`) |
 | `extraFields` | More fields to keep on each item, for a category rule (`fields`) or `eachField` |
 | `states`, `severities`, `priorities` | What the triage pickers offer |
 | `categories` | `{ id, label, icon, color }` plus a rule. Every key given must hold: `states`, `notStates`, `types`, `boardColumns`, `tags`, `allTags`, `severity` (prefixes: `"1"`), `priority`, `assigned` (`me`, `none`, `anyone`), `areaUnder`, `iterationUnder`, `maxEffort`, `minEffort`, `titleMatches`, `hasPullRequest`, `hasCommits`, `olderThanDays`, `newerThanDays`, `fields`. `any: [rule, ...]`: one of them must hold too. `eachTag: "<regex>"` or `eachField: "<field>"`: one category per value, `{value}` in the label |

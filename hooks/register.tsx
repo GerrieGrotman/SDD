@@ -11,7 +11,7 @@ import { GLYPH, agentRows, contextTone, moneyText, spendHead, SPEND_ICON, spendT
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { ageShort, agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, lineKey, linePath, lineTone, lineWord, sortLines } from './view/worktrees'
 import { ANALYSIS_SYSTEM, F, FIELD_NAME, NO_FILTER, ago, analysisKey, analysisNote, analysisPrompt, bugsConfig, categorize, commentProblem, currentValue, filterItems, isMine,
-  itemLinks, keepMine, parseJson, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem, scriptAnswer, scriptArgv, sddState,
+  itemLinks, keepMine, parseJson, parseTeam, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem, scriptAnswer, scriptArgv, sddState,
   severityColor, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
 
 const PANE = 'sdd-view'
@@ -390,6 +390,7 @@ const bugsIdx = { plugin: 'sdd', key: 'bugs' } as const
 const bugsErr = { plugin: 'sdd', key: 'bugsError' } as const
 const bugsCfgS = { plugin: 'sdd', key: 'bugsCfg' } as const
 const bugsPend = { plugin: 'sdd', key: 'bugsPending' } as const
+const bugsTeamS = { plugin: 'sdd', key: 'bugsTeam' } as const
 const bugsFilt = { plugin: 'sdd', key: 'bugsFilter' } as const
 const bugsOpenS = { plugin: 'sdd', key: 'bugsOpen' } as const
 const bugsEditS = { plugin: 'sdd', key: 'bugsEdit' } as const
@@ -467,10 +468,19 @@ async function bugsRead($: EngineInterface, quiet = false): Promise<BugsWhere | 
     }
   }
   const [indexText, pendingText] = [await read('index.json'), await read('pending.json')]
-  const seen = [JSON.stringify(w.cfg), String(indexText), String(pendingText)].join('\u0000')
+  // the dev team's file sits in the workspace, not in the bugs folder
+  const teamPath = /^([A-Za-z]:)?[\\/]/.test(w.cfg.developersFile) ? w.cfg.developersFile : `${w.root}/${w.cfg.developersFile}`
+  let teamText: string | Error
+  try {
+    teamText = await $.fs.read(teamPath)
+  } catch (err) {
+    teamText = err instanceof Error ? err : new Error(String(err))
+  }
+  const seen = [JSON.stringify(w.cfg), String(indexText), String(pendingText), String(teamText)].join('\u0000')
   if (quiet && seen === bugsSeen) return w
   bugsSeen = seen
   await $.state.set(bugsCfgS, w.cfg)
+  await $.state.set(bugsTeamS, teamText instanceof Error ? null : parseTeam(teamText))
   let index: BugIndex | null = null
   let why: string | null = null
   try {
@@ -772,6 +782,7 @@ export const register: Register = on => {
     const why = (await $.state.get(bugsErr)).value ?? null
     const cfg = (await $.state.get(bugsCfgS)).value ?? null
     const pending = (await $.state.get(bugsPend)).value ?? []
+    const devTeam = (await $.state.get(bugsTeamS)).value ?? null  // the developers of the dev team file; null = no such file
     const filter = { ...NO_FILTER, ...((await $.state.get(bugsFilt)).value ?? {}) }
     const openId = (await $.state.get(bugsOpenS)).value ?? null
     const editing = (await $.state.get(bugsEditS)).value ?? null
@@ -798,6 +809,11 @@ export const register: Register = on => {
     const setFilter = (f: Partial<BugFilter>) => void (async () => {
       await update($, bugsFilt, cur => ({ ...NO_FILTER, ...(cur ?? {}), ...f }))
       await $.state.set(bugsOffS, 0)
+    })()
+    // the workspace's .claude/sdd.json, where "bugs" holds the categories and the rest of the settings, in the app the computer uses for it
+    const openConfig = () => void (async () => {
+      const w = await where()
+      if (w) await openFile($, `${w.root}/.claude/sdd.json`)
     })()
     const sync = () => void bugsBusy($, 'sync', async () => {
       const w = await where()
@@ -924,6 +940,7 @@ export const register: Register = on => {
           </Box>
           {busy && <Text color={C.now}>{`⟳ ${BUSY_WORD[busy] ?? busy}…`}</Text>}
           <Button key="bugs-sync" label="↻ Sync from ADO" onPress={sync} />
+          <Button key="bugs-config" label="⚙ Config" onPress={openConfig} />
         </Box>
         {index && (
           <Text dimColor wrap="truncate-end">
@@ -946,7 +963,7 @@ export const register: Register = on => {
     const team = people(index)
     const cats = categorize(index.items, cfg.categories ?? [], index.me, now)
     const shownItems = index.items.map(i => withPending(i, pending, team))
-    const list = sortItems(filterItems(shownItems, filter, cats, index.me), filter.sort)
+    const list = sortItems(filterItems(shownItems, filter, cats, index.me, cfg.doneStates ?? [], devTeam), filter.sort)
     const size = Math.max(8, (e.viewport?.rows ?? 40) - 16)
     const start = from < list.length ? from : 0
     const page = list.slice(start, start + size)
@@ -972,6 +989,16 @@ export const register: Register = on => {
           {filter.text && <Button key="bugs-search-clear" label="✕ clear search" onPress={() => setFilter({ text: '' })} />}
           <Button key="bugs-mine" label={`${filter.mine ? '☑' : '☐'} Assigned to me`} variant={filter.mine ? 'primary' : undefined}
             onPress={() => setFilter({ mine: !filter.mine })} />
+          <Button key="bugs-team" label={`${filter.team ? '☑' : '☐'} Dev team`} variant={filter.team ? 'primary' : undefined}
+            onPress={() => {
+              if (!filter.team && !devTeam) {
+                $.ui.toast(`No dev team: ${cfg.developersFile} is missing, or names no developer and no area. It looks like { "areaPath": "A; A\\\\B\\\\*", "developers": ["Name", ...] }.`)
+                return
+              }
+              setFilter({ team: !filter.team })
+            }} />
+          <Button key="bugs-open" label={`${filter.hideDone ? '☑' : '☐'} Hide resolved/closed`} variant={filter.hideDone ? 'primary' : undefined}
+            onPress={() => setFilter({ hideDone: !filter.hideDone })} />
         </Box>
         {Select && (
           <Box flexDirection="row" gap={2} flexWrap="wrap">
@@ -1106,7 +1133,7 @@ export const register: Register = on => {
               <Box width={4} flexShrink={0}><Text dimColor>Age</Text></Box>
             </Box>
           )}
-          {list.length === 0 && <Text dimColor wrap="wrap">{index.items.length ? 'Nothing matches these filters.' : 'The query found no bugs or issues. Check "bugs.query" in .claude/sdd.json.'}</Text>}
+          {list.length === 0 && <Text dimColor wrap="wrap">{index.items.length ? `Nothing matches these filters.${filter.hideDone ? ' Resolved and closed items are hidden: untick "Hide resolved/closed" to see them.' : ''}${filter.team ? ' Only the dev team\'s items (its developers\', and its area paths\') are shown: untick "Dev team" to see everyone\'s.' : ''}` : 'The query found no bugs or issues. Check "bugs.query" in .claude/sdd.json.'}</Text>}
           {page.map(item => drawRow(item))}
         </Box>
         {list.length > size && (

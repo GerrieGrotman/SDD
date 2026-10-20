@@ -216,6 +216,10 @@ export type BugsConfig = {
   types: string[]
   query: { projects: string[]; excludeStates: string[]; areaPaths: string[]; iterationPaths: string[]; where: string; top: number }
   extraFields: string[]
+  /** The dev team's file, from the workspace root: { "areaPath": "A; B\\*", "developers": ["Display Name", ...] }. */
+  developersFile: string
+  /** The states "Hide resolved and closed" hides. */
+  doneStates: string[]
   states: Record<string, string[]>
   severities: string[]
   priorities: number[]
@@ -224,6 +228,14 @@ export type BugsConfig = {
   newChat: { mode: string; url: string }
   me: string
   powershell: string
+}
+
+/** The dev team file: who is on the team, and which area paths are its own. */
+export type BugTeam = {
+  /** Display names or e-mails. */
+  developers: string[]
+  /** Area paths: `A\B` is that area only; `A\B\*` is that area and everything under it. */
+  areas: string[]
 }
 
 /** One staged change, kept in <bugs folder>/pending.json until it is saved or reverted. */
@@ -270,6 +282,10 @@ export type BugAnalysis = {
 export type BugFilter = {
   category: string
   mine: boolean
+  /** Hide the items in a "doneStates" state. */
+  hideDone: boolean
+  /** Only the dev team's items: assigned to a developer of the dev team file, or in one of its area paths. */
+  team: boolean
   text: string
   sort: 'priority' | 'severity' | 'changed' | 'created' | 'id'
   type: string
@@ -314,6 +330,8 @@ declare module 'claude-code' {
       bugsError: string | null
       /** The bug manager's settings: sdd.json "bugs" over scripts/bugs/defaults.json. */
       bugsCfg: BugsConfig | null
+      /** The dev team of "bugs.developersFile", or null while that file is missing, unreadable or names nobody and no area. */
+      bugsTeam: BugTeam | null
       /** The staged changes (pending.json). */
       bugsPending: BugChange[]
       bugsFilter: BugFilter

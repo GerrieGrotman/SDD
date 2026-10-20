@@ -3,13 +3,13 @@ import { expect, test } from 'claude-code/testing'
 
 import type { BugCategory, BugIndex, BugRecord, BugsConfig, SddSnapshot } from '../types'
 import { F, NO_FILTER, analysisKey, analysisPrompt, ago, bugsConfig, categorize, changeLabel, commentProblem, conditionHolds, currentValue,
-  filterItems, isMine, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
+  filterItems, isMine, isTeam, parseTeam, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
   scriptAnswer, scriptArgv, sddState, severityRank, shortName, sortItems, stageChange, stateOptions, tagOptions, withPending } from './view/bugs'
 
 const DEFAULTS = {
   folder: '.bugs', types: ['Bug', 'Issue'],
   query: { projects: [], excludeStates: ['Closed'], areaPaths: [], iterationPaths: [], where: '', top: 1000 },
-  extraFields: [], states: { Bug: ['New', 'Active', 'Resolved', 'Closed'], Issue: ['New', 'Active', 'Resolved', 'Closed'] },
+  extraFields: [], developersFile: '.claude/developers.json', doneStates: ['Resolved', 'Closed', 'Done', 'Removed'], states: { Bug: ['New', 'Active', 'Resolved', 'Closed'], Issue: ['New', 'Active', 'Resolved', 'Closed'] },
   severities: ['1 - Critical', '2 - High', '3 - Medium', '4 - Low'], priorities: [1, 2, 3, 4],
   categories: [
     { id: 'quick-wins', label: 'Quick wins', icon: '⚡', notStates: ['Resolved', 'Closed'], any: [{ tags: ['Quick Win'] }, { maxEffort: 2 }] },
@@ -82,18 +82,60 @@ test('the default categories sort the list, and a team version becomes one categ
 
 test('the filters: category, mine, type, state and words', () => {
   const cats = categorize(ITEMS, DEFAULTS.categories, ME, NOW)
-  const ids = (f: Partial<typeof NO_FILTER>) => filterItems(ITEMS, { ...NO_FILTER, ...f }, cats, ME).map(i => i.id)
+  const ids = (f: Partial<typeof NO_FILTER>) => filterItems(ITEMS, { ...NO_FILTER, ...f }, cats, ME, DEFAULTS.doneStates).map(i => i.id)
   expect(ids({})).toEqual([1, 2, 3, 4])
   expect(ids({ category: 'quick-wins' })).toEqual([1, 4])
   expect(ids({ mine: true })).toEqual([1])
   expect(ids({ type: 'issue' })).toEqual([4])
   expect(ids({ state: 'Resolved' })).toEqual([3])
+  expect(ids({ hideDone: true })).toEqual([1, 2, 4])                                // all but resolved and closed
+  expect(ids({ hideDone: true, category: 'ready' })).toEqual([])                  // the ready chip is the resolved ones
+  expect(filterItems(ITEMS, { ...NO_FILTER, hideDone: true }, cats, ME).map(i => i.id)).toEqual([1, 2, 3, 4])   // no doneStates given: nothing hidden
   expect(ids({ text: 'ann active' })).toEqual([2])
   expect(ids({ text: '1.2.0' })).toEqual([2])
   expect(ids({ category: 'gone' })).toEqual([1, 2, 3, 4])                          // a category that left the list: all
   expect(isMine(rec(5, { assigned: { name: 'Me Myself', email: '' } }), ME)).toBe(true)        // no e-mail: by name
   expect(isMine(rec(5, { assigned: { name: 'Me Myself', email: 'other@x.co' } }), ME)).toBe(false)
   expect(isMine(rec(5, { assigned: { name: 'me myself', email: '' } }), { name: 'Me Myself', email: '' })).toBe(true)
+})
+
+test('the dev team: the file as the workspace keeps it, by developer or by area path', () => {
+  // .claude/developers.json as the team keeps it: area paths in one string, and the developers by display name
+  const file = JSON.stringify({ areaPath: 'Proj.Pay; Proj.Pay\\Core\\*', developers: ['Ann Bee', ' raj patel ', '', 'bob@x.co'] })
+  const team = parseTeam(file)!
+  expect(team).toEqual({ developers: ['Ann Bee', 'raj patel', 'bob@x.co'], areas: ['Proj.Pay', 'Proj.Pay\\Core\\*'] })
+  expect(parseTeam('﻿' + file)).toEqual(team)                                            // a BOM is dropped
+  expect(parseTeam('["Ann Bee", {"name": "Raj Patel"}, {"email": "b@x.co", "name": "B"}]')).toEqual({ developers: ['Ann Bee', 'Raj Patel', 'b@x.co'], areas: [] })
+  expect(parseTeam('{"areaPath": ["A\\\\B", "C/D\\\\*"]}')).toEqual({ developers: [], areas: ['A\\B', 'C\\D\\*'] })   // a list; / becomes \
+  expect(parseTeam('{"developers": "Ann"}')).toBe(null)
+  expect(parseTeam('{"areaPath": " ; "}')).toBe(null)
+  expect(parseTeam('not json')).toBe(null)
+
+  // by developer: display name or e-mail, case aside
+  const at = (area: string, assigned: { name: string; email: string } | null = null) => rec(9, { area, assigned })
+  expect(isTeam(at('Other', { name: 'ANN BEE', email: '' }), team)).toBe(true)
+  expect(isTeam(at('Other', { name: 'Bob', email: 'BOB@x.co' }), team)).toBe(true)
+  expect(isTeam(at('Other', { name: 'Me Myself', email: 'me@x.co' }), team)).toBe(false)
+  // by area: `A` is that area only, `A\B\*` is that area and everything under it
+  expect(isTeam(at('Proj.Pay'), team)).toBe(true)                                              // exact
+  expect(isTeam(at('proj.pay'), team)).toBe(true)                                              // case aside
+  expect(isTeam(at('Proj.Pay\\Billing'), team)).toBe(false)                                    // under an exact entry: no
+  expect(isTeam(at('Proj.Pay\\Core'), team)).toBe(true)                                        // the starred area itself
+  expect(isTeam(at('Proj.Pay\\Core\\Totals\\Deep'), team)).toBe(true)                          // and anything under it
+  expect(isTeam(at('Proj.Pay\\Corex'), team)).toBe(false)                                      // a longer name is not under it
+  expect(isTeam(at(''), team)).toBe(false)
+  // either is enough: an unassigned item in the area, and a developer's item anywhere
+  expect(isTeam(at('Proj.Pay\\Core\\X', null), team)).toBe(true)
+  expect(isTeam(at('Elsewhere', { name: 'Ann Bee', email: '' }), team)).toBe(true)
+  expect(isTeam(ITEMS[1], null)).toBe(false)
+  expect(isTeam(ITEMS[1], { developers: [], areas: [] })).toBe(false)
+
+  const cats = categorize(ITEMS, DEFAULTS.categories, ME, NOW)
+  const only = { developers: ['Ann Bee'], areas: [] }
+  expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], only).map(i => i.id)).toEqual([2])
+  expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], { developers: ['Ann Bee'], areas: ['Proj\\Payments'] }).map(i => i.id)).toEqual([1, 2, 3, 4])   // every ITEM is in that area
+  expect(filterItems(ITEMS, { ...NO_FILTER, team: true, hideDone: true }, cats, ME, DEFAULTS.doneStates, { developers: ['Ann Bee', 'Me Myself'], areas: [] }).map(i => i.id)).toEqual([1, 2])
+  expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], null)).toEqual([])    // a filter with no team shows nothing
 })
 
 test('the order: priority, severity, changed, created, id', () => {

@@ -31,7 +31,7 @@ const INDEX = {
 const DEFAULTS = {
   folder: '.bugs', types: ['Bug', 'Issue'],
   query: { projects: [], excludeStates: ['Closed'], areaPaths: [], iterationPaths: [], where: '', top: 1000 },
-  extraFields: [], states: { Bug: ['New', 'Active', 'Resolved', 'Closed'], Issue: ['New', 'Active', 'Resolved', 'Closed'] },
+  extraFields: [], developersFile: '.claude/developers.json', doneStates: ['Resolved', 'Closed', 'Done', 'Removed'], states: { Bug: ['New', 'Active', 'Resolved', 'Closed'], Issue: ['New', 'Active', 'Resolved', 'Closed'] },
   severities: ['1 - Critical', '2 - High', '3 - Medium', '4 - Low'], priorities: [1, 2, 3, 4],
   categories: [
     { id: 'quick-wins', label: 'Quick wins', icon: '⚡', any: [{ tags: ['Quick Win'] }] },
@@ -45,7 +45,7 @@ const PROPS = { title: 'sdd bugs', isFocused: true, bodyColumns: 120, placement:
 
 type World = { files: Record<string, string>; runs: string[][]; prompts: string[]; toasts: string[]; filled: string[]; registered: string[] }
 
-function world(on: any, opts: { synced?: boolean } = {}): World {
+function world(on: any, opts: { synced?: boolean; team?: boolean } = {}): World {
   const w: World = {
     files: {
       [`${ROOT}/.claude/sdd.json`]: JSON.stringify({ specRoot: 'docs/spec', ado: { org: 'Org', projects: ['Proj'] } }),
@@ -55,6 +55,8 @@ function world(on: any, opts: { synced?: boolean } = {}): World {
     runs: [], prompts: [], toasts: [], filled: [], registered: [],
   }
   if (opts.synced !== false) w.files[`${DIR}/index.json`] = JSON.stringify(INDEX)
+  // the dev team's file, as the workspace keeps it: an area path and display names
+  if (opts.team !== false) w.files[`${ROOT}/.claude/developers.json`] = JSON.stringify({ areaPath: 'Proj.Other; Proj\\Billing\\*', developers: ['ann bee', 'Raj Patel'] })
   const done = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
   on('process.run', ((_$: unknown, e: { argv: string[] }) => {
     w.runs.push(e.argv)
@@ -152,6 +154,79 @@ test('desktop: the list shows the synced items, the categories and the filters',
   await ui.input({ key: 'bugs-search', text: 'nothing like this', kind: 'submit' })
   await settle(ui, /Nothing matches/)
   expect(await texts(ui)).toContain('Nothing matches these filters.')
+})
+
+for (const synced of [true, false]) {
+  test(`desktop: the Config button opens the workspace's sdd.json (${synced ? 'synced' : 'not synced yet'})`, async ($: any, on: any) => {
+    const w = world(on, { synced })
+    const ui = await mount($, w)
+    if (!ui) return
+    expect(await labels(ui)).toContain('⚙ Config')
+    await ui.press({ key: 'bugs-config' })
+    for (let i = 0; i < 100 && !w.runs.some(r => r.includes(`${ROOT}/.claude/sdd.json`)); i++) await new Promise(r => setTimeout(r, 10))
+    expect(w.runs.find(r => r.includes(`${ROOT}/.claude/sdd.json`))).toEqual(['open', `${ROOT}/.claude/sdd.json`])
+  })
+}
+
+test('desktop: Hide resolved/closed shows all the rest, and says so when nothing is left', async ($: any, on: any) => {
+  const w = world(on)
+  const ui = await mount($, w)
+  if (!ui) return
+  expect(await labels(ui)).toContain('▸ Header typo')                                  // 703 is resolved
+  await ui.press({ key: 'bugs-open' })
+  await settle(ui, /☑ Hide resolved\/closed/)
+  let names = await labels(ui)
+  expect(names).toEqual(expect.arrayContaining(['▸ Totals lose cents', '▸ Login hangs']))
+  expect(names).not.toContain('▸ Header typo')
+  await ui.input({ key: 'bugs-search', text: 'typo', kind: 'submit' })                 // only a resolved one matches
+  await settle(ui, /Nothing matches/)
+  expect(await texts(ui)).toContain('Resolved and closed items are hidden: untick "Hide resolved/closed" to see them.')
+  await ui.press({ key: 'bugs-open' })
+  await settle(ui, /☐ Hide resolved\/closed/)
+  expect(await labels(ui)).toContain('▸ Header typo')
+})
+
+test('desktop: Dev team shows only the developers of developers.json', async ($: any, on: any) => {
+  const w = world(on)
+  const ui = await mount($, w)
+  if (!ui) return
+  await ui.press({ key: 'bugs-team' })
+  await settle(ui, /☑ Dev team/)
+  const names = await labels(ui)
+  expect(names).toContain('▸ Login hangs')                                              // 702 is Ann Bee's
+  expect(names).not.toContain('▸ Totals lose cents')                                    // Me Myself is not on the team
+  expect(names).not.toContain('▸ Header typo')                                          // nobody's, in Proj\Payments, is not either
+  await ui.press({ key: 'bugs-mine' })                                                  // with "Assigned to me": nothing is both
+  await settle(ui, /Nothing matches/)
+  expect(await texts(ui)).toContain('Only the dev team\'s items (its developers\', and its area paths\') are shown: untick "Dev team" to see everyone\'s.')
+  await ui.press({ key: 'bugs-team' })
+  await ui.press({ key: 'bugs-mine' })
+  await settle(ui, /☐ Dev team/)
+  expect(await labels(ui)).toContain('▸ Header typo')
+})
+
+test('desktop: Dev team also shows what is in the team\'s area paths', async ($: any, on: any) => {
+  const w = world(on)
+  w.files[`${ROOT}/.claude/developers.json`] = JSON.stringify({ areaPath: 'Proj; Proj\\Login\\*', developers: ['ann bee'] })
+  const ui = await mount($, w)
+  if (!ui) return
+  await ui.press({ key: 'bugs-team' })
+  await settle(ui, /☑ Dev team/)
+  const names = await labels(ui)
+  expect(names).toContain('▸ Login hangs')                                              // Ann Bee's
+  expect(names).toContain('▸ Header typo')                                              // unassigned, in Proj\Login
+  expect(names).not.toContain('▸ Totals lose cents')                                    // Me Myself's, in Proj\Payments
+})
+
+test('desktop: without a developers.json the Dev team button says what the file is', async ($: any, on: any) => {
+  const w = world(on, { team: false })
+  const ui = await mount($, w)
+  if (!ui) return
+  await ui.press({ key: 'bugs-team' })
+  for (let i = 0; i < 100 && !w.toasts.join('').includes('No dev team'); i++) await new Promise(r => setTimeout(r, 10))
+  expect(w.toasts.join('\n')).toContain('No dev team: .claude/developers.json is missing, or names no developer and no area.')
+  expect(await texts(ui)).not.toContain('Nothing matches')                              // the filter did not turn on
+  expect(await labels(ui)).toContain('☐ Dev team')
 })
 
 test('desktop: not synced yet says so, and Sync runs the script and shows the list', async ($: any, on: any) => {

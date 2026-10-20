@@ -82,11 +82,13 @@ A pane in the Claude Desktop app for triaging bugs and issues; the **Bugs** butt
 It costs no tokens to use: PowerShell scripts (`scripts/bugs/*.ps1`) do the ADO and git work, and the pane
 reads the files they write. Only **Find probable cause** calls a model, once, with a short prompt.
 
+- **⚙ Config**, beside Sync, opens the workspace's `.claude/sdd.json` in the app the computer uses for it:
+  the categories and the other `bugs` settings are in it.
 - **Sync from ADO** (`Sync-Bugs.ps1`) pulls the bugs and issues of your ADO projects into the spec folder:
   `<specRoot>/.bugs/index.json` (the list), `items/<id>.json` (repro steps, description, comments).
 - **Categories** sort the list: quick wins, high severity, in progress, ready for deployment, and one per
   team branch version tag (`1.1.0`). They are rules in `.claude/sdd.json` `"bugs.categories"`: change them,
-  add your own. Filter by words, type, state, and **Assigned to me** (`/sdd-bugs mine` opens that way).
+  add your own. Filter by words, type, state, **Assigned to me** (`/sdd-bugs mine` opens that way), **Hide resolved/closed** (every state in `bugs.doneStates`), and **Dev team**: the items assigned to a developer listed in `.claude/developers.json`, or in one of its area paths, e.g. `{ "areaPath": "Proj; Proj\\Team\\*", "developers": ["Ann Bee", "Raj Patel"] }`. Developers are display names, as ADO shows them, or e-mails. `areaPath` is split at `;`: `Proj` is that area only, `Proj\Team\*` is that area and everything under it. Either is enough, so an unassigned item in the team's area shows up for triage.
 - **Triage** a row: state, severity, priority, assignee, area path, iteration path, tags, a comment. Each
   change is staged, not sent: the row shows `✎n`, and the yellow box counts what is unsaved. **Save all to
   ADO** (`Save-BugChanges.ps1`) writes the batch; **Save this item** writes one item. **↶** reverts one
