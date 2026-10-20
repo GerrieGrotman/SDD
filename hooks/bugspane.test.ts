@@ -154,6 +154,18 @@ test('desktop: the list shows the synced items, the categories and the filters',
   expect(await texts(ui)).toContain('Nothing matches these filters.')
 })
 
+for (const synced of [true, false]) {
+  test(`desktop: the Config button opens the workspace's sdd.json (${synced ? 'synced' : 'not synced yet'})`, async ($: any, on: any) => {
+    const w = world(on, { synced })
+    const ui = await mount($, w)
+    if (!ui) return
+    expect(await labels(ui)).toContain('⚙ Config')
+    await ui.press({ key: 'bugs-config' })
+    for (let i = 0; i < 100 && !w.runs.some(r => r.includes(`${ROOT}/.claude/sdd.json`)); i++) await new Promise(r => setTimeout(r, 10))
+    expect(w.runs.find(r => r.includes(`${ROOT}/.claude/sdd.json`))).toEqual(['open', `${ROOT}/.claude/sdd.json`])
+  })
+}
+
 test('desktop: not synced yet says so, and Sync runs the script and shows the list', async ($: any, on: any) => {
   const w = world(on, { synced: false })
   const ui = await mount($, w)

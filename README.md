@@ -82,6 +82,8 @@ A pane in the Claude Desktop app for triaging bugs and issues; the **Bugs** butt
 It costs no tokens to use: PowerShell scripts (`scripts/bugs/*.ps1`) do the ADO and git work, and the pane
 reads the files they write. Only **Find probable cause** calls a model, once, with a short prompt.
 
+- **⚙ Config**, beside Sync, opens the workspace's `.claude/sdd.json` in the app the computer uses for it:
+  the categories and the other `bugs` settings are in it.
 - **Sync from ADO** (`Sync-Bugs.ps1`) pulls the bugs and issues of your ADO projects into the spec folder:
   `<specRoot>/.bugs/index.json` (the list), `items/<id>.json` (repro steps, description, comments).
 - **Categories** sort the list: quick wins, high severity, in progress, ready for deployment, and one per

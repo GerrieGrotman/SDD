@@ -799,6 +799,11 @@ export const register: Register = on => {
       await update($, bugsFilt, cur => ({ ...NO_FILTER, ...(cur ?? {}), ...f }))
       await $.state.set(bugsOffS, 0)
     })()
+    // the workspace's .claude/sdd.json, where "bugs" holds the categories and the rest of the settings, in the app the computer uses for it
+    const openConfig = () => void (async () => {
+      const w = await where()
+      if (w) await openFile($, `${w.root}/.claude/sdd.json`)
+    })()
     const sync = () => void bugsBusy($, 'sync', async () => {
       const w = await where()
       if (!w) return
@@ -924,6 +929,7 @@ export const register: Register = on => {
           </Box>
           {busy && <Text color={C.now}>{`⟳ ${BUSY_WORD[busy] ?? busy}…`}</Text>}
           <Button key="bugs-sync" label="↻ Sync from ADO" onPress={sync} />
+          <Button key="bugs-config" label="⚙ Config" onPress={openConfig} />
         </Box>
         {index && (
           <Text dimColor wrap="truncate-end">
