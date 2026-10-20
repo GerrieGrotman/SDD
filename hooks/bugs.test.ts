@@ -3,13 +3,13 @@ import { expect, test } from 'claude-code/testing'
 
 import type { BugCategory, BugIndex, BugRecord, BugsConfig, SddSnapshot } from '../types'
 import { F, NO_FILTER, analysisKey, analysisPrompt, ago, bugsConfig, categorize, changeLabel, commentProblem, conditionHolds, currentValue,
-  filterItems, isMine, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
+  filterItems, isMine, isTeam, parseTeam, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
   scriptAnswer, scriptArgv, sddState, severityRank, shortName, sortItems, stageChange, stateOptions, tagOptions, withPending } from './view/bugs'
 
 const DEFAULTS = {
   folder: '.bugs', types: ['Bug', 'Issue'],
   query: { projects: [], excludeStates: ['Closed'], areaPaths: [], iterationPaths: [], where: '', top: 1000 },
-  extraFields: [], states: { Bug: ['New', 'Active', 'Resolved', 'Closed'], Issue: ['New', 'Active', 'Resolved', 'Closed'] },
+  extraFields: [], developersFile: '.claude/developers.json', doneStates: ['Resolved', 'Closed', 'Done', 'Removed'], states: { Bug: ['New', 'Active', 'Resolved', 'Closed'], Issue: ['New', 'Active', 'Resolved', 'Closed'] },
   severities: ['1 - Critical', '2 - High', '3 - Medium', '4 - Low'], priorities: [1, 2, 3, 4],
   categories: [
     { id: 'quick-wins', label: 'Quick wins', icon: '⚡', notStates: ['Resolved', 'Closed'], any: [{ tags: ['Quick Win'] }, { maxEffort: 2 }] },
@@ -82,18 +82,44 @@ test('the default categories sort the list, and a team version becomes one categ
 
 test('the filters: category, mine, type, state and words', () => {
   const cats = categorize(ITEMS, DEFAULTS.categories, ME, NOW)
-  const ids = (f: Partial<typeof NO_FILTER>) => filterItems(ITEMS, { ...NO_FILTER, ...f }, cats, ME).map(i => i.id)
+  const ids = (f: Partial<typeof NO_FILTER>) => filterItems(ITEMS, { ...NO_FILTER, ...f }, cats, ME, DEFAULTS.doneStates).map(i => i.id)
   expect(ids({})).toEqual([1, 2, 3, 4])
   expect(ids({ category: 'quick-wins' })).toEqual([1, 4])
   expect(ids({ mine: true })).toEqual([1])
   expect(ids({ type: 'issue' })).toEqual([4])
   expect(ids({ state: 'Resolved' })).toEqual([3])
+  expect(ids({ hideDone: true })).toEqual([1, 2, 4])                                // all but resolved and closed
+  expect(ids({ hideDone: true, category: 'ready' })).toEqual([])                  // the ready chip is the resolved ones
+  expect(filterItems(ITEMS, { ...NO_FILTER, hideDone: true }, cats, ME).map(i => i.id)).toEqual([1, 2, 3, 4])   // no doneStates given: nothing hidden
   expect(ids({ text: 'ann active' })).toEqual([2])
   expect(ids({ text: '1.2.0' })).toEqual([2])
   expect(ids({ category: 'gone' })).toEqual([1, 2, 3, 4])                          // a category that left the list: all
   expect(isMine(rec(5, { assigned: { name: 'Me Myself', email: '' } }), ME)).toBe(true)        // no e-mail: by name
   expect(isMine(rec(5, { assigned: { name: 'Me Myself', email: 'other@x.co' } }), ME)).toBe(false)
   expect(isMine(rec(5, { assigned: { name: 'me myself', email: '' } }), { name: 'Me Myself', email: '' })).toBe(true)
+})
+
+test('the dev team: the file as the workspace keeps it, matched by display name or e-mail', () => {
+  // .claude/developers.json: an area path and the developers by display name
+  const file = JSON.stringify({ areaPath: 'Spesnet.Lumina; Spesnet.Lumina\\Lumina-Base\\*', developers: ['Ann Bee', ' raj patel ', '', 'bob@x.co'] })
+  expect(parseTeam(file)).toEqual(['Ann Bee', 'raj patel', 'bob@x.co'])
+  expect(parseTeam('\uFEFF' + file)).toEqual(['Ann Bee', 'raj patel', 'bob@x.co'])           // a BOM is dropped
+  expect(parseTeam('["Ann Bee", {"name": "Raj Patel"}, {"email": "b@x.co", "name": "B"}]')).toEqual(['Ann Bee', 'Raj Patel', 'b@x.co'])
+  expect(parseTeam('{"developers": "Ann"}')).toBe(null)
+  expect(parseTeam('{"areaPath": "x"}')).toBe(null)
+  expect(parseTeam('not json')).toBe(null)
+  const team = parseTeam(file)!
+  expect(isTeam(ITEMS[1], team)).toBe(true)                                                  // Ann Bee
+  expect(isTeam(rec(9, { assigned: { name: 'ANN BEE', email: '' } }), team)).toBe(true)     // case aside
+  expect(isTeam(rec(9, { assigned: { name: 'Bob', email: 'bob@x.co' } }), team)).toBe(true)  // by e-mail
+  expect(isTeam(ITEMS[0], team)).toBe(false)                                                 // Me Myself is not on it
+  expect(isTeam(rec(9), team)).toBe(false)                                                   // nobody
+  expect(isTeam(ITEMS[1], null)).toBe(false)
+  expect(isTeam(ITEMS[1], [])).toBe(false)
+  const cats = categorize(ITEMS, DEFAULTS.categories, ME, NOW)
+  expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], team).map(i => i.id)).toEqual([2])
+  expect(filterItems(ITEMS, { ...NO_FILTER, team: true, hideDone: true }, cats, ME, DEFAULTS.doneStates, ['Ann Bee', 'Me Myself']).map(i => i.id)).toEqual([1, 2])
+  expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], null)).toEqual([])    // a filter with no team shows nothing
 })
 
 test('the order: priority, severity, changed, created, id', () => {

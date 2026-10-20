@@ -88,7 +88,7 @@ reads the files they write. Only **Find probable cause** calls a model, once, wi
   `<specRoot>/.bugs/index.json` (the list), `items/<id>.json` (repro steps, description, comments).
 - **Categories** sort the list: quick wins, high severity, in progress, ready for deployment, and one per
   team branch version tag (`1.1.0`). They are rules in `.claude/sdd.json` `"bugs.categories"`: change them,
-  add your own. Filter by words, type, state, and **Assigned to me** (`/sdd-bugs mine` opens that way).
+  add your own. Filter by words, type, state, **Assigned to me** (`/sdd-bugs mine` opens that way), **Hide resolved/closed** (every state in `bugs.doneStates`), and **Dev team**: only the items assigned to a developer listed in `.claude/developers.json`, e.g. `{ "areaPath": "Proj; Proj\\Team\\*", "developers": ["Ann Bee", "Raj Patel"] }` (display names, as ADO shows them, or e-mails; `areaPath` is not used yet).
 - **Triage** a row: state, severity, priority, assignee, area path, iteration path, tags, a comment. Each
   change is staged, not sent: the row shows `✎n`, and the yellow box counts what is unsaved. **Save all to
   ADO** (`Save-BugChanges.ps1`) writes the batch; **Save this item** writes one item. **↶** reverts one

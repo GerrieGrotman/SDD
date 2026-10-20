@@ -17,7 +17,7 @@ export const FIELD_NAME: Record<string, string> = {
   [F.severity]: 'Severity', [F.priority]: 'Priority',
 }
 
-export const NO_FILTER: BugFilter = { category: 'all', mine: false, text: '', sort: 'priority', type: '', state: '' }
+export const NO_FILTER: BugFilter = { category: 'all', mine: false, hideDone: false, team: false, text: '', sort: 'priority', type: '', state: '' }
 
 // ---------------------------------------------------------------- settings
 
@@ -51,6 +51,28 @@ export function isMine(item: BugRecord, me: BugPerson | null | undefined): boole
   if (!a || !me) return false
   if (me.email && a.email) return low(a.email) === low(me.email)
   return !!me.name && low(a.name) === low(me.name)
+}
+
+/** The developers of the dev team file: `{ "developers": [...] }` or a plain list; a name or an e-mail each; null when it holds none. */
+export function parseTeam(text: string): string[] | null {
+  let v: unknown
+  try {
+    v = parseJson<unknown>(text)
+  } catch {
+    return null
+  }
+  const list = Array.isArray(v) ? v : v && typeof v === 'object' ? (v as { developers?: unknown }).developers : null
+  if (!Array.isArray(list)) return null
+  return list.map(x => typeof x === 'string' ? x : x && typeof x === 'object' ? String((x as { email?: string; name?: string }).email ?? (x as { name?: string }).name ?? '') : '')
+    .map(x => x.trim()).filter(Boolean)
+}
+
+/** Is the item assigned to a developer of the team? By display name or by e-mail, whatever the file lists, case aside. */
+export function isTeam(item: BugRecord, team: readonly string[] | null | undefined): boolean {
+  const a = item.assigned
+  if (!a || !team?.length) return false
+  const names = new Set(team.map(low))
+  return names.has(low(a.name)) || (!!a.email && names.has(low(a.email)))
 }
 
 const DAY = 86_400_000
@@ -138,14 +160,16 @@ export function severityRank(s: string): number {
   return m ? Number(m[1]) : 9
 }
 
-/** The items the person asked to see: in the category, theirs only, of the type and state, with the words. */
-export function filterItems(items: BugRecord[], f: BugFilter, cats: Category[], me: BugPerson | null | undefined): BugRecord[] {
+/** The items the person asked to see: in the category, theirs only, not done (`doneStates`, when `hideDone`), of the type and state, with the words. */
+export function filterItems(items: BugRecord[], f: BugFilter, cats: Category[], me: BugPerson | null | undefined, doneStates: readonly string[] = [], team: readonly string[] | null = null): BugRecord[] {
   const cat = f.category && f.category !== 'all' ? cats.find(c => c.id === f.category) : undefined
   const inCat = cat ? new Set(cat.ids) : null
   const words = low(f.text).split(/\s+/).filter(Boolean)
   return items.filter(i => {
     if (inCat && !inCat.has(i.id)) return false
     if (f.mine && !isMine(i, me)) return false
+    if (f.hideDone && has(doneStates, i.state)) return false
+    if (f.team && !isTeam(i, team)) return false
     if (f.type && low(i.type) !== low(f.type)) return false
     if (f.state && low(i.state) !== low(f.state)) return false
     if (words.length) {
