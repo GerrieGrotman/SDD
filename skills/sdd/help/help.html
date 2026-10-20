@@ -71,12 +71,17 @@
 <main>
   <h1>sdd help</h1>
   <p class="lead">Spec-driven work on Azure DevOps items: one folder per work item, scripts do the mechanics, you make the decisions.
-    First time? Follow steps 1 to 5. Already set up? Jump to <a href="#commands" style="color:var(--accent)">Every command</a>.</p>
+    First time? Follow steps 1 to 5. Already set up? Jump to <a href="#commands" style="color:var(--accent)">Every command</a>
+    or to the part you need in the menu below.</p>
   <p class="lead">From a fresh workspace to your first fixed bug and your first spec item. Do the steps in order.
     Every step that changes something asks you first. Run every command from the workspace: the folder above your repos.</p>
   <nav>
     <a href="#init">1 Init</a><a href="#sync">2 Sync</a><a href="#impact">3 Impact</a>
-    <a href="#bug">4 First bug</a><a href="#spec">5 First spec item</a><a href="#after">While you work</a><a href="#commands">Every command</a><a href="#places">Where things live</a><a href="#rules">Rules</a><a href="#update">Update sdd</a>
+    <a href="#bug">4 First bug</a><a href="#spec">5 First spec item</a><a href="#after">While you work</a>
+    <a href="#flows">The two flows</a><a href="#ado">What sdd writes to ADO</a><a href="#next">Pick the next item</a><a href="#request">Ai Agent Request</a>
+    <a href="#panels">Panels (Desktop app)</a><a href="#bugmgr">Bug manager</a><a href="#repos">Repos and worktrees</a>
+    <a href="#visuals">Visual pages</a><a href="#guards">Safety nets</a><a href="#config">Configure</a>
+    <a href="#commands">Every command</a><a href="#places">Where things live</a><a href="#rules">Rules</a><a href="#fix">If something goes wrong</a><a href="#update">Update sdd</a>
   </nav>
 
   <section id="init">
@@ -89,6 +94,15 @@
       <li>When <code>sdd.json</code> is missing, sdd asks which folder holds the specs (default <code>docs/spec</code>).
         Drop any ADO project that holds no specs.</li>
     </ul>
+    <h3>What sdd needs</h3>
+    <ul>
+      <li><b>Required:</b> Python 3.9 or newer (with SQLite FTS5), Node 18 or newer, git, and the Azure CLI signed in (<code>az login</code>). The scripts use the <code>az</code> login, never a token you paste.</li>
+      <li><b>Optional:</b> <b>graphify</b> (the code graph of a work item), <b>pandoc</b> (turns ADO's HTML into Markdown), <b>Ollama</b> with the <code>nomic-embed-text</code> model (meaning search; without it, word search still works).</li>
+      <li><b>For the bug manager:</b> PowerShell (Windows PowerShell 5.1 or PowerShell 7) and <code>az login</code>. A personal access token in <code>AZURE_DEVOPS_EXT_PAT</code> works too.</li>
+      <li><b>For the panels:</b> the Claude Desktop app. In a terminal, in the VS Code extension or on a phone the panels do nothing; the commands and flows still work.</li>
+    </ul>
+    <p><code>/sdd init</code> also checks that SQLite search works, that the repos and ADO projects are found, that the worktree folder is ignored by git, that the agent models are valid, and that the workspace <code>CLAUDE.md</code> has the sdd block (one block, marked <code>sdd:begin</code> / <code>sdd:end</code>; it is replaced in place, never added twice).
+      It installs the <b>ELI5</b> output style (short, plain replies in Simplified Technical English) for you once. Pick another style in <code>/config</code> and sdd leaves your choice alone; <code>/sdd init</code> sets it again.</p>
     <div class="done"><b>Done when</b> every required check is ok and <code>.claude/sdd.json</code> exists. Restart Claude Code once, so the ELI5 output style loads.</div>
   </section>
 
@@ -103,7 +117,15 @@
     </ol>
     <div class="note"><b>Never edit <code>requirements.md</code>.</b> It mirrors ADO, and the next sync overwrites it.
       A spec is wrong? Fix the work item in ADO, then sync again.</div>
-    <p>Later: <code>/sdd sync</code> refreshes everything already synced. <code>/sdd sync all</code> pulls every item in every project; use it rarely.</p>
+    <p>Later: <code>/sdd sync</code> refreshes everything already synced. <code>/sdd sync all</code> pulls every item in every project, in every state; use it rarely.</p>
+    <ul>
+      <li>An epic or feature brings <b>everything under it</b>, its parents up to the top, and one hop of links. A story or bug brings itself, its children, its parents and one hop of links.</li>
+      <li>Only the types in <code>specTypes</code> are mirrored (Epic, Feature, User Story, Tech Story, Change Request, PBI, Bug, Issue). Tasks are not.</li>
+      <li>A removed item is kept and marked <code>[REMOVED]</code>. An item ADO no longer returns is marked <code>MISSING</code>: deleted, moved to a project not in your list, or no access.</li>
+      <li>A folder keeps its name when the title changes, is renamed when the type changes, and moves (with your own files) when the item gets a new parent.</li>
+      <li>Every sync also writes <code>.index/metrics.json</code>: each item with what a decision needs (state, board column, assignee, versions, epic chain, what blocks it and what it blocks) and <b>what this sync changed</b>, with the fields before and after. A <b>MATERIAL</b> change is one to the requirement itself (title, description, acceptance criteria, repro steps, type or links); an <i>incidental</i> one is a tracked field such as the state. For a new or material item it lists the items it likely affects. No tokens used.</li>
+      <li>Search the synced spec in chat: ask for a word search or an items-like-this search (meaning search needs Ollama).</li>
+    </ul>
   </section>
 
   <section id="impact">
@@ -165,8 +187,228 @@
       <div class="tip"><b>Stop</b><span>Say <b>abandon</b> at any time. sdd cleans up and asks before anything outward-facing.</span></div>
       <div class="tip"><b>Pick the next item</b><span><code>/sdd next &lt;epic or feature id&gt; &lt;version&gt;</code> ranks what is free to take.</span></div>
       <div class="tip"><b>Triage the bugs</b><span><code>/sdd-bugs</code> (or <b>Bugs</b> on the band) in the Desktop app: categories, changes saved to ADO as one batch, a probable cause, and sdd in a new chat.</span></div>
-      <div class="tip"><b>Something refused</b><span>It says why: the item is not in the right state. For <code>az</code> errors, run <code>! az login</code> again.</span></div>
+      <div class="tip"><b>Panels</b><span><b>Bugs</b>, <b>Worktrees</b> and <b>repowatch</b> buttons sit above the prompt in the Desktop app. See <a href="#panels" style="color:var(--accent)">Panels</a>.</span></div>
+      <div class="tip"><b>Something refused</b><span>It says why: the item is not in the right state. For <code>az</code> errors, run <code>! az login</code> again. More in <a href="#fix" style="color:var(--accent)">If something goes wrong</a>.</span></div>
     </div>
+  </section>
+
+  <section id="flows">
+    <h2>The two flows in detail</h2>
+    <p>Both flows write a checkpoint after every stage, so you can stop, close the chat, and resume with <code>/sdd &lt;id&gt;</code>, even in a new chat or on another machine. A <b>gate</b> is a thing you approved. A stage cannot start until its gates have passed, and <code>env.py can</code> says no when they have not.</p>
+    <h3>Bug flow (Bug, Issue): 15 phases</h3>
+    <table>
+      <tr><td>1 Load and claim</td><td>Mirrors the bug. Claims it: assigned to you, <code>Active</code>, <code>Dev In Progress</code>. Never takes it from someone else. Several related items: it claims every one.</td></tr>
+      <tr><td>2 Branch and worktree</td><td>Asks which <b>team version</b> to branch from (never guessed). Makes the work item folder, a worktree per repo on a new branch from <code>team/&lt;version&gt;</code>, and a code graph.</td></tr>
+      <tr><td>3 Validate</td><td>Checks the bug against the linked story or change request. A bug that contradicts an accepted requirement is not a bug: some tickets end here.</td></tr>
+      <tr><td>4 Reproduce and locate</td><td>Reproduces it in the worktree and finds where it lives. May use the read-only <b>investigator</b> sub-agent.</td></tr>
+      <tr><td>5 Prove the root cause</td><td>A cause traced to a line and a mechanism, not a symptom. The <b>skeptic</b> sub-agent tries to break the claim first.</td></tr>
+      <tr><td>6 Approval <b>(stop)</b></td><td>A written problem, cause and fix summary on a visual page. No file is edited before you approve it.</td></tr>
+      <tr><td>7 Failing regression test</td><td>The test is written and seen <b>failing</b> first: a recorded run (<code>env.py run --expect fail</code>). A test written after the fix proves nothing.</td></tr>
+      <tr><td>8 Apply the fix</td><td>The smallest change that fixes the cause.</td></tr>
+      <tr><td>9 Verify</td><td>Red to green, a <b>revert check</b> (the test fails again with the fix taken out, byte for byte restored), a repeat run for flakiness, and the full suite. Each run is recorded against the current code; any later edit voids it.</td></tr>
+      <tr><td>10 Commit and push</td><td>A clean commit in the worktree, pushed by the script.</td></tr>
+      <tr><td>11 Manual verification <b>(stop)</b></td><td>You check the fix yourself, or choose to skip (it is recorded).</td></tr>
+      <tr><td>12 Pull request</td><td><code>env.py pr</code> pushes, opens the PR against its base, and links the work items. The description holds only the change; the report, verification, design notes and out-of-scope go in PR comments. The item moves to the current sprint.</td></tr>
+      <tr><td>13 Write back to ADO</td><td>Root Cause Details and Resolution (required for an Issue, also filled on a Bug), then the QA hand-over: <code>Resolved</code> and <code>Dev Completed</code>.</td></tr>
+      <tr><td>14 Record learnings</td><td>Structural facts about the workspace (test projects, run scripts, traps) go in the workspace <code>CLAUDE.md</code>. Never <code>team/*</code> versions or anything about one bug.</td></tr>
+      <tr><td>15 PR review <b>(stop)</b></td><td>Waits for the review. <code>approved</code>, <code>merged</code>, or <code>rejected: why</code> (which sends it back to the fix).</td></tr>
+    </table>
+    <h3>Spec flow (story, tech story, change request, PBI, feature, epic)</h3>
+    <p><b>Two paths.</b> <b>Full</b> stops at Requirements, Design, Decompose, Verify and Review. <b>Short</b> approves design and tasks together at Decompose. The short path skips a stop, never a check. Say <code>short</code> or <code>full</code> in the command, or sdd asks first.</p>
+    <table>
+      <tr><td>Specify</td><td>Asks the path, claims the item (assigned to you, <code>Active</code>, <code>Dev In Progress</code>, one rev-tested write), mirrors it, runs impact.</td></tr>
+      <tr><td>Open Questions <b>(stop, if any)</b></td><td>Gaps go in <code>questions.md</code> as <code>- [ ]</code> lines. The flow asks them one by one. You can answer <b>Continue with this open</b>.</td></tr>
+      <tr><td>Requirements <b>(stop)</b></td><td>The requirements as understood. Never invents a requirement: a vague item becomes a question to the author. Requirements state intent, never code.</td></tr>
+      <tr><td>Design <b>(stop, full path)</b></td><td>Creates the work item folder and worktrees, reads the real code, writes <code>design.md</code>, and has the skeptic check it. May propose <b>tech stories</b>; you pick which (if any) are created in ADO.</td></tr>
+      <tr><td>Decompose <b>(stop)</b></td><td>Writes <code>tasks.md</code>: small tasks, each with a <b>Verify</b> command in backticks.</td></tr>
+      <tr><td>Implement</td><td>One task at a time, each with its tests, in the worktree. Progress shows as <code>task 3/7</code>.</td></tr>
+      <tr><td>Verify <b>(stop)</b></td><td>Runs every Verify command (<code>env.py verify</code>), checks drift from the spec and overlap with other work. Then you choose <b>Raise the PR</b> or <b>Make changes</b>.</td></tr>
+      <tr><td>Review <b>(stop)</b></td><td>Opens the PR and waits: <code>approved</code>, <code>merged</code>, or <code>rejected: why</code> (back to Implement). Once approved, the QA hand-over to ADO runs.</td></tr>
+    </table>
+    <h3>In both flows</h3>
+    <ul>
+      <li><b>A bug this work did not cause.</b> Found in verify: sdd proves it is not yours, explains it on a visual page, and asks <b>Fix it here</b> or <b>Leave it out</b>. It never fixes or skips it silently.</li>
+      <li><b>Send it back.</b> <code>/sdd &lt;id&gt; feedback &lt;stage&gt;: &lt;text&gt;</code> works on a done stage, or on the current one while it waits. That stage's gates and every later gate are revoked; the facts on disk (worktree, tasks, PR) stay.</li>
+      <li><b>Abandon.</b> Say it at any time. The step in progress stops at once; sdd lists what it made and asks before anything outward-facing (the ADO claim, pushed branches, open PRs). Pushed branches and open PRs are left alone unless you say so.</li>
+      <li><b>Spec flow commits and PRs carry no Claude attribution.</b> A work item is written <code>ADO 4471</code> in any text ADO stores, never <code>#4471</code> (ADO would post a mention); <code>AB#4471</code> is fine in a title or commit.</li>
+      <li><b>Every explanation is a visual page</b>, and every question has its links above it. See <a href="#visuals" style="color:var(--accent)">Visual pages</a>.</li>
+    </ul>
+  </section>
+
+  <section id="ado">
+    <h2>What sdd writes to ADO</h2>
+    <p>Only these, each as one write that checks the item's revision first. If someone changed the item meanwhile, sdd reads it again and decides again; it never overwrites blindly.</p>
+    <table>
+      <tr><td>Claim</td><td>Assigned to you, state <code>Active</code>, board column <code>Dev In Progress</code>. Only with your yes when the item is on someone else's name and not started.</td></tr>
+      <tr><td>Sprint</td><td>The item moves to your team's current sprint when the PR opens.</td></tr>
+      <tr><td>Hand-over to QA</td><td><code>Resolved</code> and <code>Dev Completed</code>, with the version tag; Root Cause Details and Resolution for a bug or issue.</td></tr>
+      <tr><td>Comment</td><td>A comment on the item, as HTML.</td></tr>
+      <tr><td>Tech stories</td><td>Created only from a proposal you approved in Design.</td></tr>
+      <tr><td>Ai Agent Request</td><td>A new Bug or Tech Story linked to the request, when you choose that.</td></tr>
+      <tr><td>Bug manager</td><td>Your staged triage changes, saved as a batch: state, severity, priority, assignee, area, iteration, tags, comments.</td></tr>
+    </table>
+    <p>Everything else is read-only. <code>requirements.md</code> is never pushed back.</p>
+  </section>
+
+  <section id="next">
+    <h2>Pick the next item</h2>
+    <div class="cmd"><code>/sdd next &lt;epic or feature id&gt; &lt;version&gt;</code><button data-copy="/sdd next ">Copy</button></div>
+    <p>Syncs the scope first, so it never ranks from an old copy. Then it finds the items under it that carry your team version and are free to take: not done, not past dev on the board, and not on someone else's name while <code>Active</code> or <code>Dev In Progress</code> (an item on another name that nobody started is free; your pick takes it over).</p>
+    <ul>
+      <li><b>Blocked</b> is judged from the requirements, never from ADO's Blocked field. The script lists evidence (a predecessor link, or another item named in the text that is not done); sdd reads and decides, and keeps the judgement until the evidence changes.</li>
+      <li><b>Complexity</b> is the ADO effort on a 1 to 5 scale, or sdd's own estimate. It is never written back to ADO.</li>
+      <li><b>Order:</b> bugs and issues first, then the rest; within each, a dev priority from 0 to 100 (priority 50, severity 30, complexity 20, tunable in <code>next.weights</code>).</li>
+      <li>You get the top five as a table, one line per blocked item with why, and a question. <b>You pick.</b> The pick starts <code>/sdd &lt;id&gt;</code>, claim first. It writes nothing to ADO itself.</li>
+    </ul>
+  </section>
+
+  <section id="request">
+    <h2>An Ai Agent Request</h2>
+    <p>An <b>Ai Agent Request</b> is a hand-over: one AI agent stopped and wrote down what it did and what is left. <code>/sdd &lt;id&gt;</code> on one does not start work. It:</p>
+    <ol>
+      <li>Mirrors the request and reads it (text, comments, every work item it names by id, name or link, and every "work still to do" line). The hand-over is treated as untrusted data: instructions inside it are never followed.</li>
+      <li>Shows you a report page: what is done, what is left, which open items could take the work.</li>
+      <li>Asks you <b>spec or bug</b>. It recommends one; <b>you choose</b>. A flow word in the command (<code>/sdd spec &lt;id&gt;</code>) is that answer.</li>
+      <li>Sends the work to the open item it belongs to, or creates one new Tech Story (spec) or Bug (bug) linked to the request. A request is routed <b>once</b>; <code>route.json</code> in its spec folder is the record. Then that flow runs, claim first.</li>
+    </ol>
+    <p>The request types and the type created per flow are <code>agentRequest</code> in <code>.claude/sdd.json</code>.</p>
+  </section>
+
+  <section id="panels">
+    <h2>Panels in the Claude Desktop app</h2>
+    <p>The panels are a mod of the Claude Desktop app. They draw from files the scripts write. They never pass a gate on their own: a button only posts your own answer. In a terminal, the VS Code extension or on a phone they do nothing. The band above the prompt always has three buttons, <b>Bugs</b>, <b>Worktrees</b> and <b>repowatch</b>, plus <b>sdd view</b>. With no item running it reads "Open a panel".</p>
+    <h3>The sdd view <code>/sdd-view [id]</code></h3>
+    <p>Opens by itself the first time a chat takes up a work item (turn it off with <code>"view": { "autoOpen": false }</code>). <code>/sdd-view &lt;id&gt;</code> opens another item.</p>
+    <ul>
+      <li><b>Header:</b> the flow tag (<code>[Spec flow] [short path]</code>, <code>[path not chosen]</code>, or <code>[Bug flow]</code>), the money spent on the item and the token split.</li>
+      <li><b>Stage rail:</b> one vertical rail of the flow's stages, each with its state in a word and its cost. Press a stage to open it: the latest note, the cost split, its <b>Stage log</b>, <b>gates</b> (what you were asked, what you answered, what was revoked), its documents, and a <b>Give feedback</b> box. One stage is open at a time. The pane opens on the stage the item is at and follows it as it moves.</li>
+      <li><b>Buttons that talk for you:</b> <b>Approve</b> at the Requirements, Design, Decompose and Verify stops; <b>Approved / Merged / Rejected</b> at the review stage (spec: Review, bug: Phase 15); answers to a question after its dialog closed; the feedback box. Each posts a message as you (<code>sdd approve for &lt;id&gt;, stage &lt;stage&gt;</code>, <code>sdd review for &lt;id&gt;: …</code>, <code>sdd answer for …</code>, <code>sdd feedback for …</code>) and the flow treats it as your own answer. The flow checks that the item still waits at that stage first.</li>
+      <li><b>Worktrees:</b> open a worktree in File Explorer or VS Code from its box; the spanner (🔧) opens it in repowatch, on that one worktree.</li>
+      <li><b>Work item</b> dropdown: switch to another open item. After <code>/sdd </code> the prompt box offers your open items by id or a word of the title.</li>
+      <li><b>Agents:</b> the session's sub-agents and what each is doing.</li>
+      <li><b>Band and spinner:</b> the band shows <code>[spec · short]</code> while the chat's item is in progress, turns amber when it waits on you, and shows the context fill from 80 percent. The spinner names the item, its stage and what it works toward. A system notification tells you once when the item waits on you.</li>
+      <li><b>Cost:</b> each turn's cost is recorded against the work item and the stage the turn began in, in dollars and in tokens (uncached input, output, cache read, cache write). Chats and sessions on the same item add up; a sub-agent's tokens count with the turn that ran it. The totals stay after the folder is removed. Colours and the other view settings are in <a href="#config" style="color:var(--accent)">Configure</a>.</li>
+    </ul>
+    <h3>Worktrees page <code>/sdd-worktrees</code></h3>
+    <p>Every work item that still has worktrees, with each worktree's live state (needs the <b>repowatch</b> plugin, which installs with sdd). Read-only. Each work item is a header; each worktree is one line: a colour dot, <code>repo · branch</code>, a state word and its age. Press a line for its facts, 📋 copy folder, and a <b>History</b> button. Clean-up is in <code>/repowatch worktrees</code>.</p>
+  </section>
+
+  <section id="bugmgr">
+    <h2>The bug manager <code>/sdd-bugs</code></h2>
+    <p>A pane for triaging every bug and issue of your ADO projects. It costs no tokens to use: PowerShell scripts do the ADO and git work and the pane reads the files they write. Only <b>Find probable cause</b> calls a model, once. Open it with <code>/sdd-bugs</code>, <code>/sdd-bugs mine</code> (only your items) or the <b>Bugs</b> button. The button shows <b>Bugs ✎n</b> while changes are staged.</p>
+    <h3>Get the list</h3>
+    <ul>
+      <li><b>↻ Sync from ADO</b> pulls the bugs and issues into <code>&lt;spec folder&gt;/.bugs/</code> (<code>index.json</code> and <code>items/&lt;id&gt;.json</code> with repro steps, description and comments). What it pulls is set by <code>bugs.query</code> (projects, states left out, area and iteration paths, a WIQL clause, a top limit).</li>
+      <li>The header says how many items you see, the org and projects, when it synced and who you are in ADO (<code>bugs.me</code> if <code>git config user.email</code> is not it).</li>
+    </ul>
+    <h3>Find the ones that matter</h3>
+    <ul>
+      <li><b>Categories</b> are chips that sort the list: <b>Quick wins</b>, <b>High severity</b>, <b>In progress</b>, <b>Ready for deployment</b>, and one <b>Team branch</b> chip per version tag (<code>1.1.0</code>). Press a chip to pick it, press it again to drop it. They are rules; you can change them and add your own in the Config panel.</li>
+      <li><b>Filters:</b> search words (id, title, tag, person, path), sort (priority, severity, last changed, newest, id), <b>Type</b>, <b>State</b>, <b>Assigned to</b> (anyone, one person with their count, or unassigned), <b>Assigned to me</b>, <b>Hide resolved/closed</b> (the states in <code>bugs.doneStates</code>), and <b>Dev team</b> (only items assigned to a developer in <code>.claude/developers.json</code>).</li>
+      <li>The chips and the header count what the filters leave: with a filter on, <code>94 of 173 items</code>, and each chip counts its own items among those.</li>
+      <li><b>Area path is a hard limit.</b> If <code>developers.json</code> has an <code>areaPath</code>, an item outside it is in no list, count, chip or picker, with every filter off too; the header says how many it hides. <code>Proj</code> is that area only, <code>Proj\Team\*</code> is that area and everything under it, split at <code>;</code>.</li>
+    </ul>
+    <h3>Triage</h3>
+    <ul>
+      <li>Open a row for the details: links to the item, its pull requests (title and status), its commits and other links in ADO; the repro steps and comments.</li>
+      <li>Change the state, severity, priority, assignee, area path, iteration path, tags, or write a comment. <b>Each change is staged, not sent</b>: the row shows <code>✎n</code> and a yellow box counts what is unsaved. Staged changes are kept in <code>pending.json</code>, so they survive a restart. A removed tag shows as <b>↶ tag (to remove)</b> and the chips already follow it.</li>
+      <li>Tick rows (☐) to change several items at once.</li>
+      <li><b>Save all to ADO</b> writes the batch; <b>Save this item</b> writes one. <b>↶</b> reverts one change, <b>Revert item</b> one item, <b>Revert all</b> the batch (it asks first). <b>Review</b> lists every staged change.</li>
+      <li>A save reads each item again first. If someone changed a field since you staged it, it is <b>not overwritten</b>: the change stays staged with a ⚠ and a <b>Keep mine</b> button. Every write checks the revision, and the reply from ADO is checked: if ADO accepts a save but its answer does not show the change, the change stays staged with a message. A change ADO already has is reported as "already matched ADO". <code>last-save.json</code> records what was sent and what ADO answered.</li>
+      <li>A comment may not name <code>#1234</code> (ADO posts a mention). Write <code>ADO 1234</code>; the pane refuses the other and says so.</li>
+    </ul>
+    <h3>Understand a bug cheaply</h3>
+    <ul>
+      <li><b>Evidence only</b> takes the files, stack frames, exceptions and names in the report and searches your repos with <code>git grep</code> and the history of what it finds. No model, no tokens.</li>
+      <li><b>Find probable cause</b> sends the report and that evidence to a small model once (haiku by default; about 1 to 2k tokens in, 500 out at most) and keeps the answer and its cost in <code>items/&lt;id&gt;.analysis.json</code>. Model, size and effort are in the Config panel.</li>
+    </ul>
+    <h3>Start or continue the sdd flow</h3>
+    <ul>
+      <li><b>📋 Copy /sdd &lt;id&gt;</b> puts the command on the clipboard. Paste it in a new chat to start the flow on that item, or to continue it where it stopped (the note beside the button says which). A panel cannot open a chat, so the new chat is yours to start.</li>
+      <li><b>In this chat</b> puts the same command in this chat's prompt box instead.</li>
+    </ul>
+    <h3>⚙ Config: change the settings without opening a file</h3>
+    <p>The <b>⚙ Config</b> button (beside Sync) opens a settings panel. <b>← Back to the list</b> returns. It shows <b>⚙ Config ✎</b> while edits wait.</p>
+    <table>
+      <tr><td>Dev team</td><td>The developers (display names as ADO shows them, or e-mails) and the area paths. Saved to the dev team file, <code>.claude/developers.json</code> (you can move it with <b>File</b>).</td></tr>
+      <tr><td>What Sync pulls</td><td>Projects, work item types, states to leave out, area and iteration paths, extra WIQL, the top limit, extra fields to keep. A change shows after the next Sync.</td></tr>
+      <tr><td>Categories</td><td>Add, rename, reorder (↑ ↓) and remove. Each has a name, icon, colour, <b>one chip per tag matching</b> a pattern or <b>per value of</b> a field, <b>rules</b> that must all hold, and <b>alternatives</b> (any one of which will do). Rules: states, not states, types, board columns, tags, all tags, severity, priority, assigned (me / none / anyone), area under, iteration under, effort range, title pattern, has PR, has commits, older or newer than days, and any field.</td></tr>
+      <tr><td>Filters and pickers</td><td>The states <b>Hide resolved/closed</b> hides, the states of a Bug and of an Issue, the severities and the priorities the triage pickers offer.</td></tr>
+      <tr><td>Probable cause</td><td>Model (haiku, sonnet, opus), the longest answer, and effort.</td></tr>
+      <tr><td>You and PowerShell</td><td>Your ADO e-mail, and which PowerShell runs the scripts.</td></tr>
+    </table>
+    <ul>
+      <li>Edits wait in a draft. <b>Save settings</b> writes the <code>bugs</code> part of <code>.claude/sdd.json</code> and the dev team file, <b>only the settings you changed</b>; every other key and the rest of both files stay as they were. <b>Revert</b> drops the draft. Each section has a button that puts the plugin's own values back (or clears the dev team).</li>
+      <li>A bad value (a rule with no values, a missing id) blocks Save and says which. A file that is not valid JSON is never overwritten.</li>
+      <li><b>Open sdd.json</b> and <b>Open developers.json</b> open the files in the app your computer uses for them.</li>
+    </ul>
+    <p>The bug scripts also run by hand: <code>pwsh -NoProfile -File &lt;plugin&gt;/scripts/bugs/Sync-Bugs.ps1</code> (and <code>Get-BugDetail</code>, <code>Save-BugChanges</code>, <code>Find-BugEvidence</code>). Each prints one JSON line.</p>
+  </section>
+
+  <section id="repos">
+    <h2>Repos and worktrees <code>/repowatch</code></h2>
+    <p><b>repowatch</b> is a second plugin that installs with sdd. It tracks many git repos and their worktrees in a pane and in the status line (<code>repos 40 · 2 behind · 1 dirty · 1 old worktree</code>; clear when all is well).</p>
+    <table>
+      <tr><td><code>/repowatch</code></td><td>The repos view: counts, then one line per repo (a colour dot, <code>repo · branch</code>, its worst flag, the age of its last fetch), the ones that need attention first. Press a line for its path, details, branches whose upstream is gone (<b>Delete…</b>), 📋 and <b>History</b>.</td></tr>
+      <tr><td><code>/repowatch worktrees</code></td><td>Every worktree of every repo, classed from the evidence: <b>safe to remove</b> (<b>Remove…</b>), <b>broken</b> (<b>Prune</b>), <b>review</b> (<b>Review…</b>: probably done, but a person should look), <b>keep</b> (uncommitted files, or commits only here), <b>in use</b>. A work item's worktree is labelled <code>sdd &lt;id&gt;</code>; its button asks Claude to run <code>env.py remove</code>. With <code>az login</code>, a squash-merged branch is recognised from its completed PR. A <b>merge-conflict forecast</b> (<code>git merge-tree</code>, git 2.38+) says whether merging the base in would conflict and in which files, and a toast fires when a branch turns to "will conflict".</td></tr>
+      <tr><td><code>/repowatch sync</code></td><td>For each repo with two or more <code>team/*</code> branches, each hop to the next newer version and the commits the newer one lacks, grouped by ADO id. <b>Sync…</b> makes <code>sync/&lt;older&gt;-&lt;newer&gt;</code>, merges the older branch in, pushes it, and opens a PR into the newer one; <b>nothing is ever pushed to the newer branch itself</b>. On a conflict: <b>Ask Claude to resolve</b>, then <b>Finish…</b>, or <b>Abort…</b>. <b>Do not take…</b> turns a hop into a cherry-pick hop; <b>Take again…</b> reverses it.</td></tr>
+      <tr><td><code>/repowatch history &lt;repo&gt; &lt;branch&gt; [&lt;base&gt;]</code></td><td>A branch drawn like <code>git log --graph</code>, in colour: green only on the branch, blue only on the base, grey on both. Press a commit for its message and files. <b>Without base</b>, <b>First parent only</b>, <b>Show 40 more</b> and <b>‹ Back</b>. Read-only.</td></tr>
+      <tr><td><code>/repowatch worktree &lt;path&gt;</code></td><td>The worktrees list on that one worktree, with <b>Show all worktrees</b>. The spanner in the sdd view uses it.</td></tr>
+      <tr><td><code>/repowatch scan</code> / <code>fetch</code></td><td>Refresh the facts, or fetch every repo. <b>Sync now</b> at the top of every view does both and reads the branch sync.</td></tr>
+    </table>
+    <ul>
+      <li><b>Auto sync</b> (the toggle at the top of every view; <code>"autoSync"</code> in <code>.claude/repowatch.json</code>, on by default): local facts every two minutes, and every five minutes it also fetches the four repos fetched longest ago. Nothing is pulled, merged or deleted. Off: nothing is scanned on its own.</li>
+      <li><b>Every clean-up is a click, then a plan, then a confirm.</b> The plan shows the git commands, why, the commits that exist only there, and how to undo it. Nothing runs until you press Confirm, and then the live repo is checked again. <b>Undo</b> recreates the newest removed branch and worktree. Each run is journalled in <code>.claude/repowatch/journal.jsonl</code>.</li>
+      <li><b>On a remote it deletes nothing</b> except a stale <code>sync/&lt;older&gt;-&lt;newer&gt;</code> branch (after its PR is merged, and only when you confirm). It never pushes to a <code>team/*</code> branch.</li>
+      <li>Repos come from <code>repos</code> in <code>.claude/repowatch.json</code>, else <code>repoDirs</code> in <code>sdd.json</code>, else every folder up to two levels down that holds a <code>.git</code>.</li>
+    </ul>
+  </section>
+
+  <section id="visuals">
+    <h2>Visual pages <code>/sdd:visual</code></h2>
+    <p>Every explanation or plan in a flow (requirements, design, tasks, a bug's cause and fix, impact, review, a status recap, a bug found along the way) is a self-contained HTML page in <code>&lt;spec folder&gt;/visuals/</code>, sent to you to open. You can ask for one in ordinary chat too, for a diagram, a plan, slides, a diff review or a fact-check.</p>
+    <div class="cmd"><code>/sdd:visual &lt;mode&gt; [args]</code><button data-copy="/sdd:visual ">Copy</button></div>
+    <p>Modes: <code>diagram</code>, <code>plan</code>, <code>slides</code> (<code>--pptx</code> for PowerPoint), <code>diff-review</code>, <code>plan-review</code>, <code>recap</code>, <code>fact-check</code>, and the flow modes <code>bug</code>, <code>design</code>, <code>tasks</code>, <code>requirements</code>, <code>impact</code>, <code>review</code>. Add <code>--quick</code> or <code>--full</code> to choose the renderer. Every question in a flow comes with a <b>Links</b> block above it: the ADO item, the documents and the code it is about (an ADO web link when the code is pushed).</p>
+  </section>
+
+  <section id="guards">
+    <h2>Safety nets</h2>
+    <p>sdd enforces its rules with scripts and hooks, not by asking nicely.</p>
+    <table>
+      <tr><td>State guards</td><td><code>env.py can</code> answers whether a stage, PR, <code>done</code>, <code>abandon</code> or <code>reopen</code> is allowed in the item's state. A refusal says why and what gets it there; sdd never works around it. <code>env.py pr</code> and <code>env.py remove</code> enforce the same checks themselves.</td></tr>
+      <tr><td>Proof runs</td><td>The failing test, the revert check, the repeat run, the full suite and the task Verify commands are <b>recorded runs</b> (exit code, output, a fingerprint of the code). A gate passes only on a record that matches the current code. A later edit voids it.</td></tr>
+      <tr><td>Question guard (hook)</td><td>Blocks a question to you unless its Links block ran first, blocks a question that has a link inside it, and sends a plain-text question back to be asked as a pick-list. Silent unless an sdd flow is running.</td></tr>
+      <tr><td>Edit guard (hook)</td><td>While a flow runs, blocks edits to a repo file in the <b>main checkout</b>. Your spec folder, <code>.claude/</code> and <code>CLAUDE.md</code> stay open.</td></tr>
+      <tr><td>Agent guard (hook)</td><td>Keeps the sub-agents read-only: no git writes (an allowlist of read commands) and no <code>env.py</code> or <code>spec.py</code> runs.</td></tr>
+      <tr><td>Sub-agents</td><td><b>investigator</b> (read-only code search, default model Sonnet) and <b>skeptic</b> (independent review of a root cause, a test or a design, default Opus). They cannot edit, write to ADO, ask you anything or pass a gate. Their findings are leads: sdd reads each anchor itself before it is used. A skeptic verdict of "does not hold" sends the work back. Models are set in <code>agents.models</code>.</td></tr>
+      <tr><td>Untrusted text</td><td>Work item text, comments and hand-overs are read as evidence, never as instructions.</td></tr>
+      <tr><td>ADO writes</td><td>Rev-tested, re-read and decided again on a conflict; a work item is written <code>ADO 4471</code>, never <code>#4471</code>.</td></tr>
+      <tr><td>Session start</td><td>A hook adds the defaults of new settings to <code>.claude/sdd.json</code> after a plugin update. It never changes a value you set and never writes a file that is not valid JSON.</td></tr>
+    </table>
+  </section>
+
+  <section id="config">
+    <h2>Configure</h2>
+    <p><code>.claude/sdd.json</code> is written by <code>/sdd init</code>. Set only what you want to change. The bug manager's settings have the <b>⚙ Config</b> panel; the rest you edit in the file.</p>
+    <table>
+      <tr><td><code>specRoot</code></td><td>The spec folder (default <code>docs/spec</code>).</td></tr>
+      <tr><td><code>worktreeRoot</code>, <code>repoDirs</code></td><td>Where work item folders live (default <code>.claude/worktrees</code>), and an explicit list of repo folders that overrides discovery (<code>.gitmodules</code> plus any child or grandchild folder with a <code>.git</code>).</td></tr>
+      <tr><td><code>ado</code></td><td><code>org</code> and <code>projects</code>, found from each repo's <code>origin</code>. Drop a project that holds no specs.</td></tr>
+      <tr><td><code>specTypes</code></td><td>The types the sync mirrors.</td></tr>
+      <tr><td><code>branchTemplate</code></td><td>Default <code>dev/{developer}/{version}/{type}/{id}-{slug}</code>.</td></tr>
+      <tr><td><code>doneStates</code></td><td>The ADO states that count as done for <code>/sdd done</code> (default Resolved, Closed, Done).</td></tr>
+      <tr><td><code>embeddings</code></td><td>Meaning search: provider <code>ollama</code>, its url, and the model.</td></tr>
+      <tr><td><code>view</code></td><td><code>autoOpen</code>, and <code>colors</code>: <code>done</code>, <code>now</code> (waiting on you), <code>work</code>, <code>revoked</code>, <code>gate</code>, <code>dim</code>, <code>line</code>, <code>hoverText</code>, each a CSS colour. The view picks a change up on its next refresh.</td></tr>
+      <tr><td><code>agents.models</code></td><td>The model of <code>investigator</code> and <code>skeptic</code>: <code>sonnet</code>, <code>opus</code> or <code>haiku</code>.</td></tr>
+      <tr><td><code>agentRequest</code></td><td><code>types</code> (the hand-over types) and <code>create</code> (the type made per flow: <code>bug</code> → Bug, <code>spec</code> → Tech Story).</td></tr>
+      <tr><td><code>next</code></td><td><code>weights</code> (priority, severity, complexity), <code>complexity</code> (<code>complex-first</code>), <code>types</code> (the order of groups), <code>inProgress</code> and <code>pastDev</code> (what makes an item not free).</td></tr>
+      <tr><td><code>bugs</code></td><td>The bug manager: <code>folder</code>, <code>types</code>, <code>query</code>, <code>developersFile</code>, <code>doneStates</code>, <code>extraFields</code>, <code>states</code>, <code>severities</code>, <code>priorities</code>, <code>categories</code>, <code>analysis</code>, <code>me</code>, <code>powershell</code>. Defaults are in the plugin's <code>scripts/bugs/defaults.json</code>; an object is merged key by key, a list you give replaces the default.</td></tr>
+    </table>
+    <ul>
+      <li><code>.claude/developers.json</code>: <code>{ "areaPath": "Proj; Proj\Team\*", "developers": ["Ann Bee", "Raj Patel"] }</code>, or a plain list of developers. Names are matched case aside, by display name or e-mail.</li>
+      <li><code>.claude/repowatch.json</code>: <code>repos</code>, <code>autoSync</code>, <code>scanEverySeconds</code> (120), <code>fullScanEverySeconds</code> (900), <code>fetchEverySeconds</code> (300), <code>staleFetchHours</code>, <code>staleWorktreeDays</code>, <code>adoLookup</code>, <code>syncPattern</code>, <code>syncWindowDays</code>, <code>syncMaxFixes</code>, and the worker limits.</li>
+      <li>The ELI5 output style: <code>~/.claude/output-styles/ELI5.md</code> and <code>"outputStyle": "ELI5"</code> in <code>~/.claude/settings.json</code>. A style file you edit is kept.</li>
+    </ul>
   </section>
 
   <section id="commands">
@@ -174,7 +416,7 @@
     <h3>Set up and pull specs</h3>
     <table>
       <tr><td><code>/sdd init</code></td><td>Checks tools, config and CLAUDE.md. Asks before each fix.</td></tr>
-      <tr><td><code>/sdd sync &lt;epic id&gt;</code></td><td>The epic and everything under it.</td></tr>
+      <tr><td><code>/sdd sync &lt;epic id&gt;</code></td><td>The epic (or any item) and everything under it, its parents, and one hop of links.</td></tr>
       <tr><td><code>/sdd sync</code></td><td>Refresh everything already synced.</td></tr>
       <tr><td><code>/sdd sync all</code></td><td>Every item in every ADO project in <code>.claude/sdd.json</code>.</td></tr>
       <tr><td><code>/sdd impact &lt;id&gt;</code></td><td>What else the item touches, and the gap questions that raises.</td></tr>
@@ -187,10 +429,18 @@
       <tr><td><code>/sdd &lt;id&gt;</code> on an Ai Agent Request</td><td>A report on the hand-over: what is done, what is left, the items it names. You pick spec or bug. The work goes to the open item it belongs to, or to a new Tech Story or Bug. Then that flow runs.</td></tr>
       <tr><td><code>/sdd bug &lt;id&gt;</code> / <code>/sdd spec &lt;id&gt;</code></td><td>Force the bug or the spec flow.</td></tr>
       <tr><td><code>/sdd &lt;id&gt; short</code> / <code>full</code></td><td>A small spec item: one stop approves design and tasks together. <code>full</code> keeps every stop. Say neither and the flow asks.</td></tr>
+      <tr><td><code>/sdd spec &lt;id&gt; short</code></td><td>A flow word and a path word go together in any order.</td></tr>
+    </table>
+    <p>Typing <code>/sdd </code> in the Desktop app offers your open items by id or a word of the title. An item already in progress resumes in the flow it started in, whatever its type says now; a completed or abandoned one asks before it starts again.</p>
+    <h3>Panels (Claude Desktop app)</h3>
+    <table>
+      <tr><td><code>/sdd-view [id]</code></td><td>The sdd view of this chat's work item, or the one given: stages, gates, cost, feedback, approve and review buttons. See <a href="#panels" style="color:var(--accent)">Panels</a>.</td></tr>
+      <tr><td><code>/sdd-worktrees</code></td><td>Every work item that still has worktrees and the live state of each. Read-only.</td></tr>
+      <tr><td><code>/repowatch</code></td><td>The repos pane. Also <code>/repowatch worktrees</code>, <code>sync</code>, <code>scan</code>, <code>fetch</code>, <code>history &lt;repo&gt; &lt;branch&gt; [&lt;base&gt;]</code> and <code>worktree &lt;path&gt;</code>. See <a href="#repos" style="color:var(--accent)">Repos and worktrees</a>.</td></tr>
     </table>
     <h3>Bugs and issues (Claude Desktop app)</h3>
     <table>
-      <tr><td><code>/sdd-bugs</code></td><td>The bug manager. <b>Sync from ADO</b> pulls the bugs and issues into the spec folder; <b>⚙ Config</b> opens the settings panel: the dev team, what Sync pulls, the categories and the pickers, saved to <code>.claude/sdd.json</code> and <code>.claude/developers.json</code> without opening them. Pick a category (quick wins, high severity, in progress, ready for deployment, team branch version), filter (by words, type, state, <b>Assigned to</b> (one person or nobody), <b>Assigned to me</b>, <b>Hide resolved/closed</b>, or <b>Dev team</b>, the developers in <code>.claude/developers.json</code>; its <code>areaPath</code> limits what is shown at all), and open a row to triage it.</td></tr>
+      <tr><td><code>/sdd-bugs</code></td><td>The bug manager. <b>Sync from ADO</b> pulls the bugs and issues into the spec folder; <b>⚙ Config</b> opens the settings panel: the dev team, what Sync pulls, the categories and the pickers, saved to <code>.claude/sdd.json</code> and <code>.claude/developers.json</code> without opening them. Full guide: <a href="#bugmgr" style="color:var(--accent)">The bug manager</a>. Pick a category (quick wins, high severity, in progress, ready for deployment, team branch version), filter (by words, type, state, <b>Assigned to</b> (one person or nobody), <b>Assigned to me</b>, <b>Hide resolved/closed</b>, or <b>Dev team</b>, the developers in <code>.claude/developers.json</code>; its <code>areaPath</code> limits what is shown at all), and open a row to triage it.</td></tr>
       <tr><td><code>/sdd-bugs mine</code></td><td>The same, with only the items assigned to you.</td></tr>
       <tr><td>Triage a row</td><td>State, severity, priority, assignee, area, iteration, tags and a comment. Each change is staged first. <b>Save all to ADO</b> writes the batch; <b>↶</b> reverts one change, <b>Revert item</b> one item, <b>Revert all</b> the batch. Tick rows to change several at once.</td></tr>
       <tr><td>Probable cause</td><td><b>Evidence only</b> searches your repos with git (no tokens). <b>Find probable cause</b> sends the report and that evidence to a small model once, and keeps the answer.</td></tr>
@@ -210,6 +460,13 @@
       <tr><td><code>/sdd harness create</code> / <code>onboard</code> / <code>maintain</code></td><td>Set up a repo or workspace, add a new repo to it, or fix drift.</td></tr>
       <tr><td><code>/sdd:help</code></td><td>This page. <code>/sdd:help</code>, <code>/sdd:sdd</code> and <code>/sdd help</code> all open it.</td></tr>
     </table>
+    <h3>Visual pages and the skills behind the commands</h3>
+    <table>
+      <tr><td><code>/sdd:visual &lt;mode&gt; [args]</code></td><td>Build a visual page: <code>diagram</code>, <code>plan</code>, <code>slides</code> (<code>--pptx</code>), <code>diff-review</code>, <code>plan-review</code>, <code>recap</code>, <code>fact-check</code>, <code>bug</code>, <code>design</code>, <code>tasks</code>, <code>requirements</code>, <code>impact</code>, <code>review</code>. <code>--quick</code> or <code>--full</code> picks the renderer.</td></tr>
+      <tr><td><code>/sdd:sync</code>, <code>/sdd:impact</code>, <code>/sdd:next</code>, <code>/sdd:bug</code>, <code>/sdd:spec</code>, <code>/sdd:request</code>, <code>/sdd:harness</code></td><td>The skills behind <code>/sdd</code>. Use <code>/sdd …</code>: it routes and checks the state first.</td></tr>
+    </table>
+    <h3>Messages the buttons send</h3>
+    <p>The panel buttons post these as your own message; you can type them too. <code>sdd approve for &lt;id&gt;, stage &lt;stage&gt;</code> (the go-ahead at a spec stop), <code>sdd review for &lt;id&gt;: approved</code> / <code>merged</code> / <code>rejected: why</code>, <code>sdd answer for &lt;id&gt;, stage &lt;stage&gt;: "&lt;question&gt;" = "&lt;answer&gt;"</code> and <code>sdd feedback for &lt;id&gt;, stage &lt;stage&gt;: &lt;text&gt;</code>. Each refuses, and says why, when the item does not wait at that stage.</p>
   </section>
 
   <section id="places">
@@ -218,16 +475,25 @@
     <ul>
       <li><code>src/&lt;Repo&gt;/</code>: your code. Every edit, build, test and commit happens here.</li>
       <li><code>graph/</code>: code graph of <code>src/</code>. Start with <code>GRAPH_REPORT.md</code>.</li>
-      <li><code>workitem.json</code>: which repo is on which branch, its PR, and where the flow stopped.</li>
+      <li><code>workitem.json</code>: which repo is on which branch, its PR, and where the flow stopped (the last 50 checkpoints, and the cost).</li>
+      <li><code>CLAUDE.md</code>: generated; says "work only here" and lists the paths. <code>cost.jsonl</code>: one line per turn.</li>
     </ul>
+    <p>After <code>/sdd done</code> the folder is removed and a record stays in <code>.claude/worktrees/.done/&lt;id&gt;.json</code>, so <code>/sdd status</code> still says completed.</p>
     <h3>Spec folder: <code>specRoot</code> in <code>.claude/sdd.json</code>, then <code>**/&lt;id&gt;-&lt;TYPE&gt;-&lt;slug&gt;/</code></h3>
     <p>TYPE is EPIC, FEAT, US, TS, CR, PBI, BUG or ISSUE.</p>
     <ul>
       <li><code>requirements.md</code>: mirror of ADO. Never edit it; the sync overwrites it.</li>
       <li><code>questions.md</code>: open questions for the item's author, one <code>- [ ]</code> line each. While any is open, the flow stops at <b>Open Questions</b> and asks them one by one. You can answer "Continue with this open" to go on anyway.</li>
-      <li><code>design.md</code>, <code>tasks.md</code>, <code>impact.md</code>: yours. The sync never touches them.</li>
-      <li><code>.index/spec.db</code> (at the spec folder root): search index.</li>
-      <li><code>.bugs/</code> (at the spec folder root): the bug manager's copy of the bugs and issues (<code>index.json</code>, <code>items/</code>) and your unsaved changes (<code>pending.json</code>).</li>
+      <li><code>design.md</code>, <code>tasks.md</code>, <code>impact.md</code> (and <code>impact.json</code>): yours. The sync never touches them. <code>pr-description.md</code> is written at the PR.</li>
+      <li><code>request.md</code>, <code>request.json</code>, <code>route.json</code>: an Ai Agent Request's hand-over and where it was routed.</li>
+      <li><code>.index/spec.db</code> (at the spec folder root): the search index. <code>.index/metrics.json</code>: every item's decision facts and what the last sync changed.</li>
+      <li><code>visuals/</code> (at the spec folder root): the visual pages sdd made for you.</li>
+      <li><code>.bugs/</code> (at the spec folder root): the bug manager's copy of the bugs and issues (<code>index.json</code>, <code>items/&lt;id&gt;.json</code>, <code>items/&lt;id&gt;.analysis.json</code>), your unsaved changes (<code>pending.json</code>) and the last save (<code>last-save.json</code>).</li>
+    </ul>
+    <h3>In <code>.claude/</code></h3>
+    <ul>
+      <li><code>sdd.json</code>: the workspace settings. <code>developers.json</code>: the dev team. <code>repowatch.json</code>, <code>repowatch/</code>: repowatch's settings, scan results (<code>state.json</code>), journal and sync decisions (<code>sync.json</code>).</li>
+      <li><code>sdd/help/</code>: the copy of this page that <code>/sdd:help</code> sends (the Desktop app cannot open files in the plugin cache).</li>
     </ul>
   </section>
 
@@ -239,7 +505,27 @@
       <li>Say <b>abandon</b> at any point to stop and clean up.</li>
       <li>Specs change in ADO, not in the files: fix the work item, then <code>/sdd sync</code>.</li>
       <li>Never edit in the main checkout. Only in <code>src/&lt;Repo&gt;/</code>.</li>
+      <li>Never create worktrees, push, open PRs or remove work item folders by hand: the scripts do it and check the state first.</li>
+      <li>Never take an item from someone else without your yes. Never write <code>#1234</code> in text ADO stores: write <code>ADO 1234</code>.</li>
+      <li>Pull requests come from the repos in <code>src/&lt;Repo&gt;/</code>, never from the workspace root.</li>
     </ul>
+  </section>
+
+  <section id="fix">
+    <h2>If something goes wrong</h2>
+    <table>
+      <tr><td>"could not get an ADO token"</td><td>Run <code>! az login</code> in the prompt, then try again.</td></tr>
+      <tr><td>"not allowed" / a refusal</td><td>The item is not in the state that operation needs. The message names each reason and what gets it there, usually <code>/sdd &lt;id&gt;</code> to resume or wait for the PR to merge. Check with <code>/sdd status &lt;id&gt;</code>.</td></tr>
+      <tr><td>"This workspace is not set up for sdd"</td><td>There is no <code>.claude/sdd.json</code> at or above this folder. Run <code>/sdd init</code> from the workspace.</td></tr>
+      <tr><td>The sdd view or a panel does not show</td><td>Panels run in the Claude Desktop app only. In the app, <code>/reload-plugins</code> or start a new chat after an update.</td></tr>
+      <tr><td>A question was blocked</td><td>The question guard wants the Links block above it. sdd fixes this itself and asks again.</td></tr>
+      <tr><td>An edit was blocked</td><td>You (or Claude) tried to edit a repo file in the main checkout while a flow runs. Edit in <code>.claude/worktrees/&lt;id&gt;-&lt;slug&gt;/src/&lt;Repo&gt;/</code>.</td></tr>
+      <tr><td>Sync from ADO fails in the bug manager</td><td>Needs PowerShell and <code>az login</code>. Set <code>bugs.powershell</code> if the wrong one runs. The header shows the message.</td></tr>
+      <tr><td>A bug manager save did not stick</td><td>Look at the item: a ⚠ with <b>Keep mine</b> means someone changed the field since you staged it. A message that ADO "did not show the change" means ADO accepted the save but its answer was different; the change stays staged. <code>last-save.json</code> has the details.</td></tr>
+      <tr><td>Settings do not save</td><td>The panel says which value is wrong. A file that is not valid JSON is never overwritten: fix it by hand (<b>Open sdd.json</b> / <b>Open developers.json</b>).</td></tr>
+      <tr><td>Worktree clean-up refused</td><td>It has uncommitted files or commits that exist only there, or its PR is not merged. That is the safety working. <code>/sdd abandon &lt;id&gt;</code> stops an item on purpose.</td></tr>
+      <tr><td>Both old and new sdd installed</td><td>Moving from the loose skills in <code>~/.claude/skills/sdd*</code>: remove those folders and the two <code>question_guard.py</code> entries from <code>~/.claude/settings.json</code>, or every question is checked twice. <code>/sdd init</code> warns while they are there.</td></tr>
+    </table>
   </section>
 
   <section id="update">
@@ -250,6 +536,7 @@
       <li><code>!claude plugin update sdd@sdd</code>: updates the plugin.</li>
       <li>Run <code>/reload-plugins</code>, or start a new chat, so the new version loads.</li>
     </ol>
+    <p>New settings are added to your <code>.claude/sdd.json</code> at the next session; values you set are never changed. Install the first time with <code>/plugin marketplace add ruadrauflessa/SDD</code> then <code>/plugin install sdd@sdd</code> (repowatch comes with it).</p>
   </section>
 
   <footer>Lost? <code>/sdd status &lt;id&gt;</code> shows where an item is. Open this page again with <code>/sdd:help</code>.</footer>
