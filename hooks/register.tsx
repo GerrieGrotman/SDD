@@ -12,7 +12,7 @@ import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { ageShort, agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, lineKey, linePath, lineTone, lineWord, sortLines } from './view/worktrees'
 import { ANALYSIS_SYSTEM, F, FIELD_NAME, NO_FILTER, ago, analysisKey, analysisNote, analysisPrompt, bugsConfig, categorize, chipCounts, clipboardArgvFor, commentProblem, countText, currentValue, filterItems, isMine,
   itemLinks, keepMine, parseJson, parseTeam, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem, scriptAnswer, scriptArgv, sddState,
-  sddCommand, severityColor, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
+  saveSummary, sddCommand, severityColor, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
 
 const PANE = 'sdd-view'
 const snap = { plugin: 'sdd', key: 'snap' } as const
@@ -827,7 +827,7 @@ export const register: Register = on => {
     const save = (id?: number) => void bugsBusy($, 'save', async () => {
       const w = await where()
       if (!w) return
-      const r = await bugsRun<{ saved: number; conflicts: number; errors: number; message?: string }>($, w, 'Save-BugChanges.ps1', id != null ? ['-Id', String(id)] : [], 300_000)
+      const r = await bugsRun<{ saved: number; already?: number; conflicts: number; errors: number; message?: string }>($, w, 'Save-BugChanges.ps1', id != null ? ['-Id', String(id)] : [], 300_000)
       await bugsRead($)
       if (!r.out?.ok) {
         $.ui.toast(`Save failed: ${r.why}. Nothing saved is lost: the changes are still staged.`)
@@ -835,7 +835,7 @@ export const register: Register = on => {
       }
       const o = r.out
       const left = o.conflicts + o.errors
-      $.ui.toast(o.message ?? `Saved ${o.saved} change${o.saved === 1 ? '' : 's'} to ADO.${left ? ` ${left} could not be saved: see the staged list.` : ''}`)
+      $.ui.toast(saveSummary(o))
       if (left) await $.state.set(bugsReviewS, true)
       if (openId != null) await bugsToggle($, openId, false)
     })

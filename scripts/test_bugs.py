@@ -221,7 +221,7 @@ def save():
             assert by["k7"]["status"] == "error" and "Rule Error" in by["k7"]["message"]
             assert by["k8"]["status"] == "already"
             assert by["k9"]["status"] == "error"                       # the same patch as k7: it failed with it
-            assert (out["saved"], out["conflicts"], out["errors"]) == (6, 1, 3), out
+            assert (out["saved"], out["already"], out["conflicts"], out["errors"]) == (5, 1, 1, 3), out
             w = f.read_world()
             f701 = w["items"]["701"]["fields"]
             assert f701["System.State"] == "Active" and f701["Microsoft.VSTS.Common.Priority"] == 2
@@ -267,6 +267,39 @@ def save():
             assert out["saved"] == 1 and out["results"][0]["status"] == "saved", out
             assert f.read_world()["items"]["703"]["fields"]["System.Tags"] == "1.1.4; Cosmetic; Rule C"
             assert f.item(703)["tags"] == ["1.1.4", "Cosmetic", "Rule C"] and pending(f) == [c for c in pending(f) if c["id"] != 703]
+            last = json.loads((f.bugs / "last-save.json").read_text(encoding="utf-8"))      # what was sent, and what ADO answered
+            assert last["sent"][0]["answeredTags"] == "1.1.4; Cosmetic; Rule C" and last["sent"][0]["problem"] is None, last
+            assert last["result"]["saved"] == 1 and last["sent"][0]["ops"][-1] == {"op": "add", "path": "/fields/System.Tags", "value": "1.1.4; Cosmetic; Rule C"}
+
+            # ADO already has it that way (someone removed the tag in the web page): nothing is sent, it is said so,
+            # and the list is read again, so the stale tag leaves it
+            w = f.read_world()
+            w["items"]["703"]["fields"]["System.Tags"] = "1.1.2; 1.1.4"
+            f.world.write_text(json.dumps(w), encoding="utf-8")
+            f.run("Sync-Bugs.ps1", "-Id", "703")
+            assert f.item(703)["tags"] == ["1.1.2", "1.1.4"]
+            w = f.read_world()
+            w["items"]["703"]["fields"]["System.Tags"] = "1.1.4"
+            w["items"]["703"]["rev"] += 1
+            f.world.write_text(json.dumps(w), encoding="utf-8")
+            patches = len([x for x in w["writes"] if x["method"] == "PATCH"])
+            stage(f, {"id": 703, "kind": "tagRemove", "value": "1.1.2"})
+            out = f.run("Save-BugChanges.ps1")
+            assert (out["saved"], out["already"]) == (0, 1) and out["results"][0]["message"] == "ADO already has it that way", out
+            assert len([x for x in f.read_world()["writes"] if x["method"] == "PATCH"]) == patches       # nothing was sent
+            assert f.item(703)["tags"] == ["1.1.4"], f.item(703)["tags"]                                  # the stale tag is gone from the list
+            assert [c for c in pending(f) if c["id"] == 703] == []
+
+            # ADO accepts the patch but does not apply it: the reply shows it, so it is an error and stays staged
+            w = f.read_world()
+            w["items"]["703"]["ignore"] = ["System.Tags"]
+            f.world.write_text(json.dumps(w), encoding="utf-8")
+            stage(f, {"id": 703, "kind": "tagAdd", "value": "Urgent"})
+            out = f.run("Save-BugChanges.ps1")
+            assert (out["saved"], out["errors"]) == (0, 1), out
+            assert "answered with the tags '1.1.4', not '1.1.4; Urgent'" in out["results"][0]["message"], out
+            left = [c for c in pending(f) if c["id"] == 703]
+            assert len(left) == 1 and left[0]["problem"]["kind"] == "error"
         finally:
             f.close()
 

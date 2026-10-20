@@ -478,6 +478,19 @@ export function analysisNote(a: BugAnalysis, fresh: boolean): string {
   return `${a.model} · ${a.input.toLocaleString('en-US')} tokens in, ${a.output.toLocaleString('en-US')} out · ${a.at.slice(0, 16).replace('T', ' ')}${fresh ? '' : ' · the item or the evidence changed since'}`
 }
 
+/** What the toast says after a save: what was written, what ADO already had, and what could not be saved. */
+export function saveSummary(o: { saved: number; already?: number; conflicts: number; errors: number; message?: string }): string {
+  if (o.message) return o.message
+  const n = (k: number, what: string) => `${k} ${what}${k === 1 ? '' : 's'}`
+  const already = o.already ?? 0
+  const left = o.conflicts + o.errors
+  return [
+    o.saved ? `Saved ${n(o.saved, 'change')} to ADO.` : '',
+    already ? `${n(already, 'change')} already matched ADO, so nothing was sent for ${already === 1 ? 'it' : 'them'}.` : '',
+    left ? `${left} could not be saved: see the staged list.` : '',
+  ].filter(Boolean).join(' ')
+}
+
 /** The command that starts or continues the sdd flow on a work item: what the copy button puts on the clipboard. */
 export function sddCommand(id: number): string {
   return `/sdd ${id}`

@@ -63,7 +63,7 @@ function Get-Plan($W, $Changes) {
         $want = Get-Norm $field $c['value']
         $was = Get-Norm $field $c['was']
         if ($now -eq $want) {
-            $fate[$c['key']] = @{ status = 'already' }
+            $fate[$c['key']] = @{ status = 'already'; message = 'ADO already has it that way' }
         } elseif ($now -ne $was) {
             $shown = [string](Get-Field $f $field)
             if ($field -eq 'System.AssignedTo') { $p = Get-Person (Get-Field $f $field); if ($p) { $shown = $p.name } else { $shown = '' } }
@@ -94,10 +94,31 @@ function Get-Plan($W, $Changes) {
         if ((($tags | ForEach-Object { $_.ToLower() }) -join ';') -ne $before) {
             [void]$ops.Add([ordered]@{ op = 'add'; path = '/fields/System.Tags'; value = ($tags -join '; ') })
         } else {
-            foreach ($c in $tagChanges) { $fate[$c['key']] = @{ status = 'already' } }
+            foreach ($c in $tagChanges) { $fate[$c['key']] = @{ status = 'already'; message = 'ADO already has it that way' } }
         }
     }
     return @{ ops = $ops; fate = $fate }
+}
+
+function Test-Applied($Resp, $Ops) {
+    # ADO answers a patch with the item as it is now: what it says must be what was asked. $null = it is; else why not
+    if (-not $Resp -or -not $Resp.fields) { return $null }
+    foreach ($o in $Ops) {
+        $field = ([string]$o['path']) -replace '^/fields/', ''
+        $got = Get-Field $Resp.fields $field
+        if ($o['op'] -eq 'remove') {
+            if ($null -ne $got -and "$got" -ne '') { return "ADO still has $field = '$got' after the save" }
+            continue
+        }
+        if ($field -eq 'System.Tags') {
+            $want = @(([string]$o['value']) -split ';' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ } | Sort-Object)
+            $have = @(([string]$got) -split ';' | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ } | Sort-Object)
+            if (($want -join ';') -ne ($have -join ';')) { return "ADO accepted the save but answered with the tags '$got', not '$($o['value'])'" }
+            continue
+        }
+        if ((Get-Norm $field $got) -ne (Get-Norm $field $o['value'])) { return "ADO accepted the save but answered with $field = '$got', not '$($o['value'])'" }
+    }
+    return $null
 }
 
 function ConvertTo-CommentHtml([string]$Text) {
@@ -114,12 +135,12 @@ $only = @()
 if ($Id) { $only = @($Id -split '[,; ]+' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }) }
 $todo = @($all | Where-Object { $_ -and ($only.Count -eq 0 -or $only -contains [int]$_['id']) })
 if ($todo.Count -eq 0) {
-    Out-Result ([ordered]@{ ok = $true; saved = 0; conflicts = 0; errors = 0; results = @(); message = 'nothing to save' })
+    Out-Result ([ordered]@{ ok = $true; saved = 0; already = 0; conflicts = 0; errors = 0; results = @(); message = 'nothing to save' })
     exit 0
 }
 
 $results = @{}
-$touched = New-Object System.Collections.ArrayList
+$sent = New-Object System.Collections.ArrayList   # last-save.json: what was sent, and what ADO answered
 try {
     $ids = @($todo | ForEach-Object { [int]$_['id'] } | Sort-Object -Unique)
     $current = @{}
@@ -147,9 +168,15 @@ try {
                 [void]$body.Add([ordered]@{ op = 'test'; path = '/rev'; value = [int]$w.rev })
                 foreach ($o in $plan.ops) { [void]$body.Add($o) }
                 try {
-                    [void](Invoke-Ado PATCH $url $body.ToArray() 'application/json-patch+json')
-                    foreach ($k in $plan.fate.Keys) { $results[$k] = $plan.fate[$k] }
-                    [void]$touched.Add($wid)
+                    $resp = Invoke-Ado PATCH $url $body.ToArray() 'application/json-patch+json'
+                    $why = Test-Applied $resp $plan.ops
+                    $answered = $null
+                    if ($resp -and $resp.fields) { $answered = [string](Get-Field $resp.fields 'System.Tags') }
+                    [void]$sent.Add([ordered]@{ id = $wid; rev = [int]$w.rev; ops = @($plan.ops.ToArray()); answeredRev = $resp.rev; answeredTags = $answered; problem = $why })
+                    foreach ($k in $plan.fate.Keys) {
+                        if ($why -and $plan.fate[$k].status -eq 'saved') { $results[$k] = @{ status = 'error'; message = $why } }
+                        else { $results[$k] = $plan.fate[$k] }
+                    }
                     $done = $true
                 } catch {
                     $status = Get-HttpStatus $_
@@ -180,7 +207,6 @@ try {
                 $curl = "$($ctx.base)/$([uri]::EscapeDataString($project))/_apis/wit/workItems/$wid/comments?api-version=7.1-preview.4"
                 [void](Invoke-Ado POST $curl ([ordered]@{ text = (ConvertTo-CommentHtml $text) }))
                 $results[$c['key']] = @{ status = 'saved' }
-                [void]$touched.Add($wid)
             } catch {
                 $results[$c['key']] = @{ status = 'error'; message = (Get-HttpDetail $_) }
             }
@@ -205,7 +231,8 @@ try {
     }
     Write-Utf8File $pendingPath (ConvertTo-JsonText ([ordered]@{ version = 1; changes = @($left.ToArray()) }))
 
-    $refreshed = @($touched | Sort-Object -Unique)
+    # every item of this save is read again, whatever came of it: the list shows what ADO holds now, not what it held at the last sync
+    $refreshed = @($ids | Where-Object { $current.ContainsKey($_) })
     if ($refreshed.Count -gt 0) {
         $index = Read-BugIndex $ctx
         if ($index) {
@@ -219,10 +246,13 @@ try {
         [ordered]@{ key = $_['key']; id = [int]$_['id']; label = $_['label']; status = $r.status; message = $r.message }
     })
     $count = { param($s) @($list | Where-Object { $_.status -eq $s }).Count }
-    Out-Result ([ordered]@{
-        ok = $true; saved = ((& $count 'saved') + (& $count 'already')); conflicts = (& $count 'conflict'); errors = (& $count 'error')
+    $out = [ordered]@{
+        ok = $true; saved = (& $count 'saved'); already = (& $count 'already'); conflicts = (& $count 'conflict'); errors = (& $count 'error')
         refreshed = $refreshed; results = $list
-    })
+    }
+    Write-Utf8File (Join-Path $ctx.bugsDir 'last-save.json') (ConvertTo-JsonText ([ordered]@{
+        at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); sent = @($sent.ToArray()); result = $out }))
+    Out-Result $out
 } catch {
     Write-Progress2 $_.ScriptStackTrace
     Exit-WithError "save failed: $(Get-HttpDetail $_)"
