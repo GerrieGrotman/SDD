@@ -84,15 +84,25 @@ export function inTeamArea(area: string, areas: readonly string[]): boolean {
   })
 }
 
-/** Is the item the dev team's: assigned to a developer (display name or e-mail, case aside), or in one of its area paths? */
+/** Is the item the dev team's: assigned to one of its developers (display name or e-mail, case aside)? Not in an area path, not
+ *  unassigned: the area paths are a gate on what is shown at all (`visibleItems`), not a way into the team. */
 export function isTeam(item: BugRecord, team: BugTeam | null | undefined): boolean {
-  if (!team) return false
   const a = item.assigned
-  if (a && team.developers.length) {
-    const names = new Set(team.developers.map(low))
-    if (names.has(low(a.name)) || (!!a.email && names.has(low(a.email)))) return true
-  }
-  return inTeamArea(item.area, team.areas)
+  if (!a || !team?.developers.length) return false
+  const names = new Set(team.developers.map(low))
+  return names.has(low(a.name)) || (!!a.email && names.has(low(a.email)))
+}
+
+/** What the dev team file's area paths allow to be shown, whatever the filters say: an item outside them is not in the list, in
+ *  no count, no chip, no picker. No area paths in the file, no gate. */
+export function visibleItems(items: BugRecord[], team: BugTeam | null | undefined): BugRecord[] {
+  return team?.areas.length ? items.filter(i => inTeamArea(i.area, team.areas)) : items
+}
+
+/** The index as `visibleItems` leaves it. */
+export function visibleIndex(index: BugIndex, team: BugTeam | null | undefined): BugIndex {
+  const items = visibleItems(index.items, team)
+  return items.length === index.items.length ? index : { ...index, items, count: items.length }
 }
 
 const DAY = 86_400_000

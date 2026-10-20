@@ -233,9 +233,21 @@ export type BugsConfig = {
 export type BugTeam = {
   /** Display names or e-mails. */
   developers: string[]
-  /** Area paths: `A\B` is that area only; `A\B\*` is that area and everything under it. */
+  /** Area paths: `A\B` is that area only; `A\B\*` is that area and everything under it. An item outside them is never shown. */
   areas: string[]
 }
+
+/** The settings the settings panel edits: the `bugs` settings of .claude/sdd.json, and the dev team file. */
+export type BugSettings = {
+  bugs: BugsConfig
+  /** developers.json "developers": display names or e-mails. */
+  developers: string[]
+  /** developers.json "areaPath", one area path to an entry. */
+  areas: string[]
+}
+
+/** The settings panel's edits: `base` is what the files hold, `now` what the panel shows; nothing is written until Save. */
+export type BugSettingsDraft = { base: BugSettings; now: BugSettings }
 
 /** One staged change, kept in <bugs folder>/pending.json until it is saved or reverted. */
 export type BugChange = {
@@ -283,7 +295,7 @@ export type BugFilter = {
   mine: boolean
   /** Hide the items in a "doneStates" state. */
   hideDone: boolean
-  /** Only the dev team's items: assigned to a developer of the dev team file, or in one of its area paths. */
+  /** Only the dev team's items: assigned to a developer of the dev team file. */
   team: boolean
   text: string
   sort: 'priority' | 'severity' | 'changed' | 'created' | 'id'
@@ -351,6 +363,12 @@ declare module 'claude-code' {
       bugsReview: boolean
       /** The items ticked for a change to all of them at once. */
       bugsPicked: number[]
+      /** What the pane shows: the list, or the settings panel. */
+      bugsView: 'list' | 'settings'
+      /** The settings panel's edits, or null while it has none (the panel starts from the files). */
+      bugsDraft: BugSettingsDraft | null
+      /** The settings section open in the panel, and inside Categories the category open ('categories:quick-wins'), or null. */
+      bugsSection: string | null
     }
   }
 }

@@ -214,7 +214,8 @@ for (const [cols, most] of [[40, 30], [60, 36], [100, 76]] as const) {
   test(`desktop: at ${cols} columns the work item dropdown labels are cut to ${most} characters`, async ($: any, on: any) => {
     const item = (SNAP as any).items[0]
     const was = item.title
-    item.title = 'A very long title for a work item that would run off the edge of the pane'
+    // 'Author tags' stays at the start: mountPane waits for it, and a title without it makes every wait run its full second
+    item.title = 'Author tags: a very long title for a work item that would run off the edge of the pane'
     try {
       const ui = await mountPane($, fake(on, []), 'desktop', cols)
       if (!ui) return

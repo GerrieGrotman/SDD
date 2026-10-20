@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { BugCategory, BugIndex, BugRecord, BugsConfig, SddSnapshot } from '../types'
 import { F, NO_FILTER, analysisKey, analysisPrompt, ago, bugsConfig, categorize, changeLabel, commentProblem, conditionHolds, currentValue,
-  filterItems, chipCounts, clipboardArgvFor, countText, saveSummary, sddCommand, isMine, isTeam, parseTeam, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
+  filterItems, chipCounts, clipboardArgvFor, countText, saveSummary, sddCommand, inTeamArea, isMine, isTeam, parseTeam, visibleIndex, visibleItems, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
   scriptAnswer, scriptArgv, sddState, severityRank, shortName, sortItems, stageChange, stateOptions, tagOptions, withPending } from './view/bugs'
 
 const DEFAULTS = {
@@ -99,7 +99,7 @@ test('the filters: category, mine, type, state and words', () => {
   expect(isMine(rec(5, { assigned: { name: 'me myself', email: '' } }), { name: 'Me Myself', email: '' })).toBe(true)
 })
 
-test('the dev team: the file as the workspace keeps it, by developer or by area path', () => {
+test('the dev team file: its developers pick the team, its area paths decide what is shown at all', () => {
   // .claude/developers.json as the team keeps it: area paths in one string, and the developers by display name
   const file = JSON.stringify({ areaPath: 'Proj.Pay; Proj.Pay\\Core\\*', developers: ['Ann Bee', ' raj patel ', '', 'bob@x.co'] })
   const team = parseTeam(file)!
@@ -111,29 +111,44 @@ test('the dev team: the file as the workspace keeps it, by developer or by area 
   expect(parseTeam('{"areaPath": " ; "}')).toBe(null)
   expect(parseTeam('not json')).toBe(null)
 
-  // by developer: display name or e-mail, case aside
+  // the team is its developers: display name or e-mail, case aside; nobody else, in the area or out of it, unassigned or not
   const at = (area: string, assigned: { name: string; email: string } | null = null) => rec(9, { area, assigned })
-  expect(isTeam(at('Other', { name: 'ANN BEE', email: '' }), team)).toBe(true)
-  expect(isTeam(at('Other', { name: 'Bob', email: 'BOB@x.co' }), team)).toBe(true)
-  expect(isTeam(at('Other', { name: 'Me Myself', email: 'me@x.co' }), team)).toBe(false)
-  // by area: `A` is that area only, `A\B\*` is that area and everything under it
-  expect(isTeam(at('Proj.Pay'), team)).toBe(true)                                              // exact
-  expect(isTeam(at('proj.pay'), team)).toBe(true)                                              // case aside
-  expect(isTeam(at('Proj.Pay\\Billing'), team)).toBe(false)                                    // under an exact entry: no
-  expect(isTeam(at('Proj.Pay\\Core'), team)).toBe(true)                                        // the starred area itself
-  expect(isTeam(at('Proj.Pay\\Core\\Totals\\Deep'), team)).toBe(true)                          // and anything under it
-  expect(isTeam(at('Proj.Pay\\Corex'), team)).toBe(false)                                      // a longer name is not under it
-  expect(isTeam(at(''), team)).toBe(false)
-  // either is enough: an unassigned item in the area, and a developer's item anywhere
-  expect(isTeam(at('Proj.Pay\\Core\\X', null), team)).toBe(true)
-  expect(isTeam(at('Elsewhere', { name: 'Ann Bee', email: '' }), team)).toBe(true)
+  expect(isTeam(at('Proj.Pay', { name: 'ANN BEE', email: '' }), team)).toBe(true)
+  expect(isTeam(at('Other', { name: 'Ann Bee', email: '' }), team)).toBe(true)                // the gate is the area's job, not the team's
+  expect(isTeam(at('Proj.Pay', { name: 'Bob', email: 'BOB@x.co' }), team)).toBe(true)
+  expect(isTeam(at('Proj.Pay', { name: 'Me Myself', email: 'me@x.co' }), team)).toBe(false)   // in the area, but not a developer
+  expect(isTeam(at('Proj.Pay\\Core\\X'), team)).toBe(false)                                    // unassigned
   expect(isTeam(ITEMS[1], null)).toBe(false)
-  expect(isTeam(ITEMS[1], { developers: [], areas: [] })).toBe(false)
+  expect(isTeam(ITEMS[1], { developers: [], areas: ['Proj\\Payments'] })).toBe(false)         // an area alone makes nobody a developer
+
+  // by area: `A` is that area only, `A\B\*` is that area and everything under it
+  const inArea = (area: string) => inTeamArea(area, team.areas)
+  expect(inArea('Proj.Pay')).toBe(true)                                                        // exact
+  expect(inArea('proj.pay')).toBe(true)                                                        // case aside
+  expect(inArea('Proj.Pay\\Billing')).toBe(false)                                              // under an exact entry: no
+  expect(inArea('Proj.Pay\\Core')).toBe(true)                                                  // the starred area itself
+  expect(inArea('Proj.Pay\\Core\\Totals\\Deep')).toBe(true)                                    // and anything under it
+  expect(inArea('Proj.Pay\\Corex')).toBe(false)                                                // a longer name is not under it
+  expect(inArea('')).toBe(false)
+
+  // the gate: whatever is outside the area paths is not in the list at all; no area paths, no gate
+  const rows = [at('Proj.Pay'), at('Proj.Pay\\Core\\X'), at('Elsewhere', { name: 'Ann Bee', email: '' }), at('Proj.Pay\\Billing')].map((r, i) => ({ ...r, id: 100 + i }))
+  expect(visibleItems(rows, team).map(r => r.id)).toEqual([100, 101])                          // even Ann Bee's item elsewhere is gone
+  expect(visibleItems(rows, { developers: ['Ann Bee'], areas: [] })).toBe(rows)
+  expect(visibleItems(rows, null)).toBe(rows)
+  const index = { me: ME, items: rows, count: 4 } as unknown as BugIndex
+  expect(visibleIndex(index, team)).toMatchObject({ count: 2, items: [{ id: 100 }, { id: 101 }] })
+  expect(visibleIndex(index, null)).toBe(index)
+  // the gate leaves nothing to the filters: the people, the paths and the tags offered come from what is shown
+  expect(pathOptions(visibleIndex(index, team).items, 'area').sort()).toEqual(['Proj.Pay', 'Proj.Pay\\Core\\X'])
+  const ann = { ...rows[2], assigned: { name: 'Ann Bee', email: 'ann@x.co' } }                 // people() lists those with an e-mail
+  expect(people({ ...index, items: [ann] } as BugIndex).map(p => p.name)).toContain('Ann Bee')
+  expect(people(visibleIndex({ ...index, items: [ann, rows[0]] } as BugIndex, team)).map(p => p.name)).not.toContain('Ann Bee')
 
   const cats = categorize(ITEMS, DEFAULTS.categories, ME, NOW)
   const only = { developers: ['Ann Bee'], areas: [] }
   expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], only).map(i => i.id)).toEqual([2])
-  expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], { developers: ['Ann Bee'], areas: ['Proj\\Payments'] }).map(i => i.id)).toEqual([1, 2, 3, 4])   // every ITEM is in that area
+  expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], { developers: ['Ann Bee'], areas: ['Proj\\Payments'] }).map(i => i.id)).toEqual([2])   // the area adds nobody
   expect(filterItems(ITEMS, { ...NO_FILTER, team: true, hideDone: true }, cats, ME, DEFAULTS.doneStates, { developers: ['Ann Bee', 'Me Myself'], areas: [] }).map(i => i.id)).toEqual([1, 2])
   expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], null)).toEqual([])    // a filter with no team shows nothing
 })

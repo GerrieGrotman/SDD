@@ -311,7 +311,32 @@ def main():
         view = json.loads(run(root, "env.py", "view", "--json", "--id", "502").stdout)
         assert {i["id"]: i.get("path") for i in view["items"]}[502] == "full", view["items"]
         assert view["flows"]["spec"]["paths"]["short"]["label"].startswith("Short")   # the view reads the paths
+    tags_like_ado()
     print("ok")
+
+
+def tags_like_ado():
+    """ADO merges an add into System.Tags and only a replace sets the whole list (Work Items - Update: "Add a tag" and
+    "Update a tag"). The fake must do the same, or a test passes a tag removal that ADO would ignore."""
+    import fakeado
+    with tempfile.TemporaryDirectory() as tmp:
+        world = Path(tmp) / "w.json"
+        world.write_text(json.dumps({"items": {"1": {"rev": 1, "fields": {"System.Tags": "Tag0; Tag1"}}}}))
+        old = os.environ.get(fakeado.ENV)
+        os.environ[fakeado.ENV] = str(world)
+        try:
+            def patch(op, value):
+                fakeado.request("PATCH", "https://x/p/_apis/wit/workitems/1", [{"op": op, "path": "/fields/System.Tags", "value": value}])
+                return json.loads(world.read_text())["items"]["1"]["fields"]["System.Tags"]
+            assert patch("add", "tag1; Tag2") == "Tag0; Tag1; Tag2"        # merged, case aside: nothing taken off
+            assert patch("add", "Tag0") == "Tag0; Tag1; Tag2"
+            assert patch("replace", "Tag1; Tag2") == "Tag1; Tag2"          # the whole list: Tag0 is gone
+            assert patch("replace", "") == ""
+        finally:
+            if old is None:
+                os.environ.pop(fakeado.ENV, None)
+            else:
+                os.environ[fakeado.ENV] = old
 
 
 if __name__ == "__main__":
