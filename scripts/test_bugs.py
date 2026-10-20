@@ -289,6 +289,8 @@ def save():
             assert len([x for x in f.read_world()["writes"] if x["method"] == "PATCH"]) == patches       # nothing was sent
             assert f.item(703)["tags"] == ["1.1.4"], f.item(703)["tags"]                                  # the stale tag is gone from the list
             assert [c for c in pending(f) if c["id"] == 703] == []
+            last = json.loads((f.bugs / "last-save.json").read_text(encoding="utf-8"))      # nothing sent, and the file says why
+            assert last["sent"][0]["ops"] == [] and last["sent"][0]["tagsInAdo"] == "1.1.4" and "nothing to send" in last["sent"][0]["note"], last
 
             # ADO accepts the patch but does not apply it: the reply shows it, so it is an error and stays staged
             w = f.read_world()
@@ -302,6 +304,32 @@ def save():
             assert len(left) == 1 and left[0]["problem"]["kind"] == "error"
         finally:
             f.close()
+
+
+def tags():
+    """Every shape of tag list, through the real script, as the pane stages it (an ISO time and a unicode label too)."""
+    shapes = [("1.1.2; 1.1.4; Cosmetic; Rule C", "tagRemove", "1.1.2", "1.1.4; Cosmetic; Rule C", "saved"),
+              ("1.1.2", "tagRemove", "1.1.2", "", "saved"),                       # the last tag: the field is cleared
+              ("1.1.2", "tagAdd", "Urgent", "1.1.2; Urgent", "saved"),
+              ("", "tagAdd", "Urgent", "Urgent", "saved"),
+              ("A; B", "tagRemove", "b", "A", "saved"),                           # any case
+              ("A", "tagAdd", "a", "A", "already"),
+              ("A; B", "tagRemove", "C", "A; B", "already")]
+    for have, kind, value, want, status in shapes:
+        with tempfile.TemporaryDirectory() as tmp:
+            world = json.loads(json.dumps(WORLD))
+            world["items"]["703"]["fields"]["System.Tags"] = have
+            f = Fake(tmp, world)
+            try:
+                f.run("Sync-Bugs.ps1")
+                (f.bugs / "pending.json").write_text(json.dumps({"version": 1, "changes": [
+                    {"key": "k", "id": 703, "kind": kind, "value": value, "label": "\u2212 tag " + value, "at": "2026-10-20T10:10:10.123Z"}]}, indent=1) + "\n", encoding="utf-8")
+                out = f.run("Save-BugChanges.ps1")
+                got = f.read_world()["items"]["703"]["fields"].get("System.Tags", "")
+                assert (got, out["results"][0]["status"]) == (want, status), (have, kind, value, got, out)
+                assert ", ".join(f.item(703)["tags"]) == want.replace("; ", ", "), (have, f.item(703)["tags"])   # and the list shows it
+            finally:
+                f.close()
 
 
 def detail():
@@ -400,6 +428,7 @@ def main():
     compat_51()
     sync()
     save()
+    tags()
     detail()
     evidence()
     print("ok")

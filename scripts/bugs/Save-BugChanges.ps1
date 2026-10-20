@@ -48,8 +48,9 @@ function Get-Norm([string]$Field, $Value) {
 
 function Get-TagList($Fields) {
     $raw = [string](Get-Field $Fields 'System.Tags')
-    if (-not $raw) { return ,@() }
-    return ,@($raw -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if (-not $raw) { return @() }
+    # the tags one by one (no unary comma): callers wrap the call in @() or [string[]]
+    return @($raw -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
 
 function Get-Plan($W, $Changes) {
@@ -81,14 +82,14 @@ function Get-Plan($W, $Changes) {
     }
     $tagChanges = @($Changes | Where-Object { $_['kind'] -eq 'tagAdd' -or $_['kind'] -eq 'tagRemove' })
     if ($tagChanges.Count -gt 0) {
-        $tags = New-Object System.Collections.ArrayList
-        foreach ($t in (Get-TagList $f)) { [void]$tags.Add($t) }
+        # plain string arrays and filters, no .NET list methods: they behave the same in Windows PowerShell 5.1 and 7
+        $tags = [string[]]@(Get-TagList $f)
         $before = ($tags | ForEach-Object { $_.ToLower() }) -join ';'
         foreach ($c in $tagChanges) {
             $t = ([string]$c['value']).Trim()
-            $hit = @($tags | Where-Object { $_.ToLower() -eq $t.ToLower() })
-            if ($c['kind'] -eq 'tagAdd' -and $hit.Count -eq 0) { [void]$tags.Add($t) }
-            if ($c['kind'] -eq 'tagRemove') { foreach ($h in $hit) { $tags.Remove($h) } }
+            $has = @($tags | Where-Object { $_.ToLower() -eq $t.ToLower() }).Count -gt 0
+            if ($c['kind'] -eq 'tagAdd' -and -not $has) { $tags = [string[]](@($tags) + $t) }
+            if ($c['kind'] -eq 'tagRemove') { $tags = [string[]]@($tags | Where-Object { $_.ToLower() -ne $t.ToLower() }) }
             $fate[$c['key']] = @{ status = 'saved' }
         }
         if ((($tags | ForEach-Object { $_.ToLower() }) -join ';') -ne $before) {
@@ -160,6 +161,7 @@ try {
             for ($try = 1; $try -le 3 -and -not $done; $try++) {
                 $plan = Get-Plan $w $edits
                 if ($plan.ops.Count -eq 0) {
+                    [void]$sent.Add([ordered]@{ id = $wid; rev = [int]$w.rev; ops = @(); tagsInAdo = [string](Get-Field $w.fields 'System.Tags'); note = 'nothing to send: the plan found ADO already as asked' })
                     foreach ($k in $plan.fate.Keys) { $results[$k] = $plan.fate[$k] }
                     $done = $true
                     break
@@ -172,7 +174,7 @@ try {
                     $why = Test-Applied $resp $plan.ops
                     $answered = $null
                     if ($resp -and $resp.fields) { $answered = [string](Get-Field $resp.fields 'System.Tags') }
-                    [void]$sent.Add([ordered]@{ id = $wid; rev = [int]$w.rev; ops = @($plan.ops.ToArray()); answeredRev = $resp.rev; answeredTags = $answered; problem = $why })
+                    [void]$sent.Add([ordered]@{ id = $wid; rev = [int]$w.rev; tagsInAdo = [string](Get-Field $w.fields 'System.Tags'); ops = @($plan.ops.ToArray()); answeredRev = $resp.rev; answeredTags = $answered; problem = $why })
                     foreach ($k in $plan.fate.Keys) {
                         if ($why -and $plan.fate[$k].status -eq 'saved') { $results[$k] = @{ status = 'error'; message = $why } }
                         else { $results[$k] = $plan.fate[$k] }
