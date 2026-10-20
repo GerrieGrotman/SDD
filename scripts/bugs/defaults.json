@@ -44,7 +44,6 @@
     }
   ],
   "analysis": {"model": "haiku", "maxTokens": 500, "effort": "low"},
-  "newChat": {"mode": "desktop", "url": ""},
   "me": "",
   "powershell": ""
 }

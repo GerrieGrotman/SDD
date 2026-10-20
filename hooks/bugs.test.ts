@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { BugCategory, BugIndex, BugRecord, BugsConfig, SddSnapshot } from '../types'
 import { F, NO_FILTER, analysisKey, analysisPrompt, ago, bugsConfig, categorize, changeLabel, commentProblem, conditionHolds, currentValue,
-  filterItems, chipCounts, countText, isMine, isTeam, parseTeam, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
+  filterItems, chipCounts, clipboardArgvFor, countText, sddCommand, isMine, isTeam, parseTeam, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
   scriptAnswer, scriptArgv, sddState, severityRank, shortName, sortItems, stageChange, stateOptions, tagOptions, withPending } from './view/bugs'
 
 const DEFAULTS = {
@@ -18,7 +18,7 @@ const DEFAULTS = {
     { id: 'ready', label: 'Ready for deployment', any: [{ states: ['Resolved'] }, { tags: ['Ready for Deployment'] }] },
     { id: 'version', label: 'Team branch {value}', eachTag: '^\\d+(\\.\\d+){1,3}$' },
   ],
-  analysis: { model: 'haiku', maxTokens: 500, effort: 'low' }, newChat: { mode: 'terminal', url: '' }, me: '', powershell: '',
+  analysis: { model: 'haiku', maxTokens: 500, effort: 'low' }, me: '', powershell: '',
 } as BugsConfig
 
 const ME = { name: 'Me Myself', email: 'me@x.co' }
@@ -272,6 +272,17 @@ test('the probable-cause prompt is short lines, and its key follows the item and
   expect(analysisPrompt(ITEMS[0], null, null)).toContain('No code evidence was gathered.')
   expect(analysisKey(ITEMS[0], ev)).toBe('1|Billing/Totals.cs:42,abc')
   expect(analysisKey({ ...ITEMS[0], rev: 2 }, ev)).not.toBe(analysisKey(ITEMS[0], ev))
+})
+
+test('the command to copy: /sdd and the work item, on the clipboard of the platform it is told', () => {
+  expect(sddCommand(71347)).toBe('/sdd 71347')
+  // Windows: PowerShell's Set-Clipboard, even though the text is no path (the platform is told, not sniffed)
+  expect(clipboardArgvFor('/sdd 71347', true)).toEqual(['powershell', '-NoProfile', '-Command', "Set-Clipboard -Value '/sdd 71347'"])
+  expect(clipboardArgvFor("it's", true)[3]).toBe("Set-Clipboard -Value 'it''s'")
+  const unix = clipboardArgvFor('/sdd 71347', false)
+  expect(unix.slice(0, 2)).toEqual(['sh', '-c'])
+  expect(unix[2]).toBe("printf %s '/sdd 71347' | (pbcopy 2>/dev/null || wl-copy 2>/dev/null || xclip -selection clipboard)")
+  expect(clipboardArgvFor("a'b", false)[2]).toContain("'a'\\''b'")
 })
 
 test('running a script: which PowerShell, the argv, and its answer', () => {

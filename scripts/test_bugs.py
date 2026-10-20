@@ -318,49 +318,6 @@ def evidence():
             f.close()
 
 
-def chat():
-    if os.name == "nt":
-        return  # the launch below fakes a Unix terminal; Windows opens wt.exe or cmd.exe
-    import time
-    with tempfile.TemporaryDirectory() as tmp:
-        f = Fake(tmp)
-        try:
-            bin_dir = Path(tmp) / "bin"
-            bin_dir.mkdir()
-            got = Path(tmp) / "xterm-args.txt"
-            f.env["PATH"] = str(bin_dir)  # only the fakes: the machine may have a terminal of its own
-            # the default: a new Claude Code session in the Desktop app, the prompt in its composer, in the workspace
-            out = f.run("Start-SddChat.ps1", "-Id", "701", "-DryRun")
-            folder = urllib.parse.quote(str(f.root), safe="")
-            assert out["how"] == "Claude Desktop" and out["args"] == [f'"claude://code/new?q=%2Fsdd%3Asdd%20701&folder={folder}"'], out
-            cfg = json.loads((f.root / ".claude" / "sdd.json").read_text())
-            cfg["bugs"] = {"newChat": {"mode": "terminal"}}
-            (f.root / ".claude" / "sdd.json").write_text(json.dumps(cfg))
-            out = f.run("Start-SddChat.ps1", "-Id", "701", "-DryRun", ok=False)
-            assert not out["ok"] and "claude command is not on PATH" in out["error"], out
-            (bin_dir / "claude").write_text("#!/bin/sh\nexit 0\n")
-            (bin_dir / "claude").chmod(0o755)
-            out = f.run("Start-SddChat.ps1", "-Id", "701", "-DryRun", ok=False)
-            assert not out["ok"] and "no terminal program found" in out["error"], out
-            (bin_dir / "xterm").write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > '{got}'\n")
-            (bin_dir / "xterm").chmod(0o755)
-            out = f.run("Start-SddChat.ps1", "-Id", "701")
-            assert out["how"] == "xterm" and out["prompt"] == "/sdd:sdd 701", out
-            for _ in range(100):
-                if got.exists() and got.read_text():
-                    break
-                time.sleep(0.05)
-            assert got.read_text().splitlines() == ["-e", "bash", "-lc", f"cd '{f.root}' && claude '/sdd:sdd 701'"], got.read_text()
-            # a deep link instead of a terminal
-            cfg = json.loads((f.root / ".claude" / "sdd.json").read_text())
-            cfg["bugs"] = {"newChat": {"mode": "url", "url": "claude://new?prompt={prompt}&id={id}"}}
-            (f.root / ".claude" / "sdd.json").write_text(json.dumps(cfg))
-            out = f.run("Start-SddChat.ps1", "-Id", "701", "-DryRun")
-            assert out["how"] == "url" and out["args"] == ['"claude://new?prompt=%2Fsdd%3Asdd%20701&id=701"'], out
-        finally:
-            f.close()
-
-
 def ascii_only():
     """Windows PowerShell 5.1 reads a script without a BOM as the machine's ANSI code page: keep them ASCII."""
     for f in BUGS.glob("*.ps1"):
@@ -402,7 +359,6 @@ def main():
     save()
     detail()
     evidence()
-    chat()
     print("ok")
 
 

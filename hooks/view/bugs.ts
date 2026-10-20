@@ -478,6 +478,18 @@ export function analysisNote(a: BugAnalysis, fresh: boolean): string {
   return `${a.model} · ${a.input.toLocaleString('en-US')} tokens in, ${a.output.toLocaleString('en-US')} out · ${a.at.slice(0, 16).replace('T', ' ')}${fresh ? '' : ' · the item or the evidence changed since'}`
 }
 
+/** The command that starts or continues the sdd flow on a work item: what the copy button puts on the clipboard. */
+export function sddCommand(id: number): string {
+  return `/sdd ${id}`
+}
+
+/** The command that puts `text` on the clipboard: PowerShell's Set-Clipboard on Windows, else pbcopy, wl-copy or xclip. The
+ *  platform is told, not guessed from the text. */
+export function clipboardArgvFor(text: string, isWindows: boolean): string[] {
+  if (isWindows) return ['powershell', '-NoProfile', '-Command', `Set-Clipboard -Value '${text.replace(/'/g, "''")}'`]
+  return ['sh', '-c', `printf %s '${text.replace(/'/g, "'\\''")}' | (pbcopy 2>/dev/null || wl-copy 2>/dev/null || xclip -selection clipboard)`]
+}
+
 /** The PowerShell to run a script with: the setting, else pwsh, else Windows PowerShell. */
 export function powershellCandidates(setting: string | undefined, isWindows: boolean): string[] {
   const list = [setting, 'pwsh', isWindows ? 'powershell' : ''].filter((x): x is string => !!x)
