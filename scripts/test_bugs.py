@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -324,6 +325,13 @@ def chat():
             bin_dir.mkdir()
             got = Path(tmp) / "xterm-args.txt"
             f.env["PATH"] = str(bin_dir)  # only the fakes: the machine may have a terminal of its own
+            # the default: a new Claude Code session in the Desktop app, the prompt in its composer, in the workspace
+            out = f.run("Start-SddChat.ps1", "-Id", "701", "-DryRun")
+            folder = urllib.parse.quote(str(f.root), safe="")
+            assert out["how"] == "Claude Desktop" and out["args"] == [f'"claude://code/new?q=%2Fsdd%3Asdd%20701&folder={folder}"'], out
+            cfg = json.loads((f.root / ".claude" / "sdd.json").read_text())
+            cfg["bugs"] = {"newChat": {"mode": "terminal"}}
+            (f.root / ".claude" / "sdd.json").write_text(json.dumps(cfg))
             out = f.run("Start-SddChat.ps1", "-Id", "701", "-DryRun", ok=False)
             assert not out["ok"] and "claude command is not on PATH" in out["error"], out
             (bin_dir / "claude").write_text("#!/bin/sh\nexit 0\n")
@@ -356,11 +364,36 @@ def ascii_only():
         assert all(b < 128 for b in text), f"{f.name}: a non-ASCII character (write it as an escape)"
 
 
+COMPAT = r"""
+if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { 'skip'; exit 0 }
+$p = @('win-48_x64_10.0.17763.0_5.1.17763.316_x64_4.0.30319.42000_framework')
+$s = @{ Rules = @{ PSUseCompatibleSyntax = @{ Enable = $true; TargetVersions = @('5.1') }
+                   PSUseCompatibleCommands = @{ Enable = $true; TargetProfiles = $p }
+                   PSUseCompatibleTypes = @{ Enable = $true; TargetProfiles = $p } }
+        IncludeRules = @('PSUseCompatibleSyntax', 'PSUseCompatibleCommands', 'PSUseCompatibleTypes') }
+Get-ChildItem -Path '{folder}' -Filter *.ps1 | ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Settings $s } |
+    ForEach-Object { "$($_.ScriptName):$($_.Line): $($_.Message)" }
+"""
+
+
+def compat_51():
+    """Windows PowerShell 5.1 is what most users run: no syntax, cmdlet parameter or .NET type it lacks.
+    Needs PSScriptAnalyzer (Install-Module PSScriptAnalyzer -Scope CurrentUser); skipped without it."""
+    script = COMPAT.replace("{folder}", str(BUGS).replace("'", "''"))
+    r = subprocess.run([PS, "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True, timeout=600)
+    out = r.stdout.strip()
+    if out == "skip":
+        print("skip: the PowerShell 5.1 compatibility check needs PSScriptAnalyzer")
+        return
+    assert r.returncode == 0 and not out, f"not Windows PowerShell 5.1 compatible:\n{out}\n{r.stderr}"
+
+
 def main():
     ascii_only()
     if not PS:
         print("skip: no pwsh or powershell on PATH")
         return
+    compat_51()
     sync()
     save()
     detail()

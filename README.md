@@ -100,9 +100,12 @@ reads the files they write. Only **Find probable cause** calls a model, once, wi
   history of what it finds and the commits linked to the item. **Find probable cause** sends the report
   and that evidence to `haiku` once (about 1-2k tokens in, 500 out at most) and keeps the answer, with
   its cost, in `items/<id>.analysis.json`.
-- **▶ Start sdd in a new chat** (`Start-SddChat.ps1`) opens a new Claude Code chat on the item:
-  `claude "/sdd:sdd <id>"` in a new Windows Terminal tab (or console window). An item already in a flow
-  says **Continue sdd** and resumes where it stopped. **In this chat** puts the command in the prompt box.
+- **▶ Start sdd in a new chat** (`Start-SddChat.ps1`) opens a new Claude Code session in the Desktop app,
+  with `/sdd:sdd <id>` in its prompt box and the workspace as its folder (the app's
+  [`claude://code/new` link](https://support.claude.com/en/articles/14729294-open-claude-desktop-with-a-link):
+  it asks you to confirm the folder, and nothing is sent until you press Enter). `"newChat": {"mode": "terminal"}`
+  opens `claude "/sdd:sdd <id>"` in a new terminal window instead. An item already in a flow says
+  **Continue sdd** and resumes where it stopped. **In this chat** puts the command in this chat's prompt box.
 
 Needs PowerShell (Windows PowerShell 5.1 or PowerShell 7) and `az login`; a personal access token in
 `AZURE_DEVOPS_EXT_PAT` works too.
@@ -135,7 +138,7 @@ on each flow when no open item takes it.
     { "id": "version", "label": "Team branch {value}", "icon": "🌿", "eachTag": "^\\d+(\\.\\d+){1,3}$" }
   ],
   "analysis": { "model": "haiku", "maxTokens": 500 },
-  "newChat": { "mode": "terminal" }
+  "newChat": { "mode": "desktop" }
 }
 ```
 

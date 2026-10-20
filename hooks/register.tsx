@@ -784,6 +784,7 @@ export const register: Register = on => {
     const picked = (await $.state.get(bugsPickedS)).value ?? []
     const now = Date.now()
     const tint = /^#[0-9a-f]{6}$/i.test(C.work) ? `${C.work}22` : undefined
+    const pickTint = /^#[0-9a-f]{6}$/i.test(C.gate) ? `${C.gate}22` : undefined
 
     // ---- what the presses do; they run after the drawing, so they may write
     const where = async (): Promise<BugsWhere | null> => {
@@ -879,7 +880,9 @@ export const register: Register = on => {
       const w = await where()
       if (!w) return
       const r = await bugsRun<{ how: string; prompt: string }>($, w, 'Start-SddChat.ps1', ['-Id', String(id)], 30_000)
-      $.ui.toast(r.out?.ok ? `New chat opened (${r.out.how}) with ${r.out.prompt}.` : `No new chat: ${r.why}`)
+      $.ui.toast(r.out?.ok
+        ? `New chat opened (${r.out.how}) with ${r.out.prompt}${r.out.how === 'Claude Desktop' ? ' in its prompt box: confirm the folder, then press Enter' : ''}.`
+        : `No new chat: ${r.why}`)
     })
     const here = (id: number) => void (async () => {
       await $.prompt.fill({ text: `/sdd:sdd ${id}` })
@@ -984,8 +987,10 @@ export const register: Register = on => {
         <Box flexDirection="row" gap={1} flexWrap="wrap">
           <Button key="cat-all" label={`All ${index.items.length}`} variant={filter.category === 'all' ? 'primary' : undefined} onPress={() => setFilter({ category: 'all' })} />
           {cats.map(c => (
-            <Button key={`cat-${c.id}`} label={`${c.icon} ${c.label} ${c.ids.length}`} variant={filter.category === c.id ? 'primary' : undefined}
-              onPress={() => setFilter({ category: filter.category === c.id ? 'all' : c.id })} />
+            <Button key={`cat-${c.id}`} variant={filter.category === c.id ? 'primary' : undefined}
+              onPress={() => setFilter({ category: filter.category === c.id ? 'all' : c.id })}>
+              <Text color={filter.category === c.id ? undefined : c.color}>{c.icon}</Text>{` ${c.label} `}<Text dimColor={filter.category !== c.id}>{String(c.ids.length)}</Text>
+            </Button>
           ))}
         </Box>
       </Box>
@@ -1086,8 +1091,13 @@ export const register: Register = on => {
         <Box flexDirection="column">
           {list.length > 0 && (
             // the columns of the rows below, with the same widths
-            <Box key="bugs-columns" flexDirection="row" gap={1}>
-              <Text dimColor>{'☐ ● ⋯'}</Text>
+            <Box key="bugs-columns" flexDirection="row" gap={1} alignItems="center">
+              <Button key="pick-page" plain label={page.every(i => picked.includes(i.id)) ? '☑' : '☐'} onPress={() => void update($, bugsPickedS, cur => {
+                const ids = page.map(i => i.id)
+                const all = ids.every(x => (cur ?? []).includes(x))
+                return all ? (cur ?? []).filter(x => !ids.includes(x)) : [...new Set([...(cur ?? []), ...ids])]
+              })} />
+              <Text dimColor>{'● ⋯'}</Text>
               <Box width={7} flexShrink={0}><Text dimColor>Id</Text></Box>
               <Box flexGrow={1} flexShrink={1} minWidth={0}><Text dimColor wrap="truncate-end">{`Title · ${list.length} shown · ● severity 1 red, 2 orange, 3 amber`}</Text></Box>
               <Text dimColor>State</Text>
@@ -1116,7 +1126,7 @@ export const register: Register = on => {
       const bad = mine.some(p => p.problem)
       return (
         <Box key={`bugbox-${item.id}`} flexDirection="column">
-          <Box key={`bugrow-${item.id}`} flexDirection="row" gap={1} alignItems="center" backgroundColor={isOpen ? tint : undefined}>
+          <Box key={`bugrow-${item.id}`} flexDirection="row" gap={1} alignItems="center" backgroundColor={isOpen ? tint : isPicked ? pickTint : undefined}>
             <Button key={`pick-${item.id}`} plain label={isPicked ? '☑' : '☐'}
               onPress={() => void update($, bugsPickedS, cur => isPicked ? (cur ?? []).filter(x => x !== item.id) : [...(cur ?? []), item.id])} />
             <Text color={severityColor(item.severity)}>●</Text>
@@ -1170,6 +1180,12 @@ export const register: Register = on => {
                 {inCats.map(c => <Text key={`incat-${id}-${c.id}`} color={c.color}>{`${c.icon} ${c.label}`}</Text>)}
               </Box>
             )}
+          </Box>
+
+          <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
+            <Box flexGrow={1} flexShrink={1} minWidth={0}><Text dimColor wrap="wrap">{flow.note}</Text></Box>
+            <Button key={`chat-${id}`} variant="primary" label={`▶ ${flow.label} in a new chat`} onPress={() => newChat(id)} />
+            <Button key={`here-${id}`} label="In this chat" onPress={() => here(id)} />
           </Box>
 
           {Select && (
@@ -1282,6 +1298,7 @@ export const register: Register = on => {
               </Box>
             ))}
             {longBody && <Button key={`more-${id}`} plain label={more ? 'Show less' : 'Show all'} onPress={() => edit(`more-${id}`)} />}
+            {(d?.comments ?? []).length > 0 && <Text dimColor>{`Latest comments (${Math.min(3, d!.comments.length)} of ${d!.comments.length})`}</Text>}
             {(d?.comments ?? []).slice(0, 3).map((c, n) => (
               <Box key={`cmt-${id}-${n}`} flexDirection="column">
                 <Text dimColor>{`💬 ${c.by}${c.at ? ` · ${ago(c.at, now)} ago` : ''}`}</Text>
@@ -1316,11 +1333,6 @@ export const register: Register = on => {
             )}
           </Box>
 
-          <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
-            <Box flexGrow={1} flexShrink={1} minWidth={0}><Text dimColor wrap="wrap">{flow.note}</Text></Box>
-            <Button key={`chat-${id}`} variant="primary" label={`▶ ${flow.label} in a new chat`} onPress={() => newChat(id)} />
-            <Button key={`here-${id}`} label="In this chat" onPress={() => here(id)} />
-          </Box>
         </Box>
       )
     }

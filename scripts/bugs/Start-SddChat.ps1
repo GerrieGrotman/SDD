@@ -4,7 +4,11 @@
 
 .DESCRIPTION
   .claude/sdd.json "bugs.newChat" decides how:
-    "mode": "terminal"  (default) a new terminal window in the workspace running: claude "/sdd:sdd <id>"
+    "mode": "desktop"   (default) a new Claude Code session in the Claude Desktop app, through its link
+                        claude://code/new?q=<prompt>&folder=<workspace>: the prompt is in the composer, not sent;
+                        the app asks once to confirm the folder. See
+                        https://support.claude.com/en/articles/14729294-open-claude-desktop-with-a-link
+    "mode": "terminal"  a new terminal window in the workspace running: claude "/sdd:sdd <id>"
                         Windows: a Windows Terminal tab when wt.exe is there, else a console window.
                         macOS: Terminal. Linux: x-terminal-emulator, gnome-terminal, konsole or xterm.
     "mode": "url"       opens "url" with {id}, {prompt} and {root} filled in (URL-encoded), for a link that
@@ -31,7 +35,7 @@ param(
 $ctx = Get-SddContext $Root
 $prompt = "/sdd:sdd $Id"
 $nc = $ctx.bugs['newChat']
-$mode = 'terminal'
+$mode = 'desktop'
 if ($nc -and $nc['mode']) { $mode = [string]$nc['mode'] }
 $onWindows = ($PSVersionTable.PSEdition -eq 'Desktop') -or $IsWindows
 $onMac = (-not $onWindows) -and $IsMacOS
@@ -57,13 +61,16 @@ function Start-Or-Show([string]$How, [string]$File, [string[]]$ArgList, [string]
     exit 0
 }
 
-if ($mode -eq 'url') {
+if ($mode -eq 'url' -or $mode -eq 'desktop') {
     $tpl = [string]$nc['url']
+    if ($mode -eq 'desktop') { $tpl = 'claude://code/new?q={prompt}&folder={root}' }
     if (-not $tpl) { Exit-WithError 'bugs.newChat.mode is "url" but bugs.newChat.url is empty in .claude/sdd.json' }
     $url = $tpl.Replace('{id}', [string]$Id).Replace('{prompt}', [uri]::EscapeDataString($prompt)).Replace('{root}', [uri]::EscapeDataString($ctx.root))
-    if ($onWindows) { Start-Or-Show 'url' $url @() }
-    if ($onMac) { Start-Or-Show 'url' 'open' @(Join-Args @($url)) }
-    Start-Or-Show 'url' 'xdg-open' @(Join-Args @($url))
+    $how = 'url'
+    if ($mode -eq 'desktop') { $how = 'Claude Desktop' }
+    if ($onWindows) { Start-Or-Show $how $url @() }
+    if ($onMac) { Start-Or-Show $how 'open' @(Join-Args @($url)) }
+    Start-Or-Show $how 'xdg-open' @(Join-Args @($url))
 }
 
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {

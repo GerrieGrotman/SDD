@@ -37,7 +37,8 @@ the user's view; this file is for working on the plugin itself.
 python scripts/test_sdd.py
 python scripts/test_proof.py         # needs git; real worktrees in temp folders
 python scripts/test_fakeado.py       # the real commands against the offline ADO
-python scripts/test_bugs.py          # needs pwsh or powershell; the bug scripts against the offline ADO over HTTP
+python scripts/test_bugs.py          # needs pwsh or powershell; the bug scripts against the offline ADO over HTTP,
+                                     # and a PowerShell 5.1 compatibility check when PSScriptAnalyzer is installed
 python scripts/check_evals.py        # needs PyYAML; checks the eval cases, runs nothing
 python hooks/test_question_guard.py
 python hooks/test_agent_guard.py

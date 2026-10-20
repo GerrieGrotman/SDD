@@ -74,7 +74,7 @@ function world(on: any, opts: { synced?: boolean } = {}): World {
       return done(JSON.stringify({ ok: true, id: 701, rev: 3, terms: ['Totals.cs'], repos: ['Gateway'], seconds: 0.3, history: [], linked: [],
         hits: [{ repo: 'Gateway', path: 'Billing/Totals.cs', line: 42, text: 'decimal Round()', term: 'Totals.cs' }] }))
     }
-    if (script.endsWith('Start-SddChat.ps1')) return done('{"ok":true,"how":"Windows Terminal","prompt":"/sdd:sdd 701"}')
+    if (script.endsWith('Start-SddChat.ps1')) return done('{"ok":true,"how":"Claude Desktop","prompt":"/sdd:sdd 701"}')
     if (script.endsWith('Get-BugDetail.ps1')) return done('{"ok":true,"id":701,"text":{"repro":"Fresh repro"},"comments":[]}')
     return done('{"ok":false,"error":"unknown"}', 1)
   }) as never)
@@ -103,8 +103,11 @@ function world(on: any, opts: { synced?: boolean } = {}): World {
 
 const texts = async (ui: { findAll: (q: { type: string }) => Promise<Array<{ text?: string }>> }) =>
   (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '').join('\n')
-const labels = async (ui: { findAll: (q: { type: string }) => Promise<Array<{ props?: { label?: string } }>> }) =>
-  (await ui.findAll({ type: 'Button' })).map(b => b.props?.label ?? '')
+// a Button's label, or the text of its children (the category chips)
+const labels = async (ui: { findAll: (q: { type: string }) => Promise<Array<{ props?: { label?: string }; children?: unknown[]; text?: string }>> }) =>
+  (await ui.findAll({ type: 'Button' })).map(b => b.props?.label ?? b.text ?? flat(b.children))
+const flat = (n: unknown): string => typeof n === 'string' ? n : Array.isArray(n) ? n.map(flat).join('')
+  : n && typeof n === 'object' ? flat((n as { children?: unknown }).children ?? (n as { props?: { children?: unknown } }).props?.children) : ''
 
 async function mount($: any, w: World, args = '') {
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
@@ -229,6 +232,13 @@ test('desktop: pick several and change them all at once', async ($: any, on: any
   await ui.press({ key: 'pick-701' })
   await ui.press({ key: 'pick-703' })
   await settle(ui, /2 picked/)
+  await ui.press({ key: 'pick-page' })                                                 // the header's box: every row on the page
+  await settle(ui, /3 picked/)
+  await ui.press({ key: 'pick-page' })                                                 // and again: none
+  await settle(ui, /^(?![\s\S]*picked:)/)
+  await ui.press({ key: 'pick-701' })
+  await ui.press({ key: 'pick-703' })
+  await settle(ui, /2 picked/)
   await ui.select({ key: 'bulk-iteration', value: 'Proj\\Sprint 20' })              // already there: nothing staged
   await ui.select({ key: 'bulk-priority', value: '4' })
   await settle(ui, /2 unsaved changes on 2 items/)
@@ -265,7 +275,7 @@ test('desktop: links, evidence, the probable cause and sdd in a new chat', async
   await ui.press({ key: 'chat-701' })
   for (let i = 0; i < 100 && !w.toasts.join('').includes('New chat'); i++) await new Promise(r => setTimeout(r, 10))
   expect(w.runs.some(r => r.includes('-Id') && r.some(a => a.endsWith('Start-SddChat.ps1')))).toBe(true)
-  expect(w.toasts.join('\n')).toContain('New chat opened (Windows Terminal) with /sdd:sdd 701.')
+  expect(w.toasts.join('\n')).toContain('New chat opened (Claude Desktop) with /sdd:sdd 701 in its prompt box: confirm the folder, then press Enter.')
   await ui.press({ key: 'here-701' })
   expect(w.filled).toContain('/sdd:sdd 701')
 })
