@@ -1,7 +1,7 @@
 // Pure helpers of the bug manager (/sdd-bugs): its settings, the categories, the list's filters and order,
 // the staged changes (stage, revert, keep mine), the links and the probable-cause prompt. No engine calls,
 // so bugs.test.ts runs them as they are. The scripts in scripts/bugs/ do everything that touches ADO or git.
-import type { BugAnalysis, BugCategory, BugChange, BugCondition, BugDetail, BugEvidence, BugFilter, BugIndex, BugPerson, BugRecord, BugsConfig, SddSnapshot } from '../../types'
+import type { BugAnalysis, BugCategory, BugTeam, BugChange, BugCondition, BugDetail, BugEvidence, BugFilter, BugIndex, BugPerson, BugRecord, BugsConfig, SddSnapshot } from '../../types'
 
 export const F = {
   state: 'System.State',
@@ -53,26 +53,46 @@ export function isMine(item: BugRecord, me: BugPerson | null | undefined): boole
   return !!me.name && low(a.name) === low(me.name)
 }
 
-/** The developers of the dev team file: `{ "developers": [...] }` or a plain list; a name or an e-mail each; null when it holds none. */
-export function parseTeam(text: string): string[] | null {
+/** The dev team file: `{ "areaPath": "A; B\\*", "developers": ["Name", ...] }` (`areaPath` a string split at `;`, or a list), or a plain
+ *  list of developers; a name or an e-mail each. Null when it names no developer and no area. */
+export function parseTeam(text: string): BugTeam | null {
   let v: unknown
   try {
     v = parseJson<unknown>(text)
   } catch {
     return null
   }
-  const list = Array.isArray(v) ? v : v && typeof v === 'object' ? (v as { developers?: unknown }).developers : null
-  if (!Array.isArray(list)) return null
-  return list.map(x => typeof x === 'string' ? x : x && typeof x === 'object' ? String((x as { email?: string; name?: string }).email ?? (x as { name?: string }).name ?? '') : '')
+  const obj = v && typeof v === 'object' && !Array.isArray(v) ? v as { developers?: unknown; areaPath?: unknown; areaPaths?: unknown } : null
+  const list = Array.isArray(v) ? v : obj?.developers
+  const developers = (Array.isArray(list) ? list : [])
+    .map(x => typeof x === 'string' ? x : x && typeof x === 'object' ? String((x as { email?: string; name?: string }).email ?? (x as { name?: string }).name ?? '') : '')
     .map(x => x.trim()).filter(Boolean)
+  const raw = obj?.areaPath ?? obj?.areaPaths
+  const areas = (Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(';') : [])
+    .map(x => String(x).trim().replace(/\//g, '\\')).filter(Boolean)
+  return developers.length || areas.length ? { developers, areas } : null
 }
 
-/** Is the item assigned to a developer of the team? By display name or by e-mail, whatever the file lists, case aside. */
-export function isTeam(item: BugRecord, team: readonly string[] | null | undefined): boolean {
+/** Is the area path one of the team's? `A\B` is that area only; `A\B\*` is that area and everything under it. */
+export function inTeamArea(area: string, areas: readonly string[]): boolean {
+  const a = low(area).replace(/\\+$/, '')
+  if (!a) return false
+  return areas.some(p => {
+    const star = /\\\*$/.test(p.trim())
+    const base = low(p).replace(/\\\*$/, '').replace(/\\+$/, '')
+    return !!base && (a === base || (star && a.startsWith(base + '\\')))
+  })
+}
+
+/** Is the item the dev team's: assigned to a developer (display name or e-mail, case aside), or in one of its area paths? */
+export function isTeam(item: BugRecord, team: BugTeam | null | undefined): boolean {
+  if (!team) return false
   const a = item.assigned
-  if (!a || !team?.length) return false
-  const names = new Set(team.map(low))
-  return names.has(low(a.name)) || (!!a.email && names.has(low(a.email)))
+  if (a && team.developers.length) {
+    const names = new Set(team.developers.map(low))
+    if (names.has(low(a.name)) || (!!a.email && names.has(low(a.email)))) return true
+  }
+  return inTeamArea(item.area, team.areas)
 }
 
 const DAY = 86_400_000
@@ -161,7 +181,7 @@ export function severityRank(s: string): number {
 }
 
 /** The items the person asked to see: in the category, theirs only, not done (`doneStates`, when `hideDone`), of the type and state, with the words. */
-export function filterItems(items: BugRecord[], f: BugFilter, cats: Category[], me: BugPerson | null | undefined, doneStates: readonly string[] = [], team: readonly string[] | null = null): BugRecord[] {
+export function filterItems(items: BugRecord[], f: BugFilter, cats: Category[], me: BugPerson | null | undefined, doneStates: readonly string[] = [], team: BugTeam | null = null): BugRecord[] {
   const cat = f.category && f.category !== 'all' ? cats.find(c => c.id === f.category) : undefined
   const inCat = cat ? new Set(cat.ids) : null
   const words = low(f.text).split(/\s+/).filter(Boolean)

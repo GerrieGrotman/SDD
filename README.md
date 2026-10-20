@@ -88,7 +88,7 @@ reads the files they write. Only **Find probable cause** calls a model, once, wi
   `<specRoot>/.bugs/index.json` (the list), `items/<id>.json` (repro steps, description, comments).
 - **Categories** sort the list: quick wins, high severity, in progress, ready for deployment, and one per
   team branch version tag (`1.1.0`). They are rules in `.claude/sdd.json` `"bugs.categories"`: change them,
-  add your own. Filter by words, type, state, **Assigned to me** (`/sdd-bugs mine` opens that way), **Hide resolved/closed** (every state in `bugs.doneStates`), and **Dev team**: only the items assigned to a developer listed in `.claude/developers.json`, e.g. `{ "areaPath": "Proj; Proj\\Team\\*", "developers": ["Ann Bee", "Raj Patel"] }` (display names, as ADO shows them, or e-mails; `areaPath` is not used yet).
+  add your own. Filter by words, type, state, **Assigned to me** (`/sdd-bugs mine` opens that way), **Hide resolved/closed** (every state in `bugs.doneStates`), and **Dev team**: the items assigned to a developer listed in `.claude/developers.json`, or in one of its area paths, e.g. `{ "areaPath": "Proj; Proj\\Team\\*", "developers": ["Ann Bee", "Raj Patel"] }`. Developers are display names, as ADO shows them, or e-mails. `areaPath` is split at `;`: `Proj` is that area only, `Proj\Team\*` is that area and everything under it. Either is enough, so an unassigned item in the team's area shows up for triage.
 - **Triage** a row: state, severity, priority, assignee, area path, iteration path, tags, a comment. Each
   change is staged, not sent: the row shows `✎n`, and the yellow box counts what is unsaved. **Save all to
   ADO** (`Save-BugChanges.ps1`) writes the batch; **Save this item** writes one item. **↶** reverts one

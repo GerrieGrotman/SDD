@@ -99,26 +99,42 @@ test('the filters: category, mine, type, state and words', () => {
   expect(isMine(rec(5, { assigned: { name: 'me myself', email: '' } }), { name: 'Me Myself', email: '' })).toBe(true)
 })
 
-test('the dev team: the file as the workspace keeps it, matched by display name or e-mail', () => {
-  // .claude/developers.json: an area path and the developers by display name
-  const file = JSON.stringify({ areaPath: 'Spesnet.Lumina; Spesnet.Lumina\\Lumina-Base\\*', developers: ['Ann Bee', ' raj patel ', '', 'bob@x.co'] })
-  expect(parseTeam(file)).toEqual(['Ann Bee', 'raj patel', 'bob@x.co'])
-  expect(parseTeam('\uFEFF' + file)).toEqual(['Ann Bee', 'raj patel', 'bob@x.co'])           // a BOM is dropped
-  expect(parseTeam('["Ann Bee", {"name": "Raj Patel"}, {"email": "b@x.co", "name": "B"}]')).toEqual(['Ann Bee', 'Raj Patel', 'b@x.co'])
-  expect(parseTeam('{"developers": "Ann"}')).toBe(null)
-  expect(parseTeam('{"areaPath": "x"}')).toBe(null)
-  expect(parseTeam('not json')).toBe(null)
+test('the dev team: the file as the workspace keeps it, by developer or by area path', () => {
+  // .claude/developers.json as the team keeps it: area paths in one string, and the developers by display name
+  const file = JSON.stringify({ areaPath: 'Proj.Pay; Proj.Pay\\Core\\*', developers: ['Ann Bee', ' raj patel ', '', 'bob@x.co'] })
   const team = parseTeam(file)!
-  expect(isTeam(ITEMS[1], team)).toBe(true)                                                  // Ann Bee
-  expect(isTeam(rec(9, { assigned: { name: 'ANN BEE', email: '' } }), team)).toBe(true)     // case aside
-  expect(isTeam(rec(9, { assigned: { name: 'Bob', email: 'bob@x.co' } }), team)).toBe(true)  // by e-mail
-  expect(isTeam(ITEMS[0], team)).toBe(false)                                                 // Me Myself is not on it
-  expect(isTeam(rec(9), team)).toBe(false)                                                   // nobody
+  expect(team).toEqual({ developers: ['Ann Bee', 'raj patel', 'bob@x.co'], areas: ['Proj.Pay', 'Proj.Pay\\Core\\*'] })
+  expect(parseTeam('﻿' + file)).toEqual(team)                                            // a BOM is dropped
+  expect(parseTeam('["Ann Bee", {"name": "Raj Patel"}, {"email": "b@x.co", "name": "B"}]')).toEqual({ developers: ['Ann Bee', 'Raj Patel', 'b@x.co'], areas: [] })
+  expect(parseTeam('{"areaPath": ["A\\\\B", "C/D\\\\*"]}')).toEqual({ developers: [], areas: ['A\\B', 'C\\D\\*'] })   // a list; / becomes \
+  expect(parseTeam('{"developers": "Ann"}')).toBe(null)
+  expect(parseTeam('{"areaPath": " ; "}')).toBe(null)
+  expect(parseTeam('not json')).toBe(null)
+
+  // by developer: display name or e-mail, case aside
+  const at = (area: string, assigned: { name: string; email: string } | null = null) => rec(9, { area, assigned })
+  expect(isTeam(at('Other', { name: 'ANN BEE', email: '' }), team)).toBe(true)
+  expect(isTeam(at('Other', { name: 'Bob', email: 'BOB@x.co' }), team)).toBe(true)
+  expect(isTeam(at('Other', { name: 'Me Myself', email: 'me@x.co' }), team)).toBe(false)
+  // by area: `A` is that area only, `A\B\*` is that area and everything under it
+  expect(isTeam(at('Proj.Pay'), team)).toBe(true)                                              // exact
+  expect(isTeam(at('proj.pay'), team)).toBe(true)                                              // case aside
+  expect(isTeam(at('Proj.Pay\\Billing'), team)).toBe(false)                                    // under an exact entry: no
+  expect(isTeam(at('Proj.Pay\\Core'), team)).toBe(true)                                        // the starred area itself
+  expect(isTeam(at('Proj.Pay\\Core\\Totals\\Deep'), team)).toBe(true)                          // and anything under it
+  expect(isTeam(at('Proj.Pay\\Corex'), team)).toBe(false)                                      // a longer name is not under it
+  expect(isTeam(at(''), team)).toBe(false)
+  // either is enough: an unassigned item in the area, and a developer's item anywhere
+  expect(isTeam(at('Proj.Pay\\Core\\X', null), team)).toBe(true)
+  expect(isTeam(at('Elsewhere', { name: 'Ann Bee', email: '' }), team)).toBe(true)
   expect(isTeam(ITEMS[1], null)).toBe(false)
-  expect(isTeam(ITEMS[1], [])).toBe(false)
+  expect(isTeam(ITEMS[1], { developers: [], areas: [] })).toBe(false)
+
   const cats = categorize(ITEMS, DEFAULTS.categories, ME, NOW)
-  expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], team).map(i => i.id)).toEqual([2])
-  expect(filterItems(ITEMS, { ...NO_FILTER, team: true, hideDone: true }, cats, ME, DEFAULTS.doneStates, ['Ann Bee', 'Me Myself']).map(i => i.id)).toEqual([1, 2])
+  const only = { developers: ['Ann Bee'], areas: [] }
+  expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], only).map(i => i.id)).toEqual([2])
+  expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], { developers: ['Ann Bee'], areas: ['Proj\\Payments'] }).map(i => i.id)).toEqual([1, 2, 3, 4])   // every ITEM is in that area
+  expect(filterItems(ITEMS, { ...NO_FILTER, team: true, hideDone: true }, cats, ME, DEFAULTS.doneStates, { developers: ['Ann Bee', 'Me Myself'], areas: [] }).map(i => i.id)).toEqual([1, 2])
   expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], null)).toEqual([])    // a filter with no team shows nothing
 })
 

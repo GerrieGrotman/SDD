@@ -56,7 +56,7 @@ function world(on: any, opts: { synced?: boolean; team?: boolean } = {}): World 
   }
   if (opts.synced !== false) w.files[`${DIR}/index.json`] = JSON.stringify(INDEX)
   // the dev team's file, as the workspace keeps it: an area path and display names
-  if (opts.team !== false) w.files[`${ROOT}/.claude/developers.json`] = JSON.stringify({ areaPath: 'Proj; Proj\\Payments\\*', developers: ['ann bee', 'Raj Patel'] })
+  if (opts.team !== false) w.files[`${ROOT}/.claude/developers.json`] = JSON.stringify({ areaPath: 'Proj.Other; Proj\\Billing\\*', developers: ['ann bee', 'Raj Patel'] })
   const done = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
   on('process.run', ((_$: unknown, e: { argv: string[] }) => {
     w.runs.push(e.argv)
@@ -195,14 +195,27 @@ test('desktop: Dev team shows only the developers of developers.json', async ($:
   const names = await labels(ui)
   expect(names).toContain('▸ Login hangs')                                              // 702 is Ann Bee's
   expect(names).not.toContain('▸ Totals lose cents')                                    // Me Myself is not on the team
-  expect(names).not.toContain('▸ Header typo')                                          // and nobody's is not either
+  expect(names).not.toContain('▸ Header typo')                                          // nobody's, in Proj\Payments, is not either
   await ui.press({ key: 'bugs-mine' })                                                  // with "Assigned to me": nothing is both
   await settle(ui, /Nothing matches/)
-  expect(await texts(ui)).toContain('Only the dev team\'s items are shown: untick "Dev team" to see everyone\'s.')
+  expect(await texts(ui)).toContain('Only the dev team\'s items (its developers\', and its area paths\') are shown: untick "Dev team" to see everyone\'s.')
   await ui.press({ key: 'bugs-team' })
   await ui.press({ key: 'bugs-mine' })
   await settle(ui, /☐ Dev team/)
   expect(await labels(ui)).toContain('▸ Header typo')
+})
+
+test('desktop: Dev team also shows what is in the team\'s area paths', async ($: any, on: any) => {
+  const w = world(on)
+  w.files[`${ROOT}/.claude/developers.json`] = JSON.stringify({ areaPath: 'Proj; Proj\\Login\\*', developers: ['ann bee'] })
+  const ui = await mount($, w)
+  if (!ui) return
+  await ui.press({ key: 'bugs-team' })
+  await settle(ui, /☑ Dev team/)
+  const names = await labels(ui)
+  expect(names).toContain('▸ Login hangs')                                              // Ann Bee's
+  expect(names).toContain('▸ Header typo')                                              // unassigned, in Proj\Login
+  expect(names).not.toContain('▸ Totals lose cents')                                    // Me Myself's, in Proj\Payments
 })
 
 test('desktop: without a developers.json the Dev team button says what the file is', async ($: any, on: any) => {
@@ -211,7 +224,7 @@ test('desktop: without a developers.json the Dev team button says what the file 
   if (!ui) return
   await ui.press({ key: 'bugs-team' })
   for (let i = 0; i < 100 && !w.toasts.join('').includes('No dev team'); i++) await new Promise(r => setTimeout(r, 10))
-  expect(w.toasts.join('\n')).toContain('No dev team: .claude/developers.json is missing, or lists no developers.')
+  expect(w.toasts.join('\n')).toContain('No dev team: .claude/developers.json is missing, or names no developer and no area.')
   expect(await texts(ui)).not.toContain('Nothing matches')                              // the filter did not turn on
   expect(await labels(ui)).toContain('☐ Dev team')
 })

@@ -991,8 +991,8 @@ export const register: Register = on => {
             onPress={() => setFilter({ mine: !filter.mine })} />
           <Button key="bugs-team" label={`${filter.team ? '☑' : '☐'} Dev team`} variant={filter.team ? 'primary' : undefined}
             onPress={() => {
-              if (!filter.team && !devTeam?.length) {
-                $.ui.toast(`No dev team: ${cfg.developersFile} is missing, or lists no developers. It looks like { "developers": ["Name", ...] }.`)
+              if (!filter.team && !devTeam) {
+                $.ui.toast(`No dev team: ${cfg.developersFile} is missing, or names no developer and no area. It looks like { "areaPath": "A; A\\\\B\\\\*", "developers": ["Name", ...] }.`)
                 return
               }
               setFilter({ team: !filter.team })
@@ -1133,7 +1133,7 @@ export const register: Register = on => {
               <Box width={4} flexShrink={0}><Text dimColor>Age</Text></Box>
             </Box>
           )}
-          {list.length === 0 && <Text dimColor wrap="wrap">{index.items.length ? `Nothing matches these filters.${filter.hideDone ? ' Resolved and closed items are hidden: untick "Hide resolved/closed" to see them.' : ''}${filter.team ? ' Only the dev team\'s items are shown: untick "Dev team" to see everyone\'s.' : ''}` : 'The query found no bugs or issues. Check "bugs.query" in .claude/sdd.json.'}</Text>}
+          {list.length === 0 && <Text dimColor wrap="wrap">{index.items.length ? `Nothing matches these filters.${filter.hideDone ? ' Resolved and closed items are hidden: untick "Hide resolved/closed" to see them.' : ''}${filter.team ? ' Only the dev team\'s items (its developers\', and its area paths\') are shown: untick "Dev team" to see everyone\'s.' : ''}` : 'The query found no bugs or issues. Check "bugs.query" in .claude/sdd.json.'}</Text>}
           {page.map(item => drawRow(item))}
         </Box>
         {list.length > size && (
