@@ -51,6 +51,9 @@ WORLD = {
         "702": {"rev": 1, "fields": bug("Issue", "Login hangs", "Active", **{
             "System.AssignedTo": {"displayName": "Ann", "uniqueName": "ann@x.co"},
             "Custom.BoardColumnTitle": "Dev In Progress", "Microsoft.VSTS.Common.Priority": 2}),
+                # the unencoded artifact form Microsoft's docs give, and a branch link (not a commit or PR: left out)
+                "relations": [{"rel": "ArtifactLink", "url": "vstfs:///Git/PullRequestId/p1/r1/77", "attributes": {"name": "Pull Request"}},
+                              {"rel": "ArtifactLink", "url": "vstfs:///Git/Ref/p1%2Fr1%2FGBdev%2Fx", "attributes": {"name": "Branch"}}],
                 "reject": {"System.State": "Resolved"}},
         "703": {"rev": 5, "fields": bug("Bug", "Header typo", "Resolved", **{"Microsoft.VSTS.Common.Priority": 3})},
         "704": {"rev": 2, "fields": bug("Bug", "Old crash", "Closed")},
@@ -158,6 +161,7 @@ def sync():
             assert b["prs"] == [{"id": 77, "repo": "Gateway", "url": "https://dev.azure.com/Org/Proj/_git/Gateway/pullrequest/77",
                                  "title": "Fix the totals", "status": "active"}]
             assert b["links"] == [{"name": "Runbook", "url": "https://wiki/x"}]
+            assert [x["id"] for x in f.item(702)["prs"]] == [77] and f.item(702)["commits"] == [] and f.item(702)["links"] == []
             assert f.item(702)["boardColumn"] == "Dev In Progress" and f.item(702)["assigned"]["email"] == "ann@x.co"
             text = json.loads((f.bugs / "items" / "701.json").read_text(encoding="utf-8"))["text"]
             assert text["repro"].startswith("Export shows 12 not 12.40\nat Billing.Totals.Round()"), text
