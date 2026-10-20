@@ -16,6 +16,8 @@ from pathlib import Path
 
 ADO_RESOURCE = "499b84ac-1321-427f-aa17-267ca6975798"
 CONFIG_REL = Path(".claude") / "sdd.json"
+# The bug manager's defaults (/sdd-bugs): one file, read here, by scripts/bugs/*.ps1 and by the view
+BUGS_DEFAULTS = Path(__file__).resolve().parent / "bugs" / "defaults.json"
 
 DEFAULTS = {
     "specRoot": "docs/spec",
@@ -52,6 +54,8 @@ DEFAULTS = {
         "inProgress": {"states": ["Active"], "boards": ["Dev In Progress"]},  # someone else's work
         "pastDev": ["Dev Completed", "QA Deployed", "QA Testing Passed", "UAT Deployed"],
     },
+    # the bug manager (/sdd-bugs): where it keeps the synced bugs and issues, and how it sorts them into categories
+    "bugs": json.loads(BUGS_DEFAULTS.read_text(encoding="utf-8")),
 }
 # What the Agent tool's `model` takes.
 AGENT_MODELS = ("sonnet", "opus", "haiku")
@@ -61,7 +65,7 @@ AGENT_MODELS = ("sonnet", "opus", "haiku")
 # A value already in the file is never changed.
 UPGRADE_KEYS = [("agents", "models", "investigator"), ("agents", "models", "skeptic"),
                 ("next", "weights", "priority"), ("next", "weights", "severity"), ("next", "weights", "complexity"),
-                ("next", "complexity")]
+                ("next", "complexity"), ("bugs", "folder"), ("bugs", "categories")]
 
 TYPE_SEGMENT = {
     "User Story": "story", "Product Backlog Item": "story", "Change Request": "story",
@@ -111,7 +115,21 @@ def load_config(root):
     merged["next"] = {**DEFAULTS["next"], **nxt,
                       "weights": {**DEFAULTS["next"]["weights"], **(nxt.get("weights") or {})},
                       "inProgress": {**DEFAULTS["next"]["inProgress"], **(nxt.get("inProgress") or {})}}
+    merged["bugs"] = merge_bugs(cfg.get("bugs"))
     return merged
+
+
+def merge_bugs(given):
+    """The bug manager's settings: sdd.json "bugs" over scripts/bugs/defaults.json. An object one level
+    down (query, states, analysis, newChat) is merged key by key; a list (categories) replaces the default
+    whole. The same merge as Read-BugsConfig in scripts/bugs/BugsCommon.ps1 and bugsConfig in the view."""
+    base = DEFAULTS["bugs"]
+    given = given if isinstance(given, dict) else {}
+    out = {**base, **given}
+    for k, v in base.items():
+        if isinstance(v, dict) and isinstance(given.get(k), dict):
+            out[k] = {**v, **given[k]}
+    return out
 
 
 def upgrade_config(root):

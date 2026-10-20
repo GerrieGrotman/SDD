@@ -15,7 +15,10 @@ so a new call cannot slip through unnoticed.
     }
 
 An item may hold "comments": [{"text": "<div>…</div>", "createdBy": {"displayName": "…"}}], read back
-with the ones the flow posts.
+with the ones the flow posts, and "reject": {"<field>": "<value>"}: a patch setting that field to that
+value fails with HTTP 400, as an ADO rule does; "race": true makes the next patch find a newer revision
+(someone else wrote between the read and the write), once. "repositories": {"<repo id>": {"name": …, "webUrl": …}}
+answers the bug manager's repository reads.
 """
 import json
 import os
@@ -70,10 +73,12 @@ def _children(items, wid):
 
 
 def _apply(w, ops):
-    """JSON Patch ops on a fake item: field adds and replaces, and relation adds."""
+    """JSON Patch ops on a fake item: field adds, replaces and removes, and relation adds."""
     for o in ops:
         if o["op"] in ("add", "replace") and o["path"].startswith("/fields/"):
             w.setdefault("fields", {})[o["path"][len("/fields/"):]] = o["value"]
+        elif o["op"] == "remove" and o["path"].startswith("/fields/"):
+            w.setdefault("fields", {}).pop(o["path"][len("/fields/"):], None)
         elif o["op"] == "add" and o["path"] == "/relations/-":
             w.setdefault("relations", []).append(o["value"])
 
@@ -123,9 +128,17 @@ def request(method, url, body=None):
         w = items.get(wid) or {}
         if not w:
             raise RuntimeError(f"ADO PATCH {url} -> HTTP 404: work item {wid} does not exist")
+        if w.pop("race", False):  # someone else writes between the read and this patch
+            w["rev"] = w.get("rev", 1) + 1
+            _save(p, world)
         test = next((o for o in body if o["op"] == "test" and o["path"] == "/rev"), None)
         if test and test["value"] != w.get("rev", 1):
             raise RuntimeError(f"ADO PATCH {url} -> HTTP 412: rev {test['value']} is not {w.get('rev', 1)}")
+        for o in body:
+            field = o["path"][len("/fields/"):] if o["path"].startswith("/fields/") else None
+            if field and field in (w.get("reject") or {}) and w["reject"][field] == o.get("value"):
+                raise RuntimeError(f"ADO PATCH {url} -> HTTP 400: TF401320: Rule Error for field {field}: "
+                                   f"{o.get('value')} is not allowed here")
         _apply(w, body)
         w["rev"] = w.get("rev", 1) + 1
         writes.append({"method": "PATCH", "id": int(wid), "ops": body})
@@ -153,6 +166,10 @@ def request(method, url, body=None):
         posted = [{"text": x["text"], "createdBy": {"displayName": "sdd"}} for x in writes
                   if x.get("method") == "COMMENT" and x.get("id") == wid]
         return {"comments": list((items.get(str(wid)) or {}).get("comments") or []) + posted}
+
+    m = re.search(r"/_apis/git/repositories/([^/]+)$", path, re.I)
+    if method == "GET" and m and m.group(1) in (world.get("repositories") or {}):
+        return world["repositories"][m.group(1)]
 
     if path.endswith("/teamsettings/iterations"):
         cur = world.get("currentIteration")

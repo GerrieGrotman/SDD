@@ -6,10 +6,13 @@
 import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
+import type { BugAnalysis, BugChange, BugDetail, BugEvidence, BugFilter, BugIndex, BugRecord, BugsConfig, SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
 import { GLYPH, agentRows, contextTone, moneyText, spendHead, SPEND_ICON, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, railBarColor, clipboardArgv, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { ageShort, agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, lineKey, linePath, lineTone, lineWord, sortLines } from './view/worktrees'
+import { ANALYSIS_SYSTEM, F, FIELD_NAME, NO_FILTER, ago, analysisKey, analysisNote, analysisPrompt, bugsConfig, categorize, commentProblem, currentValue, filterItems, isMine,
+  itemLinks, keepMine, parseJson, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem, scriptAnswer, scriptArgv, sddState,
+  severityColor, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
 
 const PANE = 'sdd-view'
 const snap = { plugin: 'sdd', key: 'snap' } as const
@@ -342,6 +345,12 @@ async function setupDesktop($: EngineInterface, isAttach = false): Promise<boole
   }
   if (!isAttach && !surfaces.includes('desktop')) return false
   desktopReady = true
+  await $.state.set(bugsBusyS, null)  // a reload ended whatever the last copy of the module was running
+  await $.command.register({
+    name: 'sdd-bugs',
+    description: 'Triage the bugs and issues synced from ADO: categories, staged changes saved as a batch, probable cause, sdd in a new chat',
+    argumentHint: '[mine]',
+  })
   await $.command.register({
     name: 'sdd-worktrees',
     description: 'Show every sdd work item that still has worktrees, with the live state of each (from repowatch)',
@@ -371,6 +380,231 @@ async function setupDesktop($: EngineInterface, isAttach = false): Promise<boole
 }
 
 const AGENT_GLYPH: Record<AgentTone, string> = { working: '●', waiting: '●', done: '✓', failed: '✕', quiet: '○' }
+
+// ---------------------------------------------------------------- the bug manager (/sdd-bugs): helpers
+// The PowerShell scripts in scripts/bugs/ do everything that touches ADO or git; this reads the files they write
+// (index.json, items/<id>.json) and writes one of its own, pending.json: the changes staged and not yet saved.
+// The only model call is the probable cause, on the person's press, with a short prompt (view/bugs.ts).
+const BUG_PANE = 'sdd-bugs'
+const bugsIdx = { plugin: 'sdd', key: 'bugs' } as const
+const bugsErr = { plugin: 'sdd', key: 'bugsError' } as const
+const bugsCfgS = { plugin: 'sdd', key: 'bugsCfg' } as const
+const bugsPend = { plugin: 'sdd', key: 'bugsPending' } as const
+const bugsFilt = { plugin: 'sdd', key: 'bugsFilter' } as const
+const bugsOpenS = { plugin: 'sdd', key: 'bugsOpen' } as const
+const bugsEditS = { plugin: 'sdd', key: 'bugsEdit' } as const
+const bugsBusyS = { plugin: 'sdd', key: 'bugsBusy' } as const
+const bugsDetailS = { plugin: 'sdd', key: 'bugsDetail' } as const
+const bugsEvS = { plugin: 'sdd', key: 'bugsEvidence' } as const
+const bugsAnS = { plugin: 'sdd', key: 'bugsAnalysis' } as const
+const bugsOffS = { plugin: 'sdd', key: 'bugsOffset' } as const
+const bugsReviewS = { plugin: 'sdd', key: 'bugsReview' } as const
+const bugsPickedS = { plugin: 'sdd', key: 'bugsPicked' } as const
+const BUSY_WORD: Record<string, string> = { sync: 'Syncing from ADO', save: 'Saving to ADO', detail: 'Reading from ADO', evidence: 'Gathering evidence',
+  analysis: 'Finding the probable cause', chat: 'Opening a chat' }
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+let bugsPaneOpen = false
+let bugsTimer = false
+let bugsDirKnown: string | null = null
+let bugsSeen = ''  // what bugsRead last read: settings, index.json and pending.json
+let bugsRunning: string | null = null  // the long action running in this copy of the module (a reload ends it)
+let pwshExe: string | null = null  // the PowerShell that ran last; lost on reload, which costs one more try
+
+type BugsWhere = { root: string; dir: string; cfg: BugsConfig }
+type ScriptOut = { ok: boolean; error?: string }
+
+/** The workspace (the one the sdd view read, else the first folder at or above the session's holding
+ *  .claude/sdd.json), the bug folder in its spec folder, and the settings. A string says why there is none. */
+async function bugsWhere($: EngineInterface): Promise<BugsWhere | string> {
+  let root: string | null = (await $.state.get(snap)).value?.root ?? (await $.state.get(place)).value ?? null
+  if (!root) {
+    let d = (await $.session.cwd()).replace(/[\\/]+$/, '')
+    for (let i = 0; i < 12 && d; i++) {
+      try {
+        await $.fs.read(`${d}/.claude/sdd.json`)
+        root = d
+        break
+      } catch {
+        const up = d.replace(/[\\/][^\\/]*$/, '')
+        if (up === d) break
+        d = up
+      }
+    }
+  }
+  if (!root) return 'No sdd workspace here: no .claude/sdd.json at or above this folder. Run /sdd init in the workspace first.'
+  let raw: { specRoot?: string; bugs?: unknown } = {}
+  try {
+    raw = parseJson(await $.fs.read(`${root}/.claude/sdd.json`))
+  } catch (err) {
+    return `Could not read ${root}/.claude/sdd.json: ${String(err).slice(0, 160)}`
+  }
+  let defaults: BugsConfig
+  try {
+    defaults = parseJson<BugsConfig>(await $.fs.read(`${$.plugin.root}/scripts/bugs/defaults.json`))
+  } catch {
+    return 'The sdd plugin has no scripts/bugs/defaults.json: update or reinstall it.'
+  }
+  const cfg = bugsConfig(defaults, raw.bugs)
+  const spec = String(raw.specRoot || 'docs/spec')
+  const specDir = /^([A-Za-z]:)?[\\/]/.test(spec) ? spec : `${root}/${spec}`
+  bugsDirKnown = `${specDir}/${cfg.folder || '.bugs'}`.replace(/\\/g, '/')
+  return { root, dir: bugsDirKnown, cfg }
+}
+
+/** Reads what the scripts wrote: the list and the staged changes. No index yet: not synced. `quiet` (the timer)
+ *  changes nothing when the files are as they were, so a redraw never comes for nothing (or over a half-typed field). */
+async function bugsRead($: EngineInterface, quiet = false): Promise<BugsWhere | null> {
+  const w = await bugsWhere($)
+  if (typeof w === 'string') {
+    await $.state.set(bugsErr, w)
+    return null
+  }
+  const read = async (name: string) => {
+    try {
+      return await $.fs.read(`${w.dir}/${name}`)
+    } catch (err) {
+      return err instanceof Error ? err : new Error(String(err))
+    }
+  }
+  const [indexText, pendingText] = [await read('index.json'), await read('pending.json')]
+  const seen = [JSON.stringify(w.cfg), String(indexText), String(pendingText)].join('\u0000')
+  if (quiet && seen === bugsSeen) return w
+  bugsSeen = seen
+  await $.state.set(bugsCfgS, w.cfg)
+  let index: BugIndex | null = null
+  let why: string | null = null
+  try {
+    if (indexText instanceof Error) throw indexText
+    index = parseJson<BugIndex>(indexText)
+  } catch (err) {
+    // missing (never synced) or unreadable: a sync writes it again either way
+    const what = String(err)
+    why = /JSON|Unexpected|parse/i.test(what)
+      ? `${w.dir}/index.json is damaged (${what.slice(0, 120)}). Press Sync to pull the bugs and issues from ADO again.`
+      : 'Not synced yet. Press Sync to pull the bugs and issues from ADO.'
+  }
+  let pending: BugChange[] = []
+  try {
+    if (!(pendingText instanceof Error)) pending = parseJson<{ changes?: BugChange[] }>(pendingText).changes ?? []
+  } catch {
+    pending = []
+  }
+  await $.state.set(bugsIdx, index)
+  await $.state.set(bugsErr, why)
+  await $.state.set(bugsPend, pending)
+  return w
+}
+
+/** Runs one script of scripts/bugs/ with PowerShell and reads its answer: the last JSON line it printed. */
+async function bugsRun<T>($: EngineInterface, w: BugsWhere, script: string, args: string[], timeoutMs: number): Promise<{ out: (T & ScriptOut) | null; why: string | null }> {
+  const isWin = /^[A-Za-z]:/.test(w.root)
+  let why: string | null = null
+  for (const exe of pwshExe ? [pwshExe] : powershellCandidates(w.cfg.powershell, isWin)) {
+    try {
+      const r = await $.process.run(scriptArgv(exe, $.plugin.root, script, w.root, args), { cwd: w.root, timeoutMs })
+      pwshExe = exe
+      const out = scriptAnswer<T & ScriptOut>(r.stdout)
+      if (out?.ok) return { out, why: null }
+      return { out, why: out?.error ?? ((r.stderr || r.stdout).trim().split('\n').pop() || `${script} exited ${r.exitCode}`) }
+    } catch (err) {
+      why = String(err).slice(0, 200)
+      // only a PowerShell that is not there is worth another try; a timeout is the script's own
+      if (!/ENOENT|not found|no such|cannot find|spawn/i.test(why)) return { out: null, why: `${script}: ${why}` }
+    }
+  }
+  pwshExe = null
+  return { out: null, why: `No PowerShell to run ${script} (${why ?? 'none found'}). Install PowerShell 7 (pwsh), or set "bugs.powershell" in .claude/sdd.json.` }
+}
+
+/** Runs one long action at a time: a second press while one runs says so instead. */
+async function bugsBusy($: EngineInterface, what: string, fn: () => Promise<void>): Promise<void> {
+  if (bugsRunning) {
+    $.ui.toast(`Wait: ${BUSY_WORD[bugsRunning] ?? bugsRunning} is still running.`)
+    return
+  }
+  bugsRunning = what
+  await $.state.set(bugsBusyS, what)
+  try {
+    await fn()
+  } catch (err) {
+    $.ui.toast(`${BUSY_WORD[what] ?? what} failed: ${String(err).slice(0, 200)}`)
+  } finally {
+    bugsRunning = null
+    await $.state.set(bugsBusyS, null)
+  }
+}
+
+/** Changes the staged list and writes it to pending.json, where the save script reads it. */
+async function bugsStage($: EngineInterface, change: (p: BugChange[]) => BugChange[]): Promise<void> {
+  if (bugsRunning === 'save') {
+    $.ui.toast('Wait for the save to finish, then change more.')
+    return
+  }
+  const next = await update($, bugsPend, cur => change(cur ?? []))
+  // the folder only: reading the files again here would put the old list back over the one just staged
+  const w = bugsDirKnown ? null : await bugsWhere($)
+  const dir = bugsDirKnown ?? (w && typeof w !== 'string' ? w.dir : null)
+  if (!dir) return
+  try {
+    await $.fs.write(`${dir}/pending.json`, JSON.stringify({ version: 1, changes: next }, null, 1) + '\n')
+  } catch (err) {
+    $.ui.toast(`Could not write the staged changes: ${String(err).slice(0, 160)}`)
+  }
+}
+
+/** Opens an item's row (or closes it when it is open), with what is kept of it on disk: its text, comments,
+ *  evidence and probable cause. Nothing is asked of ADO or the model. */
+async function bugsToggle($: EngineInterface, id: number, isOpen: boolean): Promise<void> {
+  await $.state.set(bugsEditS, null)
+  if (isOpen) {
+    await $.state.set(bugsOpenS, null)
+    return
+  }
+  await $.state.set(bugsOpenS, id)
+  const w = bugsDirKnown ? null : await bugsWhere($)
+  const dir = bugsDirKnown ?? (w && typeof w !== 'string' ? w.dir : null)
+  let detail: BugDetail | null = null
+  let ev: BugEvidence | null = null
+  if (dir) {
+    try {
+      const d = parseJson<{ text?: Record<string, string>; comments?: BugDetail['comments'] }>(await $.fs.read(`${dir}/items/${id}.json`))
+      detail = { id, text: d.text ?? {}, comments: d.comments ?? [] }
+    } catch {
+      detail = { id, text: {}, comments: [] }
+    }
+    try {
+      ev = parseJson<BugEvidence>(await $.fs.read(`${dir}/items/${id}.evidence.json`))
+    } catch {
+      ev = null
+    }
+    try {
+      const a = parseJson<BugAnalysis>(await $.fs.read(`${dir}/items/${id}.analysis.json`))
+      await update($, bugsAnS, cur => ({ ...(cur ?? {}), [String(id)]: a }))
+    } catch {
+      // never analysed
+    }
+  }
+  await $.state.set(bugsDetailS, detail)
+  await $.state.set(bugsEvS, ev)
+}
+
+/** Opens the bug manager. `mine` in the arguments shows only the items assigned to the person. */
+async function openBugsPage($: EngineInterface, args = ''): Promise<string> {
+  bugsPaneOpen = true
+  if (!bugsTimer) {
+    bugsTimer = true
+    // a sync from another chat or a terminal shows up without a press: the files are re-read, nothing else runs
+    $.clock.every(60_000, () => {
+      if (bugsPaneOpen) void (async () => {
+        if (!bugsRunning) await bugsRead($, true)
+      })().catch(() => undefined)
+    })
+  }
+  if (/\bmine\b/i.test(args)) await update($, bugsFilt, f => ({ ...(f ?? NO_FILTER), mine: true, category: 'all' }))
+  await $.ui.open({ id: BUG_PANE, title: 'sdd bugs', closeOnEscape: true, columns: 120 })
+  const w = await bugsRead($)
+  return w ? 'sdd bugs opened.' : 'sdd bugs opened (no workspace: see the pane).'
+}
 
 export const register: Register = on => {
   // ---------------------------------------------------------------- the Worktrees page (/sdd-worktrees)
@@ -515,6 +749,583 @@ export const register: Register = on => {
     )
   })
 
+  // ---------------------------------------------------------------- the bug manager (/sdd-bugs)
+  // Triage bugs and issues: categories, filters, staged changes saved to ADO as one batch (or reverted), the
+  // links back to ADO, a probable cause on demand, and the sdd flow in a new chat. It lives in this file for
+  // the same reason as the Worktrees page.
+
+  on('command.run', { command: 'sdd-bugs' }, async ($, e) => {
+    if (!desktopReady) return { text: 'The sdd bug manager works in the Claude Desktop app only.' }
+    return { text: await openBugsPage($, e.args) }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: BUG_PANE }, async ($, e, next) => {
+    if (e.surface !== 'desktop') return next(e)
+    const t = $.ui.resolve(e)
+    const { Box, Text, Button, Markdown } = t
+    const Select = 'Select' in t ? t.Select : undefined
+    const Input = 'Input' in t ? t.Input : undefined
+    const cols = e.props.bodyColumns
+    const s = (await $.state.get(snap)).value ?? null
+    paint(s?.colors)
+    const index = (await $.state.get(bugsIdx)).value ?? null
+    const why = (await $.state.get(bugsErr)).value ?? null
+    const cfg = (await $.state.get(bugsCfgS)).value ?? null
+    const pending = (await $.state.get(bugsPend)).value ?? []
+    const filter = { ...NO_FILTER, ...((await $.state.get(bugsFilt)).value ?? {}) }
+    const openId = (await $.state.get(bugsOpenS)).value ?? null
+    const editing = (await $.state.get(bugsEditS)).value ?? null
+    const busy = (await $.state.get(bugsBusyS)).value ?? null
+    const detail = (await $.state.get(bugsDetailS)).value ?? null
+    const evidence = (await $.state.get(bugsEvS)).value ?? null
+    const analyses = (await $.state.get(bugsAnS)).value ?? {}
+    const from = (await $.state.get(bugsOffS)).value ?? 0
+    const review = (await $.state.get(bugsReviewS)).value ?? false
+    const picked = (await $.state.get(bugsPickedS)).value ?? []
+    const now = Date.now()
+    const tint = /^#[0-9a-f]{6}$/i.test(C.work) ? `${C.work}22` : undefined
+
+    // ---- what the presses do; they run after the drawing, so they may write
+    const where = async (): Promise<BugsWhere | null> => {
+      const w = await bugsWhere($)
+      if (typeof w === 'string') {
+        $.ui.toast(w)
+        return null
+      }
+      return w
+    }
+    const setFilter = (f: Partial<BugFilter>) => void (async () => {
+      await update($, bugsFilt, cur => ({ ...NO_FILTER, ...(cur ?? {}), ...f }))
+      await $.state.set(bugsOffS, 0)
+    })()
+    const sync = () => void bugsBusy($, 'sync', async () => {
+      const w = await where()
+      if (!w) return
+      const r = await bugsRun<{ count: number; added: number; changed: number; removed: number; seconds: number }>($, w, 'Sync-Bugs.ps1', [], 600_000)
+      await bugsRead($)
+      $.ui.toast(r.out?.ok
+        ? `Synced ${r.out.count} bugs and issues in ${r.out.seconds}s: ${r.out.added} new, ${r.out.changed} changed, ${r.out.removed} gone.`
+        : `Sync failed: ${r.why}`)
+    })
+    const save = (id?: number) => void bugsBusy($, 'save', async () => {
+      const w = await where()
+      if (!w) return
+      const r = await bugsRun<{ saved: number; conflicts: number; errors: number; message?: string }>($, w, 'Save-BugChanges.ps1', id != null ? ['-Id', String(id)] : [], 300_000)
+      await bugsRead($)
+      if (!r.out?.ok) {
+        $.ui.toast(`Save failed: ${r.why}. Nothing saved is lost: the changes are still staged.`)
+        return
+      }
+      const o = r.out
+      const left = o.conflicts + o.errors
+      $.ui.toast(o.message ?? `Saved ${o.saved} change${o.saved === 1 ? '' : 's'} to ADO.${left ? ` ${left} could not be saved: see the staged list.` : ''}`)
+      if (left) await $.state.set(bugsReviewS, true)
+      if (openId != null) await bugsToggle($, openId, false)
+    })
+    const refresh = (id: number) => void bugsBusy($, 'detail', async () => {
+      const w = await where()
+      if (!w) return
+      const r = await bugsRun<{ text: Record<string, string>; comments: BugDetail['comments'] }>($, w, 'Get-BugDetail.ps1', ['-Id', String(id)], 120_000)
+      if (!r.out?.ok) {
+        $.ui.toast(`Could not read ${id} from ADO: ${r.why}`)
+        return
+      }
+      await bugsRead($)
+      await $.state.set(bugsDetailS, { id, text: r.out.text ?? {}, comments: r.out.comments ?? [] })
+      $.ui.toast(`${id} read again from ADO.`)
+    })
+    const gather = async (w: BugsWhere, id: number): Promise<BugEvidence | null> => {
+      const r = await bugsRun<BugEvidence>($, w, 'Find-BugEvidence.ps1', ['-Id', String(id)], 120_000)
+      if (!r.out?.ok) {
+        $.ui.toast(`No evidence: ${r.why}`)
+        return null
+      }
+      await $.state.set(bugsEvS, r.out)
+      return r.out
+    }
+    const findEvidence = (id: number) => void bugsBusy($, 'evidence', async () => {
+      const w = await where()
+      if (!w) return
+      const ev = await gather(w, id)
+      if (ev) $.ui.toast(`${ev.hits.length} code hits in ${ev.repos.length} repos, in ${ev.seconds}s (no tokens).`)
+    })
+    const analyse = (item: BugRecord, d: BugDetail | null, have: BugEvidence | null) => void bugsBusy($, 'analysis', async () => {
+      const w = await where()
+      if (!w) return
+      const ev = have && have.id === item.id ? have : await gather(w, item.id)
+      const a = w.cfg.analysis ?? { model: 'haiku', maxTokens: 500, effort: 'low' }
+      const model = a.model || 'haiku'
+      const r = await $.model.complete({
+        model, system: ANALYSIS_SYSTEM, prompt: analysisPrompt(item, d && d.id === item.id ? d : null, ev),
+        maxTokens: Math.max(100, Math.min(4000, Number(a.maxTokens) || 500)), timeoutMs: 120_000,
+        ...(EFFORTS.includes(a.effort) ? { effort: a.effort as 'low' } : {}),
+      })
+      if (!r.isAnswered) {
+        $.ui.toast(`No probable cause: the model call ended with ${r.reason}${'status' in r && r.status ? ` (HTTP ${r.status})` : ''}.`)
+        return
+      }
+      const u = r.usage
+      const done: BugAnalysis = { id: item.id, key: analysisKey(item, ev), text: r.text.trim(), model,
+        input: (u?.input_tokens ?? 0) + (u?.cache_read_input_tokens ?? 0) + (u?.cache_creation_input_tokens ?? 0), output: u?.output_tokens ?? 0,
+        at: new Date().toISOString() }
+      await update($, bugsAnS, cur => ({ ...(cur ?? {}), [String(item.id)]: done }))
+      try {
+        await $.fs.write(`${w.dir}/items/${item.id}.analysis.json`, JSON.stringify(done, null, 1) + '\n')
+      } catch {
+        // kept for this session only
+      }
+    })
+    const newChat = (id: number) => void bugsBusy($, 'chat', async () => {
+      const w = await where()
+      if (!w) return
+      const r = await bugsRun<{ how: string; prompt: string }>($, w, 'Start-SddChat.ps1', ['-Id', String(id)], 30_000)
+      $.ui.toast(r.out?.ok ? `New chat opened (${r.out.how}) with ${r.out.prompt}.` : `No new chat: ${r.why}`)
+    })
+    const here = (id: number) => void (async () => {
+      await $.prompt.fill({ text: `/sdd:sdd ${id}` })
+      $.ui.toast(`/sdd:sdd ${id} is in the prompt box: press Enter to run it in this chat.`)
+    })()
+    const stage = (item: BugRecord, field: string, value: string) => void bugsStage($, p =>
+      stageChange(p, { id: item.id, kind: 'field', field, value, was: currentValue(item, field) }, people(index), now))
+    const stageAll = (field: string, value: string) => void bugsStage($, p => {
+      let out = p
+      for (const id of picked) {
+        const item = index?.items.find(i => i.id === id)
+        if (item) out = stageChange(out, { id, kind: 'field', field, value, was: currentValue(item, field) }, people(index), now)
+      }
+      return out
+    })
+    const tag = (id: number, kind: 'tagAdd' | 'tagRemove', value: string) => {
+      const v = value.trim().replace(/;/g, ' ')
+      if (!v) return
+      void bugsStage($, p => stageChange(p, { id, kind, value: v }, people(index), now))
+    }
+    const comment = (id: number, text: string) => {
+      const problem = commentProblem(text)
+      if (problem) {
+        $.ui.toast(problem)
+        return
+      }
+      void (async () => {
+        await bugsStage($, p => stageChange(p, { id, kind: 'comment', value: text.trim() }, people(index), now))
+        await $.state.set(bugsEditS, null)
+      })()
+    }
+    const edit = (key: string | null) => void $.state.set(bugsEditS, editing === key ? null : key)
+
+    const header = (
+      <Box flexDirection="column">
+        <Box flexDirection="row" gap={1} alignItems="center">
+          <Box flexGrow={1} flexShrink={1} minWidth={0}>
+            <Text bold wrap="truncate-end">🐞 Bugs and issues</Text>
+          </Box>
+          {busy && <Text color={C.now}>{`⟳ ${BUSY_WORD[busy] ?? busy}…`}</Text>}
+          <Button key="bugs-sync" label="↻ Sync from ADO" onPress={sync} />
+        </Box>
+        {index && (
+          <Text dimColor wrap="truncate-end">
+            {`${index.count} items · ${index.org}${index.projects.length ? ` / ${index.projects.join(', ')}` : ''} · synced ${ago(index.syncedAt, now) || 'never'}${ago(index.syncedAt, now) && ago(index.syncedAt, now) !== 'now' ? ' ago' : ''}${index.me?.email ? ` · you are ${index.me.email}` : ''}`}
+          </Text>
+        )}
+        {why && <Text color={C.now} wrap="wrap">{why}</Text>}
+      </Box>
+    )
+
+    if (!index || !cfg) {
+      return (
+        <Box flexDirection="column" width={cols} gap={1}>
+          {header}
+          <Text dimColor wrap="wrap">The bug manager reads the bugs and issues Sync pulls from ADO into the spec folder. Sync needs PowerShell and an az login.</Text>
+        </Box>
+      )
+    }
+
+    const team = people(index)
+    const cats = categorize(index.items, cfg.categories ?? [], index.me, now)
+    const shownItems = index.items.map(i => withPending(i, pending, team))
+    const list = sortItems(filterItems(shownItems, filter, cats, index.me), filter.sort)
+    const size = Math.max(8, (e.viewport?.rows ?? 40) - 16)
+    const start = from < list.length ? from : 0
+    const page = list.slice(start, start + size)
+    const groups = pendingByItem(pending)
+    const problems = pending.filter(p => p.problem)
+    const states = [...new Set(index.items.map(i => i.state))].sort()
+    const allStates = [...new Set([...Object.values(cfg.states ?? {}).flat(), ...states])]
+    const areas = pathOptions(index.items, 'area')
+    const iterations = pathOptions(index.items, 'iteration')
+    const stateColor = (st: string) => /resolv|done|deploy/i.test(st) ? C.done : /activ|progress|commit/i.test(st) ? C.now : /clos|remov/i.test(st) ? C.dim : C.work
+    const opt = (values: string[], label = (v: string) => v) => values.map(v => ({ value: v, label: label(v) }))
+
+    // ---- filters: words, order, type, state, mine, and the categories as chips
+    const filters = (
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
+          {Input && (
+            <Box flexGrow={1} flexShrink={1} minWidth={20}>
+              <Input key="bugs-search" placeholder="Search id, title, tag, person, path" submitLabel="search" value={filter.text}
+                onSubmit={v => setFilter({ text: v.trim() })} />
+            </Box>
+          )}
+          {filter.text && <Button key="bugs-search-clear" label="✕ clear search" onPress={() => setFilter({ text: '' })} />}
+          <Button key="bugs-mine" label={`${filter.mine ? '☑' : '☐'} Assigned to me`} variant={filter.mine ? 'primary' : undefined}
+            onPress={() => setFilter({ mine: !filter.mine })} />
+        </Box>
+        {Select && (
+          <Box flexDirection="row" gap={2} flexWrap="wrap">
+            <Select key="bugs-sort" label="Sort" value={filter.sort} onSelect={v => setFilter({ sort: v as BugFilter['sort'] })}
+              options={[{ value: 'priority', label: 'Priority' }, { value: 'severity', label: 'Severity' }, { value: 'changed', label: 'Last changed' },
+                { value: 'created', label: 'Newest' }, { value: 'id', label: 'Id' }]} />
+            <Select key="bugs-type" label="Type" value={filter.type || '*'} onSelect={v => setFilter({ type: v === '*' ? '' : v })}
+              options={[{ value: '*', label: 'All' }, ...opt(cfg.types ?? [])]} />
+            <Select key="bugs-state" label="State" value={filter.state || '*'} onSelect={v => setFilter({ state: v === '*' ? '' : v })}
+              options={[{ value: '*', label: 'All' }, ...opt(states.includes(filter.state) || !filter.state ? states : [...states, filter.state])]} />
+          </Box>
+        )}
+        <Box flexDirection="row" gap={1} flexWrap="wrap">
+          <Button key="cat-all" label={`All ${index.items.length}`} variant={filter.category === 'all' ? 'primary' : undefined} onPress={() => setFilter({ category: 'all' })} />
+          {cats.map(c => (
+            <Button key={`cat-${c.id}`} label={`${c.icon} ${c.label} ${c.ids.length}`} variant={filter.category === c.id ? 'primary' : undefined}
+              onPress={() => setFilter({ category: filter.category === c.id ? 'all' : c.id })} />
+          ))}
+        </Box>
+      </Box>
+    )
+
+    // ---- the staged changes: save them, revert them, all or some
+    const staged = pending.length > 0 && (
+      <Box flexDirection="column" borderStyle="round" borderColor={problems.length ? C.revoked : C.now} paddingX={1}>
+        <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
+          <Box flexGrow={1} flexShrink={1} minWidth={0}>
+            <Text bold color={C.now} wrap="truncate-end">
+              {`✎ ${pending.length} unsaved change${pending.length === 1 ? '' : 's'} on ${groups.length} item${groups.length === 1 ? '' : 's'}${problems.length ? ` · ⚠ ${problems.length} not saved last time` : ''}`}
+            </Text>
+          </Box>
+          <Button key="pend-review" label={review ? 'Hide list' : 'Review'} onPress={() => void $.state.set(bugsReviewS, !review)} />
+          <Button key="pend-save" variant="primary" label="Save all to ADO" onPress={() => save()} />
+          <Button key="pend-revert" label="Revert all" onPress={() => edit('revert-all')} />
+        </Box>
+        {editing === 'revert-all' && (
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Text color={C.revoked}>{`Drop all ${pending.length} staged changes? Nothing was sent to ADO.`}</Text>
+            <Button key="pend-revert-yes" label="Yes, revert all" onPress={() => void (async () => {
+              await bugsStage($, () => [])
+              await $.state.set(bugsEditS, null)
+              $.ui.toast('All staged changes reverted.')
+            })()} />
+            <Button key="pend-revert-no" label="Keep them" onPress={() => edit(null)} />
+          </Box>
+        )}
+        {review && groups.map(g => {
+          const item = index.items.find(i => i.id === g.id)
+          return (
+            <Box key={`pend-${g.id}`} flexDirection="column" marginTop={1}>
+              <Box flexDirection="row" gap={1} alignItems="center">
+                <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                  <Button key={`pend-open-${g.id}`} plain label={`${g.id} ${item?.title ?? '(not in the list any more)'}`}
+                    onPress={() => void bugsToggle($, g.id, openId === g.id)} />
+                </Box>
+                <Button key={`pend-save-${g.id}`} label="Save item" onPress={() => save(g.id)} />
+                <Button key={`pend-undo-${g.id}`} label="↶ Revert item" onPress={() => void bugsStage($, p => revertItem(p, g.id))} />
+              </Box>
+              {g.changes.map(c => (
+                <Box key={`chg-${c.key}`} flexDirection="column" marginLeft={2}>
+                  <Box flexDirection="row" gap={1} alignItems="center">
+                    <Button key={`chg-undo-${c.key}`} plain label="↶" onPress={() => void bugsStage($, p => revertChange(p, c.key))} />
+                    <Box flexGrow={1} flexShrink={1} minWidth={0}><Text wrap="truncate-end">{c.label}</Text></Box>
+                    {c.problem?.kind === 'conflict' && (
+                      <Button key={`chg-mine-${c.key}`} label="Keep mine" onPress={() => void bugsStage($, p => keepMine(p, c.key))} />
+                    )}
+                  </Box>
+                  {c.problem && <Box marginLeft={2}><Text color={C.revoked} wrap="wrap">{`⚠ ${c.problem.text}`}</Text></Box>}
+                </Box>
+              ))}
+            </Box>
+          )
+        })}
+      </Box>
+    )
+
+    // ---- the items ticked for one change to all of them
+    const bulk = picked.length > 0 && Select && (
+      <Box flexDirection="column" borderStyle="round" borderColor={C.gate} paddingX={1}>
+        <Box flexDirection="row" gap={1} alignItems="center">
+          <Box flexGrow={1}><Text bold color={C.gate}>{`☑ ${picked.length} picked: change them all at once`}</Text></Box>
+          <Button key="bulk-clear" label="Clear picks" onPress={() => void $.state.set(bugsPickedS, [])} />
+        </Box>
+        <Box flexDirection="row" gap={2} flexWrap="wrap">
+          <Select key="bulk-state" label="State" value="*" options={[{ value: '*', label: '—' }, ...opt(allStates)]}
+            onSelect={v => { if (v !== '*') stageAll(F.state, v) }} />
+          <Select key="bulk-severity" label="Severity" value="*" options={[{ value: '*', label: '—' }, ...opt(cfg.severities ?? [])]}
+            onSelect={v => { if (v !== '*') stageAll(F.severity, v) }} />
+          <Select key="bulk-priority" label="Priority" value="*" options={[{ value: '*', label: '—' }, ...opt((cfg.priorities ?? []).map(String))]}
+            onSelect={v => { if (v !== '*') stageAll(F.priority, v) }} />
+          <Select key="bulk-assign" label="Assign" value="*"
+            options={[{ value: '*', label: '—' }, { value: '-', label: 'Nobody' }, ...team.map(p => ({ value: p.email, label: p.email === index.me?.email ? `${p.name} (me)` : p.name }))]}
+            onSelect={v => { if (v !== '*') stageAll(F.assigned, v === '-' ? '' : v) }} />
+          <Select key="bulk-iteration" label="Iteration" value="*" options={[{ value: '*', label: '—' }, ...opt(iterations)]}
+            onSelect={v => { if (v !== '*') stageAll(F.iteration, v) }} />
+          <Select key="bulk-area" label="Area" value="*" options={[{ value: '*', label: '—' }, ...opt(areas)]}
+            onSelect={v => { if (v !== '*') stageAll(F.area, v) }} />
+        </Box>
+        {Input && (
+          <Box flexDirection="row" gap={1}>
+            <Box flexGrow={1}><Input key={`bulk-tag-${pending.length}`} placeholder="Add a tag to all picked" submitLabel="add tag" onSubmit={v => {
+              for (const id of picked) tag(id, 'tagAdd', v)
+            }} /></Box>
+          </Box>
+        )}
+      </Box>
+    )
+
+    return (
+      <Box flexDirection="column" width={cols} gap={1}>
+        {header}
+        {filters}
+        {staged}
+        {bulk}
+        <Box flexDirection="column">
+          {list.length > 0 && (
+            // the columns of the rows below, with the same widths
+            <Box key="bugs-columns" flexDirection="row" gap={1}>
+              <Text dimColor>{'☐ ● ⋯'}</Text>
+              <Box width={7} flexShrink={0}><Text dimColor>Id</Text></Box>
+              <Box flexGrow={1} flexShrink={1} minWidth={0}><Text dimColor wrap="truncate-end">{`Title · ${list.length} shown · ● severity 1 red, 2 orange, 3 amber`}</Text></Box>
+              <Text dimColor>State</Text>
+              <Box width={12} flexShrink={0}><Text dimColor>Assigned</Text></Box>
+              <Box width={3} flexShrink={0}><Text dimColor>Pri</Text></Box>
+              <Box width={4} flexShrink={0}><Text dimColor>Age</Text></Box>
+            </Box>
+          )}
+          {list.length === 0 && <Text dimColor wrap="wrap">{index.items.length ? 'Nothing matches these filters.' : 'The query found no bugs or issues. Check "bugs.query" in .claude/sdd.json.'}</Text>}
+          {page.map(item => drawRow(item))}
+        </Box>
+        {list.length > size && (
+          <Box flexDirection="row" gap={1} alignItems="center">
+            <Text dimColor>{`${start + 1}-${Math.min(list.length, start + size)} of ${list.length}`}</Text>
+            {start > 0 && <Button key="bugs-prev" label="◀ Prev" onPress={() => void $.state.set(bugsOffS, Math.max(0, start - size))} />}
+            {start + size < list.length && <Button key="bugs-next" label="Next ▶" onPress={() => void $.state.set(bugsOffS, start + size)} />}
+          </Box>
+        )}
+      </Box>
+    )
+
+    function drawRow(item: BugRecord) {
+      const isOpen = openId === item.id
+      const isPicked = picked.includes(item.id)
+      const mine = pending.filter(p => p.id === item.id)
+      const bad = mine.some(p => p.problem)
+      return (
+        <Box key={`bugbox-${item.id}`} flexDirection="column">
+          <Box key={`bugrow-${item.id}`} flexDirection="row" gap={1} alignItems="center" backgroundColor={isOpen ? tint : undefined}>
+            <Button key={`pick-${item.id}`} plain label={isPicked ? '☑' : '☐'}
+              onPress={() => void update($, bugsPickedS, cur => isPicked ? (cur ?? []).filter(x => x !== item.id) : [...(cur ?? []), item.id])} />
+            <Text color={severityColor(item.severity)}>●</Text>
+            <Text>{typeIcon(item.type)}</Text>
+            <Box width={7} flexShrink={0}><Text dimColor>{String(item.id)}</Text></Box>
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              <Button key={`bug-${item.id}`} plain label={`${isOpen ? '▾' : '▸'} ${item.title}`} onPress={() => void bugsToggle($, item.id, isOpen)} />
+            </Box>
+            {mine.length > 0 && <Text bold color={bad ? C.revoked : C.now}>{`${bad ? '⚠' : '✎'}${mine.length}`}</Text>}
+            <Text color={stateColor(item.state)}>{item.state}</Text>
+            <Box width={12} flexShrink={0}><Text dimColor={!isMine(item, index!.me)} color={isMine(item, index!.me) ? C.work : undefined} wrap="truncate-end">{shortName(item.assigned)}</Text></Box>
+            <Box width={3} flexShrink={0}><Text dimColor>{item.priority != null ? `P${item.priority}` : ''}</Text></Box>
+            <Box width={4} flexShrink={0}><Text dimColor>{ago(item.changed, now)}</Text></Box>
+          </Box>
+          {isOpen && drawDetail(item, index!.items.find(i => i.id === item.id) ?? item)}
+        </Box>
+      )
+    }
+
+    /** The open item: its facts, triage, tags, comment, staged changes, links, text, probable cause and sdd. */
+    function drawDetail(item: BugRecord, original: BugRecord) {
+      const id = item.id
+      const mine = pending.filter(p => p.id === id)
+      const inCats = cats.filter(c => c.ids.includes(id))
+      const d = detail && detail.id === id ? detail : null
+      const ev = evidence && evidence.id === id ? evidence : null
+      const a = analyses[String(id)]
+      const fresh = !!a && a.key === analysisKey(original, ev)
+      const flow = sddState(s, id)
+      const more = editing === `more-${id}`
+      const text = d?.text ?? {}
+      const body = [['Repro steps', text.repro], ['Description', text.description], ['System info', text.systemInfo], ['Acceptance criteria', text.acceptance],
+        ['Root cause', text.rootCause], ['Resolution', text.resolution]].filter(([, v]) => v) as Array<[string, string]>
+      const longBody = body.reduce((n, [, v]) => n + v.length, 0) > 700
+      // ADO's reason belongs to the state it holds: a staged state has none yet
+      const facts = [item.type, item.reason && item.state === original.state ? `${item.state} (${item.reason})` : item.state, item.severity && `severity ${item.severity}`,
+        item.priority != null && `priority ${item.priority}`, item.effort != null && `effort ${item.effort}`, item.boardColumn && `board: ${item.boardColumn}`,
+        `created ${ago(item.created, now)} ago${item.createdBy ? ` by ${item.createdBy.name}` : ''}`, `changed ${ago(item.changed, now)} ago`].filter(Boolean).join(' · ')
+      const pickPath = (field: string, values: string[], current: string, other: string) => Select && (
+        <Select key={`${other}-${id}`} label={FIELD_NAME[field]} value={current}
+          options={[...opt(values.includes(current) ? values : [current, ...values], v => v.split('\\').slice(1).join(' › ') || v), { value: '+other', label: 'Other…' }]}
+          onSelect={v => v === '+other' ? edit(`${other}-${id}`) : stage(original, field, v)} />
+      )
+      return (
+        <Box key={`bugdetail-${id}`} flexDirection="column" marginLeft={2} marginBottom={1} paddingX={1} gap={1} borderStyle="round" borderColor={C.line}>
+          <Box flexDirection="column">
+            <Text bold wrap="wrap">{`${typeIcon(item.type)} ${item.id} ${item.title}`}</Text>
+            <Text dimColor wrap="wrap">{facts}</Text>
+            {inCats.length > 0 && (
+              <Box flexDirection="row" gap={2} flexWrap="wrap">
+                {inCats.map(c => <Text key={`incat-${id}-${c.id}`} color={c.color}>{`${c.icon} ${c.label}`}</Text>)}
+              </Box>
+            )}
+          </Box>
+
+          {Select && (
+            <Box flexDirection="column" gap={1}>
+              <Text bold>Triage</Text>
+              <Box flexDirection="row" gap={2} flexWrap="wrap">
+                <Select key={`state-${id}`} label="State" value={item.state} options={opt(stateOptions(cfg!, item))} onSelect={v => stage(original, F.state, v)} />
+                <Select key={`sev-${id}`} label="Severity" value={item.severity || '*'}
+                  options={[...(item.severity ? [] : [{ value: '*', label: '—' }]), ...opt((cfg!.severities ?? []).includes(item.severity) || !item.severity ? cfg!.severities ?? [] : [item.severity, ...(cfg!.severities ?? [])])]}
+                  onSelect={v => { if (v !== '*') stage(original, F.severity, v) }} />
+                <Select key={`prio-${id}`} label="Priority" value={item.priority != null ? String(item.priority) : '*'}
+                  options={[...(item.priority != null ? [] : [{ value: '*', label: '—' }]),
+                    ...opt([...new Set([...(item.priority != null ? [String(item.priority)] : []), ...(cfg!.priorities ?? []).map(String)])])]}
+                  onSelect={v => { if (v !== '*') stage(original, F.priority, v) }} />
+                <Select key={`assign-${id}`} label="Assigned to" value={item.assigned?.email || (item.assigned ? '+keep' : '-')}
+                  options={[{ value: '-', label: 'Nobody' }, ...(item.assigned && !item.assigned.email ? [{ value: '+keep', label: item.assigned.name }] : []),
+                    ...[...team, ...(item.assigned?.email && !team.some(p => p.email === item.assigned!.email) ? [item.assigned] : [])]
+                      .map(p => ({ value: p.email, label: p.email === index!.me?.email ? `${p.name} (me)` : p.name })),
+                    { value: '+other', label: 'Someone else…' }]}
+                  onSelect={v => v === '+other' ? edit(`assign-${id}`) : v === '+keep' ? undefined : stage(original, F.assigned, v === '-' ? '' : v)} />
+              </Box>
+              <Box flexDirection="row" gap={2} flexWrap="wrap">
+                {pickPath(F.area, areas, item.area, 'area')}
+                {pickPath(F.iteration, iterations, item.iteration, 'iteration')}
+              </Box>
+              {Input && ['assign', 'area', 'iteration'].map(k => editing === `${k}-${id}` && (
+                <Box key={`other-${k}-${id}`} flexDirection="row" gap={1} alignItems="center">
+                  <Button key={`other-x-${k}-${id}`} label="X" role="dismiss" onPress={() => edit(null)} />
+                  <Box flexGrow={1}>
+                    <Input key={`other-in-${k}-${id}`} autoFocus submitLabel="stage"
+                      placeholder={k === 'assign' ? 'Their e-mail, as ADO knows them' : `The full ${k} path, e.g. ${(k === 'area' ? item.area : item.iteration) || 'Project\\Team'}`}
+                      onSubmit={v => {
+                        const val = v.trim()
+                        if (!val) return
+                        if (k === 'assign' && !val.includes('@')) {
+                          $.ui.toast('Type their e-mail address (ADO assigns by e-mail).')
+                          return
+                        }
+                        stage(original, k === 'assign' ? F.assigned : k === 'area' ? F.area : F.iteration, k === 'assign' ? val.toLowerCase() : val)
+                        edit(null)
+                      }} />
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+          )}
+
+          <Box flexDirection="column">
+            <Text bold>Tags</Text>
+            <Box flexDirection="row" gap={1} flexWrap="wrap" alignItems="center">
+              {item.tags.length === 0 && <Text dimColor>No tags.</Text>}
+              {item.tags.map(tg => {
+                const isNew = !original.tags.some(x => x.toLowerCase() === tg.toLowerCase())
+                return <Button key={`tag-${id}-${tg}`} label={`${tg} ✕`} variant={isNew ? 'primary' : undefined} onPress={() => tag(id, 'tagRemove', tg)} />
+              })}
+              {original.tags.filter(tg => !item.tags.some(x => x.toLowerCase() === tg.toLowerCase())).map(tg => (
+                <Button key={`untag-${id}-${tg}`} label={`↶ ${tg}`} onPress={() => tag(id, 'tagAdd', tg)} />
+              ))}
+            </Box>
+            {Input && (
+              <Box flexDirection="row" gap={1} marginTop={1}>
+                <Box flexGrow={1}><Input key={`tag-in-${id}-${mine.filter(c => c.kind === 'tagAdd').length}`} placeholder={`Add a tag (${tagOptions(index!.items).slice(0, 4).join(', ') || 'e.g. Quick Win'})`} submitLabel="add tag" onSubmit={v => tag(id, 'tagAdd', v)} /></Box>
+              </Box>
+            )}
+          </Box>
+
+          {Input && (
+            <Box flexDirection="column">
+              <Text bold>Comment</Text>
+              <Input key={`comment-${id}-${mine.filter(c => c.kind === 'comment').length}`} rows={3} placeholder="Write a comment. It is posted when you save the batch. Write ADO 1234, not #1234." submitLabel="stage comment"
+                onSubmit={v => comment(id, v)} />
+            </Box>
+          )}
+
+          {mine.length > 0 && (
+            <Box flexDirection="column" borderStyle="round" borderColor={C.now} paddingX={1}>
+              <Box flexDirection="row" gap={1} alignItems="center">
+                <Box flexGrow={1}><Text bold color={C.now}>{`✎ ${mine.length} staged on this item`}</Text></Box>
+                <Button key={`item-save-${id}`} variant="primary" label="Save this item" onPress={() => save(id)} />
+                <Button key={`item-undo-${id}`} label="↶ Revert item" onPress={() => void bugsStage($, p => revertItem(p, id))} />
+              </Box>
+              {mine.map(c => (
+                <Box key={`ichg-${c.key}`} flexDirection="column">
+                  <Box flexDirection="row" gap={1} alignItems="center">
+                    <Button key={`ichg-undo-${c.key}`} plain label="↶" onPress={() => void bugsStage($, p => revertChange(p, c.key))} />
+                    <Box flexGrow={1} flexShrink={1} minWidth={0}><Text wrap="truncate-end">{c.label}</Text></Box>
+                    {c.problem?.kind === 'conflict' && <Button key={`ichg-mine-${c.key}`} label="Keep mine" onPress={() => void bugsStage($, p => keepMine(p, c.key))} />}
+                  </Box>
+                  {c.problem && <Box marginLeft={2}><Text color={C.revoked} wrap="wrap">{`⚠ ${c.problem.text}`}</Text></Box>}
+                </Box>
+              ))}
+            </Box>
+          )}
+
+          <Box flexDirection="column">
+            <Text bold>Links</Text>
+            <Markdown text={itemLinks(original, index!.org).map(l => `- ${l}`).join('\n')} />
+          </Box>
+
+          <Box flexDirection="column">
+            <Box flexDirection="row" gap={1} alignItems="center">
+              <Box flexGrow={1}><Text bold>Report</Text></Box>
+              <Button key={`refresh-${id}`} label="↻ Read again from ADO" onPress={() => refresh(id)} />
+            </Box>
+            {body.length === 0 && <Text dimColor wrap="wrap">No repro steps or description were synced. Read it again from ADO.</Text>}
+            {body.map(([label, v]) => (
+              <Box key={`body-${id}-${label}`} flexDirection="column">
+                <Text dimColor>{label}</Text>
+                <Text wrap="wrap">{more || v.length <= 700 ? v : `${v.slice(0, 700)} …`}</Text>
+              </Box>
+            ))}
+            {longBody && <Button key={`more-${id}`} plain label={more ? 'Show less' : 'Show all'} onPress={() => edit(`more-${id}`)} />}
+            {(d?.comments ?? []).slice(0, 3).map((c, n) => (
+              <Box key={`cmt-${id}-${n}`} flexDirection="column">
+                <Text dimColor>{`💬 ${c.by}${c.at ? ` · ${ago(c.at, now)} ago` : ''}`}</Text>
+                <Text wrap="wrap">{c.text.length > 400 && !more ? `${c.text.slice(0, 400)} …` : c.text}</Text>
+              </Box>
+            ))}
+          </Box>
+
+          <Box flexDirection="column" borderStyle="round" borderColor={C.gate} paddingX={1}>
+            <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
+              <Box flexGrow={1}><Text bold color={C.gate}>🔎 Probable cause</Text></Box>
+              <Button key={`ev-${id}`} label="Evidence only (no tokens)" onPress={() => findEvidence(id)} />
+              <Button key={`an-${id}`} variant={a ? undefined : 'primary'} label={a ? 'Analyse again' : `Find probable cause (${cfg!.analysis?.model || 'haiku'})`}
+                onPress={() => analyse(original, d, ev)} />
+            </Box>
+            {!a && !ev && <Text dimColor wrap="wrap">Evidence searches the local repos with git: no tokens. The probable cause sends the report and that evidence to the model once, in a short prompt, and keeps the answer.</Text>}
+            {a && (
+              <Box flexDirection="column">
+                <Markdown text={a.text} />
+                <Text dimColor wrap="wrap">{analysisNote(a, fresh)}</Text>
+              </Box>
+            )}
+            {ev && (
+              <Box flexDirection="column" marginTop={1}>
+                <Text dimColor wrap="wrap">{`Searched ${ev.repos.join(', ') || 'no repos'} for ${ev.terms.join(', ') || 'nothing'} (${ev.seconds}s)`}</Text>
+                {ev.hits.length === 0 && <Text dimColor>No match in the repos.</Text>}
+                {ev.hits.slice(0, 6).map((hit, n) => (
+                  <Text key={`hit-${id}-${n}`} wrap="truncate-end">{`· ${hit.repo}/${hit.path}:${hit.line}  ${hit.text}`}</Text>
+                ))}
+                {ev.linked.map((l, n) => <Text key={`lnk-${id}-${n}`} dimColor wrap="truncate-end">{`⎇ ${l.repo} ${l.commit}`}</Text>)}
+              </Box>
+            )}
+          </Box>
+
+          <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
+            <Box flexGrow={1} flexShrink={1} minWidth={0}><Text dimColor wrap="wrap">{flow.note}</Text></Box>
+            <Button key={`chat-${id}`} variant="primary" label={`▶ ${flow.label} in a new chat`} onPress={() => newChat(id)} />
+            <Button key={`here-${id}`} label="In this chat" onPress={() => here(id)} />
+          </Box>
+        </Box>
+      )
+    }
+  })
+
   on('session.start', async ($, e, next) => {
     await setupDesktop($)
     return next(e)
@@ -557,6 +1368,7 @@ export const register: Register = on => {
     if (!desktopReady) return next(e)
     if (e.id === PANE) isOpen = false
     if (e.id === WT_PANE) wtOpen = false
+    if (e.id === BUG_PANE) bugsPaneOpen = false
     return next(e)
   })
 
@@ -740,8 +1552,10 @@ export const register: Register = on => {
     // the launcher: always there, so a panel opens without typing a command
     const openWorktrees = () => openWorktreesPage($)
     const openRepowatch = () => showRepowatch($)
+    const staged = ((await $.state.get(bugsPend)).value ?? []).length  // changes staged in the bug manager and not saved
     const launcher = (
       <Box flexShrink={0} flexDirection="row" gap={1}>
+        <Button key="band-bugs" label={staged ? `Bugs ✎${staged}` : 'Bugs'} onPress={() => void openBugsPage($)} />
         <Button key="band-worktrees" label="Worktrees" onPress={openWorktrees} />
         <Button key="band-repowatch" label="repowatch" onPress={openRepowatch} />
       </Box>

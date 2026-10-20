@@ -41,6 +41,7 @@ pandoc, Ollama (meaning search).
 | `/sdd status <id>` | Where the item stands |
 | `/sdd <id> feedback <stage>: <text>` | Back to a done or waiting stage with your feedback |
 | `/sdd-view [id]` | Opens the sdd view for this chat's work item (or the one given) |
+| `/sdd-bugs [mine]` | The bug manager (Claude Desktop app): triage the bugs and issues of your ADO projects in a pane. See below |
 | `/sdd-worktrees` | Lists every work item that still has worktrees, with each worktree's live state (needs the repowatch plugin, which installs with sdd). Read-only. Each work item is a header; each worktree under it is one line (a colour dot, `repo · branch`, a state word, its age). Press a line to open its facts, 📋 copy folder and a **History** button that asks repowatch to draw that branch against its base. Clean-up is in `/repowatch worktrees` |
 
 The sdd view opens by itself the first time a chat takes up a work item. In it:
@@ -75,6 +76,37 @@ The sdd view opens by itself the first time a chat takes up a work item. In it:
   charged to the item the chat took up with `/sdd <id>`; a sub-agent's tokens count with the turn that ran it.
   After `/clear`, `/resume` or `/branch` the next turn starts a fresh measurement.
 
+## Bugs and issues (`/sdd-bugs`)
+
+A pane in the Claude Desktop app for triaging bugs and issues; the **Bugs** button on the band opens it too.
+It costs no tokens to use: PowerShell scripts (`scripts/bugs/*.ps1`) do the ADO and git work, and the pane
+reads the files they write. Only **Find probable cause** calls a model, once, with a short prompt.
+
+- **Sync from ADO** (`Sync-Bugs.ps1`) pulls the bugs and issues of your ADO projects into the spec folder:
+  `<specRoot>/.bugs/index.json` (the list), `items/<id>.json` (repro steps, description, comments).
+- **Categories** sort the list: quick wins, high severity, in progress, ready for deployment, and one per
+  team branch version tag (`1.1.0`). They are rules in `.claude/sdd.json` `"bugs.categories"`: change them,
+  add your own. Filter by words, type, state, and **Assigned to me** (`/sdd-bugs mine` opens that way).
+- **Triage** a row: state, severity, priority, assignee, area path, iteration path, tags, a comment. Each
+  change is staged, not sent: the row shows `✎n`, and the yellow box counts what is unsaved. **Save all to
+  ADO** (`Save-BugChanges.ps1`) writes the batch; **Save this item** writes one item. **↶** reverts one
+  change, **Revert item** one item, **Revert all** the batch (it asks first). Tick rows (☐) to change
+  several at once. A save reads each item again first: a field someone else changed since is not
+  overwritten; it stays staged with a ⚠ and **Keep mine** if you want yours anyway. Every write is
+  rev-tested. A comment may not name `#1234` (ADO posts a mention there): write `ADO 1234`.
+- **Links** back to ADO: the item, its pull requests (title and status), its commits, its other links.
+- **Probable cause**: **Evidence only** (`Find-BugEvidence.ps1`, no tokens) takes the files, stack frames,
+  exceptions and names in the report, looks for them in your repos with `git grep`, and reads the
+  history of what it finds and the commits linked to the item. **Find probable cause** sends the report
+  and that evidence to `haiku` once (about 1-2k tokens in, 500 out at most) and keeps the answer, with
+  its cost, in `items/<id>.analysis.json`.
+- **▶ Start sdd in a new chat** (`Start-SddChat.ps1`) opens a new Claude Code chat on the item:
+  `claude "/sdd:sdd <id>"` in a new Windows Terminal tab (or console window). An item already in a flow
+  says **Continue sdd** and resumes where it stopped. **In this chat** puts the command in the prompt box.
+
+Needs PowerShell (Windows PowerShell 5.1 or PowerShell 7) and `az login`; a personal access token in
+`AZURE_DEVOPS_EXT_PAT` works too.
+
 ## Configure (`.claude/sdd.json`)
 
 ```json
@@ -94,6 +126,22 @@ The sdd view opens by itself the first time a chat takes up a work item. In it:
 
 `agentRequest` names the hand-over type(s) `/sdd <id>` triages, and the type it creates for the work
 on each flow when no open item takes it.
+
+```json
+"bugs": {
+  "query": { "excludeStates": ["Closed", "Removed"], "areaPaths": ["Proj\\Payments"] },
+  "categories": [
+    { "id": "mine-urgent", "label": "My urgent", "icon": "🔥", "assigned": "me", "severity": ["1", "2"] },
+    { "id": "version", "label": "Team branch {value}", "icon": "🌿", "eachTag": "^\\d+(\\.\\d+){1,3}$" }
+  ],
+  "analysis": { "model": "haiku", "maxTokens": 500 },
+  "newChat": { "mode": "terminal" }
+}
+```
+
+`bugs` sets the bug manager: what it pulls, the categories (a list you give replaces the default one),
+the probable cause's model, and how a new chat opens. `skills/workspace/SKILL.md` lists every key and
+every rule a category takes; `scripts/bugs/defaults.json` holds the defaults.
 
 `agents.models` picks the model of each sub-agent (`sonnet`, `opus` or `haiku`). A workspace without
 it gets these defaults written into its `sdd.json` at the first session after the plugin updates;

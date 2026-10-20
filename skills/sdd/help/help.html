@@ -164,6 +164,7 @@
       <div class="tip"><b>Send it back</b><span><code>/sdd &lt;id&gt; feedback &lt;stage&gt;: &lt;text&gt;</code>. That stage's gates and later ones are revoked.</span></div>
       <div class="tip"><b>Stop</b><span>Say <b>abandon</b> at any time. sdd cleans up and asks before anything outward-facing.</span></div>
       <div class="tip"><b>Pick the next item</b><span><code>/sdd next &lt;epic or feature id&gt; &lt;version&gt;</code> ranks what is free to take.</span></div>
+      <div class="tip"><b>Triage the bugs</b><span><code>/sdd-bugs</code> (or <b>Bugs</b> on the band) in the Desktop app: categories, changes saved to ADO as one batch, a probable cause, and sdd in a new chat.</span></div>
       <div class="tip"><b>Something refused</b><span>It says why: the item is not in the right state. For <code>az</code> errors, run <code>! az login</code> again.</span></div>
     </div>
   </section>
@@ -186,6 +187,14 @@
       <tr><td><code>/sdd &lt;id&gt;</code> on an Ai Agent Request</td><td>A report on the hand-over: what is done, what is left, the items it names. You pick spec or bug. The work goes to the open item it belongs to, or to a new Tech Story or Bug. Then that flow runs.</td></tr>
       <tr><td><code>/sdd bug &lt;id&gt;</code> / <code>/sdd spec &lt;id&gt;</code></td><td>Force the bug or the spec flow.</td></tr>
       <tr><td><code>/sdd &lt;id&gt; short</code> / <code>full</code></td><td>A small spec item: one stop approves design and tasks together. <code>full</code> keeps every stop. Say neither and the flow asks.</td></tr>
+    </table>
+    <h3>Bugs and issues (Claude Desktop app)</h3>
+    <table>
+      <tr><td><code>/sdd-bugs</code></td><td>The bug manager. <b>Sync from ADO</b> pulls the bugs and issues into the spec folder. Pick a category (quick wins, high severity, in progress, ready for deployment, team branch version), filter, and open a row to triage it.</td></tr>
+      <tr><td><code>/sdd-bugs mine</code></td><td>The same, with only the items assigned to you.</td></tr>
+      <tr><td>Triage a row</td><td>State, severity, priority, assignee, area, iteration, tags and a comment. Each change is staged first. <b>Save all to ADO</b> writes the batch; <b>↶</b> reverts one change, <b>Revert item</b> one item, <b>Revert all</b> the batch. Tick rows to change several at once.</td></tr>
+      <tr><td>Probable cause</td><td><b>Evidence only</b> searches your repos with git (no tokens). <b>Find probable cause</b> sends the report and that evidence to a small model once, and keeps the answer.</td></tr>
+      <tr><td>Start or continue sdd</td><td><b>▶ Start sdd in a new chat</b> opens a new Claude Code chat on the item. <b>In this chat</b> puts <code>/sdd:sdd &lt;id&gt;</code> in the prompt box.</td></tr>
     </table>
     <h3>Check on it, finish or stop</h3>
     <table>
@@ -218,6 +227,7 @@
       <li><code>questions.md</code>: open questions for the item's author, one <code>- [ ]</code> line each. While any is open, the flow stops at <b>Open Questions</b> and asks them one by one. You can answer "Continue with this open" to go on anyway.</li>
       <li><code>design.md</code>, <code>tasks.md</code>, <code>impact.md</code>: yours. The sync never touches them.</li>
       <li><code>.index/spec.db</code> (at the spec folder root): search index.</li>
+      <li><code>.bugs/</code> (at the spec folder root): the bug manager's copy of the bugs and issues (<code>index.json</code>, <code>items/</code>) and your unsaved changes (<code>pending.json</code>).</li>
     </ul>
   </section>
 

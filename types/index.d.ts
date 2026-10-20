@@ -127,6 +127,155 @@ export type SddLiveWorktree = {
 
 export type SddLiveState = { generated: number; repos: Record<string, { worktrees?: SddLiveWorktree[] }> }
 
+// ---------------------------------------------------------------- the bug manager (/sdd-bugs)
+
+export type BugPerson = { name: string; email: string }
+
+/** One bug or issue as scripts/bugs/Sync-Bugs.ps1 writes it into index.json. */
+export type BugRecord = {
+  id: number
+  rev: number
+  type: string
+  title: string
+  state: string
+  reason: string
+  project: string
+  area: string
+  iteration: string
+  tags: string[]
+  assigned: BugPerson | null
+  severity: string
+  priority: number | null
+  /** Story points, else effort, else size. */
+  effort: number | null
+  boardColumn: string
+  created: string
+  changed: string
+  createdBy: BugPerson | null
+  url: string
+  parent: number | null
+  related: { name: string; id: number }[]
+  commits: { sha: string; repo: string; url: string }[]
+  prs: { id: number; repo: string; url: string; title: string; status: string }[]
+  links: { name: string; url: string }[]
+  /** The fields "bugs.extraFields" names. */
+  extra: Record<string, unknown>
+}
+
+export type BugIndex = {
+  version: number
+  syncedAt: string
+  org: string
+  projects: string[]
+  me: BugPerson | null
+  count: number
+  items: BugRecord[]
+}
+
+/** A rule of a category: every key given must hold (sdd.json "bugs.categories", scripts/bugs/defaults.json). */
+export type BugCondition = {
+  states?: string[]
+  notStates?: string[]
+  types?: string[]
+  boardColumns?: string[]
+  /** Any of these tags (case does not matter). */
+  tags?: string[]
+  allTags?: string[]
+  /** Severity starts with any of these ("1" matches "1 - Critical"). */
+  severity?: string[]
+  priority?: number[]
+  assigned?: 'me' | 'none' | 'anyone'
+  areaUnder?: string[]
+  iterationUnder?: string[]
+  maxEffort?: number
+  minEffort?: number
+  titleMatches?: string
+  hasPullRequest?: boolean
+  hasCommits?: boolean
+  olderThanDays?: number
+  newerThanDays?: number
+  /** A field of "bugs.extraFields" holding one of these values. */
+  fields?: Record<string, Array<string | number>>
+}
+
+export type BugCategory = BugCondition & {
+  id: string
+  label: string
+  icon?: string
+  color?: string
+  /** At least one of these must hold too. */
+  any?: BugCondition[]
+  /** One category for each tag that matches this pattern ({value} in the label is the tag). */
+  eachTag?: string
+  /** One category for each value of this field (a key of the record, or of "extraFields"). */
+  eachField?: string
+}
+
+export type BugsConfig = {
+  folder: string
+  types: string[]
+  query: { projects: string[]; excludeStates: string[]; areaPaths: string[]; iterationPaths: string[]; where: string; top: number }
+  extraFields: string[]
+  states: Record<string, string[]>
+  severities: string[]
+  priorities: number[]
+  categories: BugCategory[]
+  analysis: { model: string; maxTokens: number; effort: string }
+  newChat: { mode: string; url: string }
+  me: string
+  powershell: string
+}
+
+/** One staged change, kept in <bugs folder>/pending.json until it is saved or reverted. */
+export type BugChange = {
+  key: string
+  id: number
+  kind: 'field' | 'tagAdd' | 'tagRemove' | 'comment'
+  field?: string
+  value: string
+  /** What the field held when the change was first staged. */
+  was?: string
+  label: string
+  at: string
+  /** Set by the last save that could not write it. */
+  problem?: { kind: 'conflict' | 'error'; text: string; current?: string }
+}
+
+export type BugComment = { by: string; at: string; text: string }
+
+export type BugDetail = { id: number; text: Record<string, string>; comments: BugComment[] }
+
+export type BugEvidence = {
+  id: number
+  rev: number
+  terms: string[]
+  repos: string[]
+  hits: { repo: string; path: string; line: number; text: string; term: string }[]
+  history: { repo: string; path: string; commits: string[] }[]
+  linked: { repo: string; commit: string; files: string[] }[]
+  seconds: number
+}
+
+export type BugAnalysis = {
+  id: number
+  /** The item's revision and the evidence it was made from: a newer one shows it may be out of date. */
+  key: string
+  text: string
+  model: string
+  input: number
+  output: number
+  at: string
+}
+
+export type BugFilter = {
+  category: string
+  mine: boolean
+  text: string
+  sort: 'priority' | 'severity' | 'changed' | 'created' | 'id'
+  type: string
+  state: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     sdd: {
@@ -159,6 +308,32 @@ declare module 'claude-code' {
       wtOffset: number
       /** The worktree line opened on the Worktrees page (`<item id>:<repo>`), or null. */
       wtLine: string | null
+      /** The bug manager: the synced bugs and issues (index.json), or null while unread. */
+      bugs: BugIndex | null
+      /** Why the bug manager cannot show the list (no workspace, not synced, a script failed), or null. */
+      bugsError: string | null
+      /** The bug manager's settings: sdd.json "bugs" over scripts/bugs/defaults.json. */
+      bugsCfg: BugsConfig | null
+      /** The staged changes (pending.json). */
+      bugsPending: BugChange[]
+      bugsFilter: BugFilter
+      /** The item opened in the list, or null. */
+      bugsOpen: number | null
+      /** The editor open on that item ('assign', 'area', 'iteration', 'tags', 'comment'), or null. */
+      bugsEdit: string | null
+      /** What runs now ('sync', 'save', 'detail', 'evidence', 'analysis', 'chat'), or null. */
+      bugsBusy: string | null
+      /** The open item's text and comments, once read. */
+      bugsDetail: BugDetail | null
+      bugsEvidence: BugEvidence | null
+      /** The probable cause of each item analysed, by id. */
+      bugsAnalysis: Record<string, BugAnalysis>
+      /** First row of the list shown. */
+      bugsOffset: number
+      /** The staged changes are listed in full. */
+      bugsReview: boolean
+      /** The items ticked for a change to all of them at once. */
+      bugsPicked: number[]
     }
   }
 }

@@ -527,7 +527,7 @@ async function bandCheck($: any, f: Fake) {
 const mountBand = ($: any, columns = 100) => $.ui.mount({ plugin: 'sdd', surface: 'desktop', component: 'AbovePrompt',
   props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: columns, scroll: { offset: 0, bodyRows: 3 }, view: {} } as never, requestId: 'band', viewport: { columns, rows: 40 } })
 
-test('the launcher: with no item running the band still offers the three panels, and each opens one', async ($: any, on: any) => {
+test('the launcher: with no item running the band still offers the panels, and each opens one', async ($: any, on: any) => {
   const f = fake(on, [])
   await $.session.start({ cwd: '/ws', surface: 'terminal', isInteractive: true })
   if (!f.registered.includes('sdd-view')) { await new Promise(r => setTimeout(r, 100)); return }
@@ -542,6 +542,9 @@ test('the launcher: with no item running the band still offers the three panels,
   await ui.press({ key: 'band-open' })
   await until(async () => f.opened.includes('sdd-view'))
   expect(f.opened).toContain('sdd-view')
+  await ui.press({ key: 'band-bugs' })
+  await until(async () => f.opened.includes('sdd-bugs'))
+  expect(f.opened).toContain('sdd-bugs')
 })
 
 test('the launcher: while an item runs the same buttons sit beside its text', async ($: any, on: any) => {

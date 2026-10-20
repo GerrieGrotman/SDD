@@ -207,6 +207,9 @@ def cmd_doctor(a):
         f"{sys.executable} -m pip install --user graphifyy")
     add("pandoc", shutil.which("pandoc"), False, shutil.which("pandoc") or "not found — specs fall back to plain text",
         inst("JohnMacFarlane.Pandoc", "pandoc", "pandoc"))
+    ps = shutil.which("pwsh") or shutil.which("powershell")
+    add("PowerShell", ps, False, ps or "not found — the bug manager (/sdd-bugs) cannot sync or save",
+        inst("Microsoft.PowerShell", "powershell", "powershell"))
 
     node = shutil.which("node")
     add("node", node, True, node or "not found — sdd:visual pages cannot be rendered", inst("OpenJS.NodeJS.LTS", "node", "nodejs"))

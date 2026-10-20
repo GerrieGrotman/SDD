@@ -1,0 +1,48 @@
+{
+  "folder": ".bugs",
+  "types": ["Bug", "Issue"],
+  "query": {
+    "projects": [],
+    "excludeStates": ["Closed", "Removed", "Done"],
+    "areaPaths": [],
+    "iterationPaths": [],
+    "where": "",
+    "top": 1000
+  },
+  "extraFields": [],
+  "states": {
+    "Bug": ["New", "Active", "Resolved", "Closed"],
+    "Issue": ["New", "Active", "Resolved", "Closed"]
+  },
+  "severities": ["1 - Critical", "2 - High", "3 - Medium", "4 - Low"],
+  "priorities": [1, 2, 3, 4],
+  "categories": [
+    {
+      "id": "quick-wins", "label": "Quick wins", "icon": "⚡", "color": "#3f9a63",
+      "notStates": ["Resolved", "Closed", "Done", "Removed"],
+      "any": [{"tags": ["Quick Win", "QuickWin", "quick-win"]}, {"maxEffort": 2}]
+    },
+    {
+      "id": "high-severity", "label": "High severity", "icon": "🔥", "color": "#c0503f",
+      "notStates": ["Resolved", "Closed", "Done", "Removed"],
+      "any": [{"severity": ["1", "2"]}, {"priority": [1]}]
+    },
+    {
+      "id": "in-progress", "label": "In progress", "icon": "▶", "color": "#4a7fc4",
+      "any": [{"states": ["Active", "In Progress", "Committed"]}, {"boardColumns": ["Dev In Progress"]}]
+    },
+    {
+      "id": "ready", "label": "Ready for deployment", "icon": "🚀", "color": "#8a73c9",
+      "any": [{"states": ["Resolved"]}, {"boardColumns": ["Dev Completed", "Ready for Deployment"]},
+              {"tags": ["Ready for Deployment"]}]
+    },
+    {
+      "id": "version", "label": "Team branch {value}", "icon": "🌿", "color": "#c98a12",
+      "eachTag": "^\\d+(\\.\\d+){1,3}$"
+    }
+  ],
+  "analysis": {"model": "haiku", "maxTokens": 500, "effort": "low"},
+  "newChat": {"mode": "terminal", "url": ""},
+  "me": "",
+  "powershell": ""
+}
