@@ -10,9 +10,9 @@ import type { BugAnalysis, BugChange, BugDetail, BugEvidence, BugFilter, BugInde
 import { GLYPH, agentRows, contextTone, moneyText, spendHead, SPEND_ICON, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, railBarColor, clipboardArgv, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { ageShort, agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, lineKey, linePath, lineTone, lineWord, sortLines } from './view/worktrees'
-import { ANALYSIS_SYSTEM, F, FIELD_NAME, NO_FILTER, ago, analysisKey, analysisNote, analysisPrompt, bugsConfig, categorize, commentProblem, currentValue, filterItems, isMine,
+import { ANALYSIS_SYSTEM, F, FIELD_NAME, NO_FILTER, ago, analysisKey, analysisNote, analysisPrompt, bugsConfig, categorize, chipCounts, clipboardArgvFor, commentProblem, countText, currentValue, filterItems, isMine,
   itemLinks, keepMine, parseJson, parseTeam, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem, scriptAnswer, scriptArgv, sddState,
-  severityColor, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
+  sddCommand, severityColor, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
 
 const PANE = 'sdd-view'
 const snap = { plugin: 'sdd', key: 'snap' } as const
@@ -348,7 +348,7 @@ async function setupDesktop($: EngineInterface, isAttach = false): Promise<boole
   await $.state.set(bugsBusyS, null)  // a reload ended whatever the last copy of the module was running
   await $.command.register({
     name: 'sdd-bugs',
-    description: 'Triage the bugs and issues synced from ADO: categories, staged changes saved as a batch, probable cause, sdd in a new chat',
+    description: 'Triage the bugs and issues synced from ADO: categories, staged changes saved as a batch, probable cause, the /sdd command to copy',
     argumentHint: '[mine]',
   })
   await $.command.register({
@@ -402,7 +402,7 @@ const bugsOffS = { plugin: 'sdd', key: 'bugsOffset' } as const
 const bugsReviewS = { plugin: 'sdd', key: 'bugsReview' } as const
 const bugsPickedS = { plugin: 'sdd', key: 'bugsPicked' } as const
 const BUSY_WORD: Record<string, string> = { sync: 'Syncing from ADO', save: 'Saving to ADO', detail: 'Reading from ADO', evidence: 'Gathering evidence',
-  analysis: 'Finding the probable cause', chat: 'Opening a chat' }
+  analysis: 'Finding the probable cause' }
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 let bugsPaneOpen = false
 let bugsTimer = false
@@ -761,7 +761,7 @@ export const register: Register = on => {
 
   // ---------------------------------------------------------------- the bug manager (/sdd-bugs)
   // Triage bugs and issues: categories, filters, staged changes saved to ADO as one batch (or reverted), the
-  // links back to ADO, a probable cause on demand, and the sdd flow in a new chat. It lives in this file for
+  // links back to ADO, a probable cause on demand, and the /sdd command to copy. It lives in this file for
   // the same reason as the Worktrees page.
 
   on('command.run', { command: 'sdd-bugs' }, async ($, e) => {
@@ -892,17 +892,23 @@ export const register: Register = on => {
         // kept for this session only
       }
     })
-    const newChat = (id: number) => void bugsBusy($, 'chat', async () => {
+    // the command for a new chat, on the clipboard: a mod cannot open a chat, so the person pastes it into one
+    const copyCommand = (id: number) => void (async () => {
       const w = await where()
       if (!w) return
-      const r = await bugsRun<{ how: string; prompt: string }>($, w, 'Start-SddChat.ps1', ['-Id', String(id)], 30_000)
-      $.ui.toast(r.out?.ok
-        ? `New chat opened (${r.out.how}) with ${r.out.prompt}${r.out.how === 'Claude Desktop' ? ' in its prompt box: confirm the folder, then press Enter' : ''}.`
-        : `No new chat: ${r.why}`)
-    })
+      const cmd = sddCommand(id)
+      try {
+        const r = await $.process.run(clipboardArgvFor(cmd, /^[A-Za-z]:/.test(w.root)), { cwd: w.root, timeoutMs: 10000 })
+        $.ui.toast(r.exitCode === 0
+          ? `Copied "${cmd}". Paste it in a new chat to ${sddState(s, id).label.toLowerCase()}.`
+          : `Could not copy ${cmd}: ${(r.stderr || r.stdout).trim().slice(0, 160) || `exit ${r.exitCode}`}`)
+      } catch (err) {
+        $.ui.toast(`Could not copy ${cmd}: ${String(err).slice(0, 160)}`)
+      }
+    })()
     const here = (id: number) => void (async () => {
-      await $.prompt.fill({ text: `/sdd:sdd ${id}` })
-      $.ui.toast(`/sdd:sdd ${id} is in the prompt box: press Enter to run it in this chat.`)
+      await $.prompt.fill({ text: sddCommand(id) })
+      $.ui.toast(`${sddCommand(id)} is in the prompt box: press Enter to run it in this chat.`)
     })()
     const stage = (item: BugRecord, field: string, value: string) => void bugsStage($, p =>
       stageChange(p, { id: item.id, kind: 'field', field, value, was: currentValue(item, field) }, people(index), now))
@@ -932,7 +938,8 @@ export const register: Register = on => {
     }
     const edit = (key: string | null) => void $.state.set(bugsEditS, editing === key ? null : key)
 
-    const header = (
+    // `shown`: how many items the filters leave, once the list is worked out
+    const drawHeader = (shown?: number) => (
       <Box flexDirection="column">
         <Box flexDirection="row" gap={1} alignItems="center">
           <Box flexGrow={1} flexShrink={1} minWidth={0}>
@@ -944,7 +951,7 @@ export const register: Register = on => {
         </Box>
         {index && (
           <Text dimColor wrap="truncate-end">
-            {`${index.count} items · ${index.org}${index.projects.length ? ` / ${index.projects.join(', ')}` : ''} · synced ${ago(index.syncedAt, now) || 'never'}${ago(index.syncedAt, now) && ago(index.syncedAt, now) !== 'now' ? ' ago' : ''}${index.me?.email ? ` · you are ${index.me.email}` : ''}`}
+            {`${countText(shown ?? index.count, index.count)} · ${index.org}${index.projects.length ? ` / ${index.projects.join(', ')}` : ''} · synced ${ago(index.syncedAt, now) || 'never'}${ago(index.syncedAt, now) && ago(index.syncedAt, now) !== 'now' ? ' ago' : ''}${index.me?.email ? ` · you are ${index.me.email}` : ''}`}
           </Text>
         )}
         {why && <Text color={C.now} wrap="wrap">{why}</Text>}
@@ -954,7 +961,7 @@ export const register: Register = on => {
     if (!index || !cfg) {
       return (
         <Box flexDirection="column" width={cols} gap={1}>
-          {header}
+          {drawHeader()}
           <Text dimColor wrap="wrap">The bug manager reads the bugs and issues Sync pulls from ADO into the spec folder. Sync needs PowerShell and an az login.</Text>
         </Box>
       )
@@ -967,6 +974,7 @@ export const register: Register = on => {
     const size = Math.max(8, (e.viewport?.rows ?? 40) - 16)
     const start = from < list.length ? from : 0
     const page = list.slice(start, start + size)
+    const chips = chipCounts(shownItems, filter, cats, index.me, cfg.doneStates ?? [], devTeam)  // chips and header follow the filters
     const groups = pendingByItem(pending)
     const problems = pending.filter(p => p.problem)
     const states = [...new Set(index.items.map(i => i.state))].sort()
@@ -1012,11 +1020,11 @@ export const register: Register = on => {
           </Box>
         )}
         <Box flexDirection="row" gap={1} flexWrap="wrap">
-          <Button key="cat-all" label={`All ${index.items.length}`} variant={filter.category === 'all' ? 'primary' : undefined} onPress={() => setFilter({ category: 'all' })} />
+          <Button key="cat-all" label={`All ${chips.all}`} variant={filter.category === 'all' ? 'primary' : undefined} onPress={() => setFilter({ category: 'all' })} />
           {cats.map(c => (
             <Button key={`cat-${c.id}`} variant={filter.category === c.id ? 'primary' : undefined}
               onPress={() => setFilter({ category: filter.category === c.id ? 'all' : c.id })}>
-              <Text color={filter.category === c.id ? undefined : c.color}>{c.icon}</Text>{` ${c.label} `}<Text dimColor={filter.category !== c.id}>{String(c.ids.length)}</Text>
+              <Text color={filter.category === c.id ? undefined : c.color}>{c.icon}</Text>{` ${c.label} `}<Text dimColor={filter.category !== c.id}>{String(chips.by[c.id] ?? 0)}</Text>
             </Button>
           ))}
         </Box>
@@ -1111,7 +1119,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" width={cols} gap={1}>
-        {header}
+        {drawHeader(list.length)}
         {filters}
         {staged}
         {bulk}
@@ -1211,7 +1219,7 @@ export const register: Register = on => {
 
           <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
             <Box flexGrow={1} flexShrink={1} minWidth={0}><Text dimColor wrap="wrap">{flow.note}</Text></Box>
-            <Button key={`chat-${id}`} variant="primary" label={`▶ ${flow.label} in a new chat`} onPress={() => newChat(id)} />
+            <Button key={`copy-${id}`} variant="primary" label={`📋 Copy ${sddCommand(id)}`} onPress={() => copyCommand(id)} />
             <Button key={`here-${id}`} label="In this chat" onPress={() => here(id)} />
           </Box>
 

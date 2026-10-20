@@ -225,7 +225,6 @@ export type BugsConfig = {
   priorities: number[]
   categories: BugCategory[]
   analysis: { model: string; maxTokens: number; effort: string }
-  newChat: { mode: string; url: string }
   me: string
   powershell: string
 }
@@ -339,7 +338,7 @@ declare module 'claude-code' {
       bugsOpen: number | null
       /** The editor open on that item ('assign', 'area', 'iteration', 'tags', 'comment'), or null. */
       bugsEdit: string | null
-      /** What runs now ('sync', 'save', 'detail', 'evidence', 'analysis', 'chat'), or null. */
+      /** What runs now ('sync', 'save', 'detail', 'evidence', 'analysis'), or null. */
       bugsBusy: string | null
       /** The open item's text and comments, once read. */
       bugsDetail: BugDetail | null

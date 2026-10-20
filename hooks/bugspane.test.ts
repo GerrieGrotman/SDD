@@ -38,7 +38,7 @@ const DEFAULTS = {
     { id: 'in-progress', label: 'In progress', icon: '▶', any: [{ states: ['Active'] }] },
     { id: 'version', label: 'Team branch {value}', icon: '🌿', eachTag: '^\\d+(\\.\\d+){1,3}$' },
   ],
-  analysis: { model: 'haiku', maxTokens: 500, effort: 'low' }, newChat: { mode: 'terminal', url: '' }, me: '', powershell: '',
+  analysis: { model: 'haiku', maxTokens: 500, effort: 'low' }, me: '', powershell: '',
 }
 
 const PROPS = { title: 'sdd bugs', isFocused: true, bodyColumns: 120, placement: 'dock', scroll: { offset: 0, bodyRows: 60 }, view: {} } as never
@@ -61,6 +61,7 @@ function world(on: any, opts: { synced?: boolean; team?: boolean } = {}): World 
   on('process.run', ((_$: unknown, e: { argv: string[] }) => {
     w.runs.push(e.argv)
     const script = e.argv.find(a => a.endsWith('.ps1')) ?? ''
+    if (e.argv[0] === 'sh') return done('')                                              // the clipboard
     if (script.endsWith('Sync-Bugs.ps1')) {
       w.files[`${DIR}/index.json`] = JSON.stringify(INDEX)
       return done('{"ok":true,"count":3,"added":3,"changed":0,"removed":0,"seconds":1.5}')
@@ -76,7 +77,6 @@ function world(on: any, opts: { synced?: boolean; team?: boolean } = {}): World 
       return done(JSON.stringify({ ok: true, id: 701, rev: 3, terms: ['Totals.cs'], repos: ['Gateway'], seconds: 0.3, history: [], linked: [],
         hits: [{ repo: 'Gateway', path: 'Billing/Totals.cs', line: 42, text: 'decimal Round()', term: 'Totals.cs' }] }))
     }
-    if (script.endsWith('Start-SddChat.ps1')) return done('{"ok":true,"how":"Claude Desktop","prompt":"/sdd:sdd 701"}')
     if (script.endsWith('Get-BugDetail.ps1')) return done('{"ok":true,"id":701,"text":{"repro":"Fresh repro"},"comments":[]}')
     return done('{"ok":false,"error":"unknown"}', 1)
   }) as never)
@@ -184,6 +184,26 @@ test('desktop: Hide resolved/closed shows all the rest, and says so when nothing
   await ui.press({ key: 'bugs-open' })
   await settle(ui, /☐ Hide resolved\/closed/)
   expect(await labels(ui)).toContain('▸ Header typo')
+})
+
+test('desktop: the header and the chips follow the filters', async ($: any, on: any) => {
+  const w = world(on)
+  const ui = await mount($, w)
+  if (!ui) return
+  expect(await texts(ui)).toContain('3 items · Org / Proj')
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['All 3', '⚡ Quick wins 1', '▶ In progress 1']))
+  await ui.press({ key: 'bugs-mine' })                                                  // only 701 is mine
+  await settle(ui, /1 of 3 items/)
+  expect(await texts(ui)).toContain('1 of 3 items · Org / Proj')
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['All 1', '⚡ Quick wins 1', '▶ In progress 0']))
+  await ui.press({ key: 'cat-in-progress' })                                            // an empty chip: the other chips do not move
+  await settle(ui, /Nothing matches/)
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['All 1', '⚡ Quick wins 1']))
+  expect(await texts(ui)).toContain('0 of 3 items')
+  await ui.press({ key: 'bugs-mine' })
+  await ui.press({ key: 'cat-in-progress' })
+  await settle(ui, /3 items · Org/)
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['All 3', '▶ In progress 1']))
 })
 
 test('desktop: Dev team shows only the developers of developers.json', async ($: any, on: any) => {
@@ -326,7 +346,7 @@ test('desktop: pick several and change them all at once', async ($: any, on: any
   expect(await labels(band)).toContain('Bugs ✎2')
 })
 
-test('desktop: links, evidence, the probable cause and sdd in a new chat', async ($: any, on: any) => {
+test('desktop: links, evidence, the probable cause and the /sdd command to copy', async ($: any, on: any) => {
   const w = world(on)
   const ui = await mount($, w)
   if (!ui) return
@@ -347,12 +367,15 @@ test('desktop: links, evidence, the probable cause and sdd in a new chat', async
   expect(await texts(ui)).toContain('haiku · 900 tokens in, 120 out')
   expect(JSON.parse(w.files[`${DIR}/items/701.analysis.json`]).text).toContain('Totals.Round drops the cents')
   expect(w.runs.filter(r => r.some(a => a.endsWith('Find-BugEvidence.ps1'))).length).toBe(1)   // the evidence was reused
-  await ui.press({ key: 'chat-701' })
-  for (let i = 0; i < 100 && !w.toasts.join('').includes('New chat'); i++) await new Promise(r => setTimeout(r, 10))
-  expect(w.runs.some(r => r.includes('-Id') && r.some(a => a.endsWith('Start-SddChat.ps1')))).toBe(true)
-  expect(w.toasts.join('\n')).toContain('New chat opened (Claude Desktop) with /sdd:sdd 701 in its prompt box: confirm the folder, then press Enter.')
+  // the command for a new chat goes on the clipboard (the test workspace is no Windows one: sh with pbcopy, wl-copy or xclip)
+  await ui.press({ key: 'copy-701' })
+  for (let i = 0; i < 100 && !w.toasts.join('').includes('Copied'); i++) await new Promise(r => setTimeout(r, 10))
+  const copy = w.runs.find(r => r[0] === 'sh' && r.join(' ').includes('/sdd 701'))
+  expect(copy?.[2]).toBe("printf %s '/sdd 701' | (pbcopy 2>/dev/null || wl-copy 2>/dev/null || xclip -selection clipboard)")
+  expect(w.toasts.join('\n')).toContain('Copied \\"/sdd 701\\". Paste it in a new chat to start sdd.')
+  expect(w.runs.some(r => r.some(a => a.endsWith('Start-SddChat.ps1')))).toBe(false)           // no launcher any more
   await ui.press({ key: 'here-701' })
-  expect(w.filled).toContain('/sdd:sdd 701')
+  expect(w.filled).toContain('/sdd 701')
 })
 
 test('desktop: /sdd-bugs mine opens on the items assigned to the person', async ($: any, on: any) => {

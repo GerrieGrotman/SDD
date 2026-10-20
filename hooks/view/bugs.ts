@@ -200,6 +200,21 @@ export function filterItems(items: BugRecord[], f: BugFilter, cats: Category[], 
   })
 }
 
+/** What the category chips and the header count: the items that pass every filter but the category, so a chip says how many
+ *  of its items would show if it were picked now. `all` is the same list with no category. */
+export function chipCounts(items: BugRecord[], f: BugFilter, cats: Category[], me: BugPerson | null | undefined,
+  doneStates: readonly string[] = [], team: BugTeam | null = null): { all: number; by: Record<string, number> } {
+  const pass = new Set(filterItems(items, { ...f, category: 'all' }, cats, me, doneStates, team).map(i => i.id))
+  const by: Record<string, number> = {}
+  for (const c of cats) by[c.id] = c.ids.filter(id => pass.has(id)).length
+  return { all: pass.size, by }
+}
+
+/** The header's count: `173 items`, or `94 of 173 items` while a filter hides some. */
+export function countText(shown: number, total: number): string {
+  return shown === total ? `${total} item${total === 1 ? '' : 's'}` : `${shown} of ${total} items`
+}
+
 export function sortItems(items: BugRecord[], sort: BugFilter['sort']): BugRecord[] {
   const p = (i: BugRecord) => i.priority ?? 9
   const by: Record<BugFilter['sort'], (a: BugRecord, b: BugRecord) => number> = {
@@ -461,6 +476,18 @@ export function analysisPrompt(item: BugRecord, d: BugDetail | null, ev: BugEvid
 /** The cost line under an analysis. */
 export function analysisNote(a: BugAnalysis, fresh: boolean): string {
   return `${a.model} · ${a.input.toLocaleString('en-US')} tokens in, ${a.output.toLocaleString('en-US')} out · ${a.at.slice(0, 16).replace('T', ' ')}${fresh ? '' : ' · the item or the evidence changed since'}`
+}
+
+/** The command that starts or continues the sdd flow on a work item: what the copy button puts on the clipboard. */
+export function sddCommand(id: number): string {
+  return `/sdd ${id}`
+}
+
+/** The command that puts `text` on the clipboard: PowerShell's Set-Clipboard on Windows, else pbcopy, wl-copy or xclip. The
+ *  platform is told, not guessed from the text. */
+export function clipboardArgvFor(text: string, isWindows: boolean): string[] {
+  if (isWindows) return ['powershell', '-NoProfile', '-Command', `Set-Clipboard -Value '${text.replace(/'/g, "''")}'`]
+  return ['sh', '-c', `printf %s '${text.replace(/'/g, "'\\''")}' | (pbcopy 2>/dev/null || wl-copy 2>/dev/null || xclip -selection clipboard)`]
 }
 
 /** The PowerShell to run a script with: the setting, else pwsh, else Windows PowerShell. */

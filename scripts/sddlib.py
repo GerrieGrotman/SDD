@@ -121,7 +121,7 @@ def load_config(root):
 
 def merge_bugs(given):
     """The bug manager's settings: sdd.json "bugs" over scripts/bugs/defaults.json. An object one level
-    down (query, states, analysis, newChat) is merged key by key; a list (categories) replaces the default
+    down (query, states, analysis) is merged key by key; a list (categories) replaces the default
     whole. The same merge as Read-BugsConfig in scripts/bugs/BugsCommon.ps1 and bugsConfig in the view."""
     base = DEFAULTS["bugs"]
     given = given if isinstance(given, dict) else {}

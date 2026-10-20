@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { BugCategory, BugIndex, BugRecord, BugsConfig, SddSnapshot } from '../types'
 import { F, NO_FILTER, analysisKey, analysisPrompt, ago, bugsConfig, categorize, changeLabel, commentProblem, conditionHolds, currentValue,
-  filterItems, isMine, isTeam, parseTeam, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
+  filterItems, chipCounts, clipboardArgvFor, countText, sddCommand, isMine, isTeam, parseTeam, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
   scriptAnswer, scriptArgv, sddState, severityRank, shortName, sortItems, stageChange, stateOptions, tagOptions, withPending } from './view/bugs'
 
 const DEFAULTS = {
@@ -18,7 +18,7 @@ const DEFAULTS = {
     { id: 'ready', label: 'Ready for deployment', any: [{ states: ['Resolved'] }, { tags: ['Ready for Deployment'] }] },
     { id: 'version', label: 'Team branch {value}', eachTag: '^\\d+(\\.\\d+){1,3}$' },
   ],
-  analysis: { model: 'haiku', maxTokens: 500, effort: 'low' }, newChat: { mode: 'terminal', url: '' }, me: '', powershell: '',
+  analysis: { model: 'haiku', maxTokens: 500, effort: 'low' }, me: '', powershell: '',
 } as BugsConfig
 
 const ME = { name: 'Me Myself', email: 'me@x.co' }
@@ -138,6 +138,23 @@ test('the dev team: the file as the workspace keeps it, by developer or by area 
   expect(filterItems(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], null)).toEqual([])    // a filter with no team shows nothing
 })
 
+test('the chips and the header count what the other filters leave, not the whole list', () => {
+  const cats = categorize(ITEMS, DEFAULTS.categories, ME, NOW)
+  const n = (f: Partial<typeof NO_FILTER>) => chipCounts(ITEMS, { ...NO_FILTER, ...f }, cats, ME, DEFAULTS.doneStates, null)
+  expect(n({})).toMatchObject({ all: 4, by: { 'quick-wins': 2, 'in-progress': 2, ready: 1, 'version:1.1.0': 2 } })
+  expect(n({ hideDone: true })).toMatchObject({ all: 3, by: { 'quick-wins': 2, ready: 0, 'version:1.1.0': 1 } })   // 3 is resolved
+  expect(n({ mine: true })).toMatchObject({ all: 1, by: { 'quick-wins': 1, 'in-progress': 0, 'version:1.2.0': 0 } })
+  expect(n({ text: 'ann' })).toMatchObject({ all: 1, by: { 'in-progress': 1, 'quick-wins': 0 } })
+  expect(n({ category: 'quick-wins' })).toEqual(n({}))                                 // the picked chip does not shrink the others
+  expect(n({ team: true })).toMatchObject({ all: 0 })                                  // no team: nothing passes
+  expect(chipCounts(ITEMS, { ...NO_FILTER, team: true }, cats, ME, [], { developers: ['Ann Bee'], areas: [] }).all).toBe(1)
+  expect(n({ mine: true }).all).toBe(filterItems(ITEMS, { ...NO_FILTER, mine: true }, cats, ME).length)   // the same list the rows show
+  expect(countText(173, 173)).toBe('173 items')
+  expect(countText(94, 173)).toBe('94 of 173 items')
+  expect(countText(1, 1)).toBe('1 item')
+  expect(countText(0, 3)).toBe('0 of 3 items')
+})
+
 test('the order: priority, severity, changed, created, id', () => {
   expect(sortItems(ITEMS, 'priority').map(i => i.id)).toEqual([3, 2, 1, 4])
   expect(sortItems(ITEMS, 'severity').map(i => i.id)).toEqual([2, 3, 1, 4])
@@ -255,6 +272,17 @@ test('the probable-cause prompt is short lines, and its key follows the item and
   expect(analysisPrompt(ITEMS[0], null, null)).toContain('No code evidence was gathered.')
   expect(analysisKey(ITEMS[0], ev)).toBe('1|Billing/Totals.cs:42,abc')
   expect(analysisKey({ ...ITEMS[0], rev: 2 }, ev)).not.toBe(analysisKey(ITEMS[0], ev))
+})
+
+test('the command to copy: /sdd and the work item, on the clipboard of the platform it is told', () => {
+  expect(sddCommand(71347)).toBe('/sdd 71347')
+  // Windows: PowerShell's Set-Clipboard, even though the text is no path (the platform is told, not sniffed)
+  expect(clipboardArgvFor('/sdd 71347', true)).toEqual(['powershell', '-NoProfile', '-Command', "Set-Clipboard -Value '/sdd 71347'"])
+  expect(clipboardArgvFor("it's", true)[3]).toBe("Set-Clipboard -Value 'it''s'")
+  const unix = clipboardArgvFor('/sdd 71347', false)
+  expect(unix.slice(0, 2)).toEqual(['sh', '-c'])
+  expect(unix[2]).toBe("printf %s '/sdd 71347' | (pbcopy 2>/dev/null || wl-copy 2>/dev/null || xclip -selection clipboard)")
+  expect(clipboardArgvFor("a'b", false)[2]).toContain("'a'\\''b'")
 })
 
 test('running a script: which PowerShell, the argv, and its answer', () => {
