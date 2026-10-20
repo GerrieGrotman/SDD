@@ -968,8 +968,9 @@ export const register: Register = on => {
     }
 
     const team = people(index)
-    const cats = categorize(index.items, cfg.categories ?? [], index.me, now)
+    // the items as they will be once the staged changes are saved, so the categories and their counts move as you stage
     const shownItems = index.items.map(i => withPending(i, pending, team))
+    const cats = categorize(shownItems, cfg.categories ?? [], index.me, now)
     const list = sortItems(filterItems(shownItems, filter, cats, index.me, cfg.doneStates ?? [], devTeam), filter.sort)
     const size = Math.max(8, (e.viewport?.rows ?? 40) - 16)
     const start = from < list.length ? from : 0
@@ -1277,7 +1278,7 @@ export const register: Register = on => {
                 return <Button key={`tag-${id}-${tg}`} label={`${tg} ✕`} variant={isNew ? 'primary' : undefined} onPress={() => tag(id, 'tagRemove', tg)} />
               })}
               {original.tags.filter(tg => !item.tags.some(x => x.toLowerCase() === tg.toLowerCase())).map(tg => (
-                <Button key={`untag-${id}-${tg}`} label={`↶ ${tg}`} onPress={() => tag(id, 'tagAdd', tg)} />
+                <Button key={`untag-${id}-${tg}`} label={`↶ ${tg} (to remove)`} onPress={() => tag(id, 'tagAdd', tg)} />
               ))}
             </Box>
             {Input && (
@@ -1298,7 +1299,7 @@ export const register: Register = on => {
           {mine.length > 0 && (
             <Box flexDirection="column" borderStyle="round" borderColor={C.now} paddingX={1}>
               <Box flexDirection="row" gap={1} alignItems="center">
-                <Box flexGrow={1}><Text bold color={C.now}>{`✎ ${mine.length} staged on this item`}</Text></Box>
+                <Box flexGrow={1}><Text bold color={C.now}>{`✎ ${mine.length} staged on this item, not saved to ADO yet`}</Text></Box>
                 <Button key={`item-save-${id}`} variant="primary" label="Save this item" onPress={() => save(id)} />
                 <Button key={`item-undo-${id}`} label="↶ Revert item" onPress={() => void bugsStage($, p => revertItem(p, id))} />
               </Box>

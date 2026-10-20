@@ -257,6 +257,16 @@ def save():
             w = f.read_world()
             tries = [x["ops"][0]["value"] for x in w["writes"] if x["method"] == "PATCH" and x["id"] == 703]
             assert w["items"]["703"]["fields"]["System.State"] == "Active" and tries == [6], tries
+            # a tag comes off as the view stages it: the tag as the item lists it, the others kept in their order and spelling
+            w["items"]["703"]["fields"]["System.Tags"] = "1.1.2; 1.1.4; Cosmetic; Rule C"
+            f.world.write_text(json.dumps(w), encoding="utf-8")
+            f.run("Sync-Bugs.ps1", "-Id", "703")
+            assert f.item(703)["tags"] == ["1.1.2", "1.1.4", "Cosmetic", "Rule C"]
+            stage(f, {"id": 703, "kind": "tagRemove", "value": "1.1.2"})
+            out = f.run("Save-BugChanges.ps1")
+            assert out["saved"] == 1 and out["results"][0]["status"] == "saved", out
+            assert f.read_world()["items"]["703"]["fields"]["System.Tags"] == "1.1.4; Cosmetic; Rule C"
+            assert f.item(703)["tags"] == ["1.1.4", "Cosmetic", "Rule C"] and pending(f) == [c for c in pending(f) if c["id"] != 703]
         finally:
             f.close()
 

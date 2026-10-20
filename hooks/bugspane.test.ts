@@ -285,6 +285,10 @@ test('desktop: changes are staged, written to pending.json, reverted, and saved 
   pending = JSON.parse(w.files[`${DIR}/pending.json`]).changes
   expect(pending.map((c: any) => c.label)).toEqual(['State → Active', 'Assigned to → Ann Bee', '+ tag Urgent', '− tag Quick Win', 'Comment: Same as ADO 702'])
   expect(w.toasts.join('\n')).toContain('Write \\"ADO 702\\" instead')
+  // the staged tag removal looks staged, and the categories follow it before anything is saved: 701 leaves Quick wins
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['↶ Quick Win (to remove)', '⚡ Quick wins 0']))
+  expect(await texts(ui)).toContain('staged on this item, not saved to ADO yet')
+  expect(await texts(ui)).not.toContain('⚡ Quick wins')                                  // no longer listed among the open item's categories
   // the list shows the item as it will be
   t = await texts(ui)
   expect(t).toContain('5 staged on this item')
