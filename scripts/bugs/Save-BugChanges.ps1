@@ -93,7 +93,11 @@ function Get-Plan($W, $Changes) {
             $fate[$c['key']] = @{ status = 'saved' }
         }
         if ((($tags | ForEach-Object { $_.ToLower() }) -join ';') -ne $before) {
-            [void]$ops.Add([ordered]@{ op = 'add'; path = '/fields/System.Tags'; value = ($tags -join '; ') })
+            # ADO merges an add into the tags the item has, so only a replace takes a tag off (Work Items - Update: "Add a tag" and
+            # "Update a tag"). An item with no tags has nothing to replace: add sets them.
+            $tagOp = 'replace'
+            if (-not $before) { $tagOp = 'add' }
+            [void]$ops.Add([ordered]@{ op = $tagOp; path = '/fields/System.Tags'; value = ($tags -join '; ') })
         } else {
             foreach ($c in $tagChanges) { $fate[$c['key']] = @{ status = 'already'; message = 'ADO already has it that way' } }
         }

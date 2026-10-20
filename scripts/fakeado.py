@@ -75,7 +75,16 @@ def _children(items, wid):
 def _apply(w, ops):
     """JSON Patch ops on a fake item: field adds, replaces and removes, and relation adds."""
     for o in ops:
-        if o["op"] in ("add", "replace") and o["path"].startswith("/fields/"):
+        if o["op"] == "add" and o["path"] == "/fields/System.Tags":
+            # ADO merges an add into the tags the item has ("Add a tag" in the Work Items - Update docs:
+            # Tag1; Tag2 onto Tag0 gives Tag0; Tag1; Tag2). Only a replace sets the whole list, so only it removes a tag.
+            fields = w.setdefault("fields", {})
+            have = [t.strip() for t in (fields.get("System.Tags") or "").split(";") if t.strip()]
+            for t in (x.strip() for x in str(o["value"]).split(";")):
+                if t and t.lower() not in {h.lower() for h in have}:
+                    have.append(t)
+            fields["System.Tags"] = "; ".join(have)
+        elif o["op"] in ("add", "replace") and o["path"].startswith("/fields/"):
             w.setdefault("fields", {})[o["path"][len("/fields/"):]] = o["value"]
         elif o["op"] == "remove" and o["path"].startswith("/fields/"):
             w.setdefault("fields", {}).pop(o["path"][len("/fields/"):], None)

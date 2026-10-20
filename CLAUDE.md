@@ -66,6 +66,8 @@ to trust the plugin directory, and each case is a paid agent run. A full TypeScr
   patch is rev-tested. Never a `#<id>` in text ADO stores — it posts a mention; write `ADO <id>`. The one
   other writer is the bug manager's `scripts/bugs/Save-BugChanges.ps1` (the person asked for PowerShell
   there): it keeps the same rules (a `test /rev` op, re-read and decide again on 412, no `#<id>`).
+  **A tag list is changed with `replace`, never `add`**: ADO merges an `add` on `System.Tags` into the tags the item has, so only a
+  `replace` takes a tag off (`fakeado` does the same, and `test_fakeado.py` pins it).
 - **The bug scripts run on Windows PowerShell 5.1 too**: no `??`, `?:`, `-AsHashtable` or `&&`; ASCII only
   (5.1 reads a file without a BOM as ANSI; `test_bugs.py` checks); JSON written without a BOM.
 - **Renaming or renumbering a stage** touches `flows.json` (key, `doc`, `reworkTo`), the stage file,

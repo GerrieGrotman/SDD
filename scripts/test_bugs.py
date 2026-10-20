@@ -269,7 +269,8 @@ def save():
             assert f.item(703)["tags"] == ["1.1.4", "Cosmetic", "Rule C"] and pending(f) == [c for c in pending(f) if c["id"] != 703]
             last = json.loads((f.bugs / "last-save.json").read_text(encoding="utf-8"))      # what was sent, and what ADO answered
             assert last["sent"][0]["answeredTags"] == "1.1.4; Cosmetic; Rule C" and last["sent"][0]["problem"] is None, last
-            assert last["result"]["saved"] == 1 and last["sent"][0]["ops"][-1] == {"op": "add", "path": "/fields/System.Tags", "value": "1.1.4; Cosmetic; Rule C"}
+            # ADO merges an add into the tags: only a replace takes one off, so a removal must be a replace
+            assert last["result"]["saved"] == 1 and last["sent"][0]["ops"][-1] == {"op": "replace", "path": "/fields/System.Tags", "value": "1.1.4; Cosmetic; Rule C"}
 
             # ADO already has it that way (someone removed the tag in the web page): nothing is sent, it is said so,
             # and the list is read again, so the stale tag leaves it
@@ -327,6 +328,9 @@ def tags():
                 out = f.run("Save-BugChanges.ps1")
                 got = f.read_world()["items"]["703"]["fields"].get("System.Tags", "")
                 assert (got, out["results"][0]["status"]) == (want, status), (have, kind, value, got, out)
+                if status == "saved":
+                    op = json.loads((f.bugs / "last-save.json").read_text(encoding="utf-8"))["sent"][0]["ops"][-1]["op"]
+                    assert op == ("add" if not have else "replace"), (have, kind, value, op)
                 assert ", ".join(f.item(703)["tags"]) == want.replace("; ", ", "), (have, f.item(703)["tags"])   # and the list shows it
             finally:
                 f.close()
