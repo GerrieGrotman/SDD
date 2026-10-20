@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { BugCategory, BugIndex, BugRecord, BugsConfig, SddSnapshot } from '../types'
 import { F, NO_FILTER, analysisKey, analysisPrompt, ago, bugsConfig, categorize, changeLabel, commentProblem, conditionHolds, currentValue,
-  filterItems, chipCounts, clipboardArgvFor, countText, sddCommand, isMine, isTeam, parseTeam, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
+  filterItems, chipCounts, clipboardArgvFor, countText, saveSummary, sddCommand, isMine, isTeam, parseTeam, itemLinks, keepMine, leaf, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem,
   scriptAnswer, scriptArgv, sddState, severityRank, shortName, sortItems, stageChange, stateOptions, tagOptions, withPending } from './view/bugs'
 
 const DEFAULTS = {
@@ -272,6 +272,16 @@ test('the probable-cause prompt is short lines, and its key follows the item and
   expect(analysisPrompt(ITEMS[0], null, null)).toContain('No code evidence was gathered.')
   expect(analysisKey(ITEMS[0], ev)).toBe('1|Billing/Totals.cs:42,abc')
   expect(analysisKey({ ...ITEMS[0], rev: 2 }, ev)).not.toBe(analysisKey(ITEMS[0], ev))
+})
+
+test('the toast after a save says what was written, what ADO already had and what is left', () => {
+  const o = { saved: 0, already: 0, conflicts: 0, errors: 0 }
+  expect(saveSummary({ ...o, saved: 1 })).toBe('Saved 1 change to ADO.')
+  expect(saveSummary({ ...o, saved: 2, conflicts: 1 })).toBe('Saved 2 changes to ADO. 1 could not be saved: see the staged list.')
+  expect(saveSummary({ ...o, already: 1 })).toBe('1 change already matched ADO, so nothing was sent for it.')
+  expect(saveSummary({ ...o, saved: 1, already: 2, errors: 1 })).toBe('Saved 1 change to ADO. 2 changes already matched ADO, so nothing was sent for them. 1 could not be saved: see the staged list.')
+  expect(saveSummary({ ...o, message: 'nothing to save' })).toBe('nothing to save')
+  expect(saveSummary({ saved: 1, conflicts: 0, errors: 0 })).toBe('Saved 1 change to ADO.')       // an older script answers with no "already"
 })
 
 test('the command to copy: /sdd and the work item, on the clipboard of the platform it is told', () => {

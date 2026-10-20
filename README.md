@@ -95,7 +95,10 @@ reads the files they write. Only **Find probable cause** calls a model, once, wi
   change, **Revert item** one item, **Revert all** the batch (it asks first). Tick rows (☐) to change
   several at once. A save reads each item again first: a field someone else changed since is not
   overwritten; it stays staged with a ⚠ and **Keep mine** if you want yours anyway. Every write is
-  rev-tested. A comment may not name `#1234` (ADO posts a mention there): write `ADO 1234`.
+  rev-tested, and checked against ADO's reply: if ADO accepts a save but its answer does not show the change, the change
+  stays staged with a message saying so. A change ADO already has is reported as "already matched ADO" and nothing is sent for it.
+  Every item in a save is read back, so the list shows what ADO holds. `last-save.json` in the bugs folder records what was sent and
+  what ADO answered. A comment may not name `#1234` (ADO posts a mention there): write `ADO 1234`.
 - **Links** back to ADO: the item, its pull requests (title and status), its commits, its other links.
 - **Probable cause**: **Evidence only** (`Find-BugEvidence.ps1`, no tokens) takes the files, stack frames,
   exceptions and names in the report, looks for them in your repos with `git grep`, and reads the

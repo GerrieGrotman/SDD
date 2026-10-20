@@ -16,7 +16,7 @@ so a new call cannot slip through unnoticed.
 
 An item may hold "comments": [{"text": "<div>…</div>", "createdBy": {"displayName": "…"}}], read back
 with the ones the flow posts, and "reject": {"<field>": "<value>"}: a patch setting that field to that
-value fails with HTTP 400, as an ADO rule does; "race": true makes the next patch find a newer revision
+value fails with HTTP 400, as an ADO rule does; "ignore": ["<field>"] accepts a patch but does not apply that field (the reply shows it); "race": true makes the next patch find a newer revision
 (someone else wrote between the read and the write), once. "repositories": {"<repo id>": {"name": …, "webUrl": …}}
 answers the bug manager's repository reads.
 """
@@ -139,11 +139,12 @@ def request(method, url, body=None):
             if field and field in (w.get("reject") or {}) and w["reject"][field] == o.get("value"):
                 raise RuntimeError(f"ADO PATCH {url} -> HTTP 400: TF401320: Rule Error for field {field}: "
                                    f"{o.get('value')} is not allowed here")
-        _apply(w, body)
+        ignored = w.get("ignore") or []
+        _apply(w, [o for o in body if not (o["path"].startswith("/fields/") and o["path"][len("/fields/"):] in ignored)])
         w["rev"] = w.get("rev", 1) + 1
         writes.append({"method": "PATCH", "id": int(wid), "ops": body})
         _save(p, world)
-        return {"id": int(wid), "rev": w["rev"]}
+        return {"id": int(wid), "rev": w["rev"], "fields": dict(w.get("fields") or {})}
 
     m = re.search(r"/([^/]+)/_apis/wit/workitems/\$([^/]+)$", path, re.I)
     if method == "POST" and m:

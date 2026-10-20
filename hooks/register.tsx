@@ -12,7 +12,7 @@ import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { ageShort, agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, lineKey, linePath, lineTone, lineWord, sortLines } from './view/worktrees'
 import { ANALYSIS_SYSTEM, F, FIELD_NAME, NO_FILTER, ago, analysisKey, analysisNote, analysisPrompt, bugsConfig, categorize, chipCounts, clipboardArgvFor, commentProblem, countText, currentValue, filterItems, isMine,
   itemLinks, keepMine, parseJson, parseTeam, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem, scriptAnswer, scriptArgv, sddState,
-  sddCommand, severityColor, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
+  saveSummary, sddCommand, severityColor, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
 
 const PANE = 'sdd-view'
 const snap = { plugin: 'sdd', key: 'snap' } as const
@@ -827,7 +827,7 @@ export const register: Register = on => {
     const save = (id?: number) => void bugsBusy($, 'save', async () => {
       const w = await where()
       if (!w) return
-      const r = await bugsRun<{ saved: number; conflicts: number; errors: number; message?: string }>($, w, 'Save-BugChanges.ps1', id != null ? ['-Id', String(id)] : [], 300_000)
+      const r = await bugsRun<{ saved: number; already?: number; conflicts: number; errors: number; message?: string }>($, w, 'Save-BugChanges.ps1', id != null ? ['-Id', String(id)] : [], 300_000)
       await bugsRead($)
       if (!r.out?.ok) {
         $.ui.toast(`Save failed: ${r.why}. Nothing saved is lost: the changes are still staged.`)
@@ -835,7 +835,7 @@ export const register: Register = on => {
       }
       const o = r.out
       const left = o.conflicts + o.errors
-      $.ui.toast(o.message ?? `Saved ${o.saved} change${o.saved === 1 ? '' : 's'} to ADO.${left ? ` ${left} could not be saved: see the staged list.` : ''}`)
+      $.ui.toast(saveSummary(o))
       if (left) await $.state.set(bugsReviewS, true)
       if (openId != null) await bugsToggle($, openId, false)
     })
@@ -968,8 +968,9 @@ export const register: Register = on => {
     }
 
     const team = people(index)
-    const cats = categorize(index.items, cfg.categories ?? [], index.me, now)
+    // the items as they will be once the staged changes are saved, so the categories and their counts move as you stage
     const shownItems = index.items.map(i => withPending(i, pending, team))
+    const cats = categorize(shownItems, cfg.categories ?? [], index.me, now)
     const list = sortItems(filterItems(shownItems, filter, cats, index.me, cfg.doneStates ?? [], devTeam), filter.sort)
     const size = Math.max(8, (e.viewport?.rows ?? 40) - 16)
     const start = from < list.length ? from : 0
@@ -1277,7 +1278,7 @@ export const register: Register = on => {
                 return <Button key={`tag-${id}-${tg}`} label={`${tg} ✕`} variant={isNew ? 'primary' : undefined} onPress={() => tag(id, 'tagRemove', tg)} />
               })}
               {original.tags.filter(tg => !item.tags.some(x => x.toLowerCase() === tg.toLowerCase())).map(tg => (
-                <Button key={`untag-${id}-${tg}`} label={`↶ ${tg}`} onPress={() => tag(id, 'tagAdd', tg)} />
+                <Button key={`untag-${id}-${tg}`} label={`↶ ${tg} (to remove)`} onPress={() => tag(id, 'tagAdd', tg)} />
               ))}
             </Box>
             {Input && (
@@ -1298,7 +1299,7 @@ export const register: Register = on => {
           {mine.length > 0 && (
             <Box flexDirection="column" borderStyle="round" borderColor={C.now} paddingX={1}>
               <Box flexDirection="row" gap={1} alignItems="center">
-                <Box flexGrow={1}><Text bold color={C.now}>{`✎ ${mine.length} staged on this item`}</Text></Box>
+                <Box flexGrow={1}><Text bold color={C.now}>{`✎ ${mine.length} staged on this item, not saved to ADO yet`}</Text></Box>
                 <Button key={`item-save-${id}`} variant="primary" label="Save this item" onPress={() => save(id)} />
                 <Button key={`item-undo-${id}`} label="↶ Revert item" onPress={() => void bugsStage($, p => revertItem(p, id))} />
               </Box>
