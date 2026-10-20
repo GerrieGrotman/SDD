@@ -200,6 +200,21 @@ export function filterItems(items: BugRecord[], f: BugFilter, cats: Category[], 
   })
 }
 
+/** What the category chips and the header count: the items that pass every filter but the category, so a chip says how many
+ *  of its items would show if it were picked now. `all` is the same list with no category. */
+export function chipCounts(items: BugRecord[], f: BugFilter, cats: Category[], me: BugPerson | null | undefined,
+  doneStates: readonly string[] = [], team: BugTeam | null = null): { all: number; by: Record<string, number> } {
+  const pass = new Set(filterItems(items, { ...f, category: 'all' }, cats, me, doneStates, team).map(i => i.id))
+  const by: Record<string, number> = {}
+  for (const c of cats) by[c.id] = c.ids.filter(id => pass.has(id)).length
+  return { all: pass.size, by }
+}
+
+/** The header's count: `173 items`, or `94 of 173 items` while a filter hides some. */
+export function countText(shown: number, total: number): string {
+  return shown === total ? `${total} item${total === 1 ? '' : 's'}` : `${shown} of ${total} items`
+}
+
 export function sortItems(items: BugRecord[], sort: BugFilter['sort']): BugRecord[] {
   const p = (i: BugRecord) => i.priority ?? 9
   const by: Record<BugFilter['sort'], (a: BugRecord, b: BugRecord) => number> = {

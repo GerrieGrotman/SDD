@@ -186,6 +186,26 @@ test('desktop: Hide resolved/closed shows all the rest, and says so when nothing
   expect(await labels(ui)).toContain('▸ Header typo')
 })
 
+test('desktop: the header and the chips follow the filters', async ($: any, on: any) => {
+  const w = world(on)
+  const ui = await mount($, w)
+  if (!ui) return
+  expect(await texts(ui)).toContain('3 items · Org / Proj')
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['All 3', '⚡ Quick wins 1', '▶ In progress 1']))
+  await ui.press({ key: 'bugs-mine' })                                                  // only 701 is mine
+  await settle(ui, /1 of 3 items/)
+  expect(await texts(ui)).toContain('1 of 3 items · Org / Proj')
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['All 1', '⚡ Quick wins 1', '▶ In progress 0']))
+  await ui.press({ key: 'cat-in-progress' })                                            // an empty chip: the other chips do not move
+  await settle(ui, /Nothing matches/)
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['All 1', '⚡ Quick wins 1']))
+  expect(await texts(ui)).toContain('0 of 3 items')
+  await ui.press({ key: 'bugs-mine' })
+  await ui.press({ key: 'cat-in-progress' })
+  await settle(ui, /3 items · Org/)
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['All 3', '▶ In progress 1']))
+})
+
 test('desktop: Dev team shows only the developers of developers.json', async ($: any, on: any) => {
   const w = world(on)
   const ui = await mount($, w)
