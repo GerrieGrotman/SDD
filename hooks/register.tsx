@@ -6,13 +6,17 @@
 import { update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { BugAnalysis, BugChange, BugDetail, BugEvidence, BugFilter, BugIndex, BugRecord, BugsConfig, SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
+import type { BugAnalysis, BugCategory, BugChange, BugCondition, BugSettings, BugSettingsDraft, BugDetail, BugEvidence, BugFilter, BugIndex, BugRecord, BugsConfig, SddAsk, SddColors, SddLiveState, SddDoc, SddItem, SddQuestion, SddSnapshot, SddStage } from '../types'
 import { GLYPH, agentRows, contextTone, moneyText, spendHead, SPEND_ICON, spendTokens, spendTotal, tokensLine, answerMessage, answersFor, approveAnswers, approveFor, approveMessage,decidedGates, fileLinks, defaultStage, flowFinished, railSlice, railBarColor, clipboardArgv, stageWord, shortStamp, flowTag, MARK_WORD, idFromArgs, idFromScript, itemOptions, itemSuggestions, pendingGate, reviewLinks, stamp, fileTarget, gateStory, phaseKey, phaseLabel, refLink, stageDocs, stageHistory, stageRows, stageSummary, spinnerNote, statusWord, when, yourTurn } from './view/model'
 import type { AgentInfoLike, AgentTone, Mark, StageRow } from './view/model'
 import { ageShort, agoText, cleanupNote, conflictNote, counts, groupByItem, historyArgs, joinWorktrees, lineFacts, lineKey, linePath, lineTone, lineWord, sortLines } from './view/worktrees'
 import { ANALYSIS_SYSTEM, F, FIELD_NAME, NO_FILTER, ago, analysisKey, analysisNote, analysisPrompt, bugsConfig, categorize, chipCounts, clipboardArgvFor, commentProblem, countText, currentValue, filterItems, isMine,
   itemLinks, keepMine, parseJson, parseTeam, pathOptions, pendingByItem, people, powershellCandidates, revertChange, revertItem, scriptAnswer, scriptArgv, sddState,
   saveSummary, sddCommand, severityColor, visibleIndex, shortName, sortItems, stageChange, stateOptions, tagOptions, typeIcon, withPending } from './view/bugs'
+import { CATEGORY_TEXT_FIELDS, SECTIONS, addAlternative, addCategory, addToField, applyToDevelopers, applyToSdd, changeCount, conditionOf, conditionRows, describeCategory, fieldKey, fieldsOf,
+  filesToWrite, freeKeys, getAt, isDirty, moveCategory, needsSync, removeAlternative, removeCategory, removeConditionKey, removeFromField, resetSection, revertDraft, sectionDirty,
+  seedFor, setCategoryText, setConditionKey, setField, settingsProblems, startDraft, updateCategory, valueText, withCondition } from './view/settings'
+import type { CategoryTextField, Field } from './view/settings'
 
 const PANE = 'sdd-view'
 const snap = { plugin: 'sdd', key: 'snap' } as const
@@ -401,6 +405,9 @@ const bugsAnS = { plugin: 'sdd', key: 'bugsAnalysis' } as const
 const bugsOffS = { plugin: 'sdd', key: 'bugsOffset' } as const
 const bugsReviewS = { plugin: 'sdd', key: 'bugsReview' } as const
 const bugsPickedS = { plugin: 'sdd', key: 'bugsPicked' } as const
+const bugsViewS = { plugin: 'sdd', key: 'bugsView' } as const
+const bugsDraftS = { plugin: 'sdd', key: 'bugsDraft' } as const
+const bugsSectionS = { plugin: 'sdd', key: 'bugsSection' } as const
 const BUSY_WORD: Record<string, string> = { sync: 'Syncing from ADO', save: 'Saving to ADO', detail: 'Reading from ADO', evidence: 'Gathering evidence',
   analysis: 'Finding the probable cause' }
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
@@ -411,7 +418,7 @@ let bugsSeen = ''  // what bugsRead last read: settings, index.json and pending.
 let bugsRunning: string | null = null  // the long action running in this copy of the module (a reload ends it)
 let pwshExe: string | null = null  // the PowerShell that ran last; lost on reload, which costs one more try
 
-type BugsWhere = { root: string; dir: string; cfg: BugsConfig }
+type BugsWhere = { root: string; dir: string; cfg: BugsConfig; defaults: BugsConfig }
 type ScriptOut = { ok: boolean; error?: string }
 
 /** The workspace (the one the sdd view read, else the first folder at or above the session's holding
@@ -449,7 +456,51 @@ async function bugsWhere($: EngineInterface): Promise<BugsWhere | string> {
   const spec = String(raw.specRoot || 'docs/spec')
   const specDir = /^([A-Za-z]:)?[\\/]/.test(spec) ? spec : `${root}/${spec}`
   bugsDirKnown = `${specDir}/${cfg.folder || '.bugs'}`.replace(/\\/g, '/')
-  return { root, dir: bugsDirKnown, cfg }
+  return { root, dir: bugsDirKnown, cfg, defaults }
+}
+
+/** Where the dev team file is: "bugs.developersFile" from the workspace root, or as an absolute path. */
+function developersPath(root: string, file: string): string {
+  return /^([A-Za-z]:)?[\\/]/.test(file) ? file : `${root}/${file}`
+}
+
+/** Writes the settings panel's draft into .claude/sdd.json ("bugs") and the dev team file, then reads them again. Only the settings that were
+ *  changed are written, every other key of both files stays, and a file that cannot be read as JSON is never overwritten. */
+async function settingsSave($: EngineInterface, w: BugsWhere, d: BugSettingsDraft): Promise<{ error: string | null; message: string }> {
+  const files = filesToWrite(d)
+  const wrote: string[] = []
+  const syncNote = needsSync(d) ? ' The new Sync query shows after the next Sync.' : ''
+  const gone = (err: unknown) => /ENOENT|no such|not found|does not exist/i.test(String(err))
+  try {
+    if (files.sdd) {
+      const path = `${w.root}/.claude/sdd.json`
+      let sdd: unknown
+      try {
+        sdd = parseJson(await $.fs.read(path))
+      } catch (err) {
+        return { error: `${path} could not be read (${String(err).slice(0, 100)}). It is left as it was.`, message: '' }
+      }
+      await $.fs.write(path, JSON.stringify(applyToSdd(sdd, d, w.defaults), null, 2) + '\n')
+      wrote.push('sdd.json')
+    }
+    if (files.developers) {
+      const path = developersPath(w.root, d.now.bugs.developersFile)
+      let existing: unknown = null
+      try {
+        existing = parseJson(await $.fs.read(path))
+      } catch (err) {
+        if (!gone(err)) return { error: `${path} is not valid JSON, so it is left as it was${wrote.length ? ` (${wrote.join(' and ')} was saved)` : ''}. Fix it, or open it with Open developers.json.`, message: '' }
+      }
+      await $.fs.write(path, JSON.stringify(applyToDevelopers(existing, d), null, 2) + '\n')
+      wrote.push(path.split(/[\\/]/).pop() ?? 'the dev team file')
+    }
+  } catch (err) {
+    return { error: `${String(err).slice(0, 160)}${wrote.length ? ` (${wrote.join(' and ')} was saved)` : ''}`, message: '' }
+  }
+  bugsSeen = ''  // read everything again, whatever the timer last saw
+  await bugsRead($)
+  await $.state.set(bugsDraftS, null)
+  return { error: null, message: wrote.length ? `Settings saved to ${wrote.join(' and ')}.${syncNote}` : 'Nothing was changed.' }
 }
 
 /** Reads what the scripts wrote: the list and the staged changes. No index yet: not synced. `quiet` (the timer)
@@ -469,7 +520,7 @@ async function bugsRead($: EngineInterface, quiet = false): Promise<BugsWhere | 
   }
   const [indexText, pendingText] = [await read('index.json'), await read('pending.json')]
   // the dev team's file sits in the workspace, not in the bugs folder
-  const teamPath = /^([A-Za-z]:)?[\\/]/.test(w.cfg.developersFile) ? w.cfg.developersFile : `${w.root}/${w.cfg.developersFile}`
+  const teamPath = developersPath(w.root, w.cfg.developersFile)
   let teamText: string | Error
   try {
     teamText = await $.fs.read(teamPath)
@@ -796,6 +847,9 @@ export const register: Register = on => {
     const from = (await $.state.get(bugsOffS)).value ?? 0
     const review = (await $.state.get(bugsReviewS)).value ?? false
     const picked = (await $.state.get(bugsPickedS)).value ?? []
+    const view = (await $.state.get(bugsViewS)).value ?? 'list'
+    const draftState = (await $.state.get(bugsDraftS)).value ?? null  // the settings panel's edits; null = it starts from the files
+    const section = (await $.state.get(bugsSectionS)).value ?? null
     const now = Date.now()
     const tint = /^#[0-9a-f]{6}$/i.test(C.work) ? `${C.work}22` : undefined
     const pickTint = /^#[0-9a-f]{6}$/i.test(C.gate) ? `${C.gate}22` : undefined
@@ -814,10 +868,6 @@ export const register: Register = on => {
       await $.state.set(bugsOffS, 0)
     })()
     // the workspace's .claude/sdd.json, where "bugs" holds the categories and the rest of the settings, in the app the computer uses for it
-    const openConfig = () => void (async () => {
-      const w = await where()
-      if (w) await openFile($, `${w.root}/.claude/sdd.json`)
-    })()
     const sync = () => void bugsBusy($, 'sync', async () => {
       const w = await where()
       if (!w) return
@@ -941,6 +991,73 @@ export const register: Register = on => {
     }
     const edit = (key: string | null) => void $.state.set(bugsEditS, editing === key ? null : key)
 
+    // ---- the settings panel: the `bugs` settings of sdd.json and the dev team file, edited as a draft and written on Save
+    const draft0: BugSettingsDraft | null = draftState ?? (cfg ? startDraft(cfg, devTeam) : null)
+    const sOpen = (id: string) => section === id || !!section?.startsWith(`${id}:`)
+    const openSettings = () => void (async () => {
+      if (!cfg) {
+        $.ui.toast('No sdd workspace here: there are no settings to edit.')
+        return
+      }
+      await $.state.set(bugsViewS, 'settings')
+      if (!(await $.state.get(bugsDraftS)).value) await $.state.set(bugsDraftS, startDraft(cfg, devTeam))
+    })()
+    const toggleSettings = () => (view === 'settings' ? void $.state.set(bugsViewS, 'list') : openSettings())
+    /** Changes the draft: `fn` gets the settings as they are now and answers the new ones, or what was wrong with the edit. */
+    const change = (fn: (s: BugSettings) => BugSettings | { settings: BugSettings } | { error: string }) => void (async () => {
+      if (!cfg) return
+      const cur = (await $.state.get(bugsDraftS)).value ?? startDraft(cfg, devTeam)
+      const r = fn(cur.now)
+      if ('error' in r) {
+        $.ui.toast(r.error)
+        return
+      }
+      await $.state.set(bugsDraftS, { ...cur, now: 'settings' in r ? r.settings : r })
+    })()
+    const ruleChange = (id: string, alt: number | null, fn: (c: BugCondition) => { cond: BugCondition } | { error: string }) =>
+      change(s => {
+        const cat = (s.bugs.categories ?? []).find(c => c.id === id)
+        if (!cat) return s
+        const r = fn(conditionOf(cat, alt))
+        return 'error' in r ? r : updateCategory(s, id, c => withCondition(c, alt, r.cond))
+      })
+    const addCat = (name: string) => void (async () => {
+      if (!cfg) return
+      const cur = (await $.state.get(bugsDraftS)).value ?? startDraft(cfg, devTeam)
+      const r = addCategory(cur.now, name)
+      if ('error' in r) {
+        $.ui.toast(r.error)
+        return
+      }
+      await $.state.set(bugsDraftS, { ...cur, now: r.settings })
+      await $.state.set(bugsSectionS, `categories:${r.id}`)
+    })()
+    const saveSettings = () => void (async () => {
+      const w = await where()
+      const cur = (await $.state.get(bugsDraftS)).value ?? null
+      if (!w || !cur) return
+      const problems = settingsProblems(cur.now)
+      if (problems.length) {
+        $.ui.toast(`Not saved: ${problems[0]}${problems.length > 1 ? ` (and ${problems.length - 1} more)` : ''}`)
+        return
+      }
+      const r = await settingsSave($, w, cur)
+      $.ui.toast(r.error ? `Not saved: ${r.error}` : r.message)
+    })()
+    const revertSettings = () => void (async () => {
+      const cur = (await $.state.get(bugsDraftS)).value ?? null
+      if (cur) await $.state.set(bugsDraftS, revertDraft(cur))
+      $.ui.toast('Settings changes dropped.')
+    })()
+    const resetSettings = (id: string) => void (async () => {
+      const w = await where()
+      if (w) change(s => resetSection(s, w.defaults, id))
+    })()
+    const openSettingsFile = (which: 'sdd' | 'developers') => void (async () => {
+      const w = await where()
+      if (w) await openFile($, which === 'sdd' ? `${w.root}/.claude/sdd.json` : developersPath(w.root, cfg?.developersFile ?? '.claude/developers.json'))
+    })()
+
     // `shown`: how many items the filters leave, once the list is worked out
     const drawHeader = (shown?: number) => (
       <Box flexDirection="column">
@@ -950,7 +1067,7 @@ export const register: Register = on => {
           </Box>
           {busy && <Text color={C.now}>{`⟳ ${BUSY_WORD[busy] ?? busy}…`}</Text>}
           <Button key="bugs-sync" label="↻ Sync from ADO" onPress={sync} />
-          <Button key="bugs-config" label="⚙ Config" onPress={openConfig} />
+          <Button key="bugs-config" label={view === 'settings' ? '← Back to the list' : isDirty(draftState) ? '⚙ Config ✎' : '⚙ Config'} onPress={toggleSettings} />
         </Box>
         {index && (
           <Text dimColor wrap="truncate-end">
@@ -960,6 +1077,208 @@ export const register: Register = on => {
         {why && <Text color={C.now} wrap="wrap">{why}</Text>}
       </Box>
     )
+
+    /** The settings panel: sections you open one at a time; every edit goes into the draft, and Save writes the two files. */
+    const drawSettings = () => {
+      const d = draft0!
+      const now = d.now
+      const In = Input
+      const Sel = Select
+      if (!In || !Sel) return <Text dimColor wrap="wrap">The settings panel needs the Claude Desktop app.</Text>
+      const dirty = isDirty(d)
+      const problems = dirty ? settingsProblems(now) : []
+      const n = changeCount(d)
+
+      /** One plain setting: a list you add to and take from, a number, a text or a choice. */
+      const fieldEditor = (f: Field) => {
+        const fk = fieldKey(f)
+        const v = getAt(now, f.path)
+        const head = (
+          <Box flexDirection="column">
+            <Text bold>{f.label}</Text>
+            <Text dimColor wrap="wrap">{f.help}</Text>
+          </Box>
+        )
+        if (f.kind === 'list' || f.kind === 'numlist') {
+          const items = (Array.isArray(v) ? v : []) as Array<string | number>
+          return (
+            <Box key={`fld-${fk}`} flexDirection="column" marginBottom={1}>
+              {head}
+              <Box flexDirection="row" gap={1} flexWrap="wrap">
+                {items.length === 0 && <Text dimColor>none</Text>}
+                {items.map(x => <Button key={`rm-${fk}-${x}`} label={`${x} ✕`} onPress={() => change(s => removeFromField(s, f, x))} />)}
+              </Box>
+              <In key={`add-${fk}-${items.length}`} placeholder="Type one to add; a comma adds several" submitLabel="add" onSubmit={val => change(s => addToField(s, f, val))} />
+            </Box>
+          )
+        }
+        if (f.kind === 'select') {
+          return (
+            <Box key={`fld-${fk}`} flexDirection="column" marginBottom={1}>
+              {head}
+              <Sel key={`sel-${fk}`} value={String(v)} options={(f.options ?? []).map(o => ({ value: o, label: o }))} onSelect={val => change(s => setField(s, f, val))} />
+            </Box>
+          )
+        }
+        return (
+          <Box key={`fld-${fk}`} flexDirection="column" marginBottom={1}>
+            {head}
+            <In key={`val-${fk}-${valueText(v)}`} value={valueText(v)} placeholder={f.kind === 'number' ? 'a whole number' : 'none'} submitLabel="set" onSubmit={val => change(s => setField(s, f, val))} />
+          </Box>
+        )
+      }
+
+      /** The rules of a category (`alt` null) or of one of its alternatives: each a row, and "Add a rule". */
+      const ruleEditor = (cat: BugCategory, alt: number | null) => {
+        const cond = conditionOf(cat, alt)
+        const scope = `${cat.id}-${alt ?? 'base'}`
+        const rows = conditionRows(cond)
+        return (
+          <Box key={`rules-${scope}`} flexDirection="column">
+            {rows.length === 0 && <Text dimColor wrap="wrap">{alt == null ? 'No rules of its own.' : 'No rules yet: it matches every item.'}</Text>}
+            {rows.map(r => (
+              <Box key={`rule-${scope}-${r.spec.key}`} flexDirection="row" gap={1} alignItems="center">
+                <Box width={28} flexShrink={0}><Text wrap="truncate-end">{r.spec.label}</Text></Box>
+                {r.spec.kind === 'choice'
+                  ? <Sel key={`rsel-${scope}-${r.spec.key}`} value={r.text} options={(r.spec.options ?? []).map(o => ({ value: o, label: o }))}
+                      onSelect={val => ruleChange(cat.id, alt, c => setConditionKey(c, r.spec.key, val))} />
+                  : <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                      <In key={`rin-${scope}-${r.spec.key}-${r.text}`} value={r.text} placeholder={r.spec.help} submitLabel="set"
+                        onSubmit={val => ruleChange(cat.id, alt, c => setConditionKey(c, r.spec.key, val))} />
+                    </Box>}
+                <Button key={`rrm-${scope}-${r.spec.key}`} label="✕" onPress={() => ruleChange(cat.id, alt, c => ({ cond: removeConditionKey(c, r.spec.key) }))} />
+              </Box>
+            ))}
+            <Sel key={`radd-${scope}-${rows.length}`} label="Add a rule" value="+"
+              options={[{ value: '+', label: 'choose…' }, ...freeKeys(cond).map(k => ({ value: String(k.key), label: k.label }))]}
+              onSelect={val => {
+                const spec = freeKeys(cond).find(k => String(k.key) === val)
+                if (spec) ruleChange(cat.id, alt, c => ({ cond: { ...c, [spec.key]: seedFor(spec) } as BugCondition }))
+              }} />
+          </Box>
+        )
+      }
+
+      const catText = (c: BugCategory, f: CategoryTextField, label: string, placeholder: string) => {
+        const v = String((c as unknown as Record<string, unknown>)[f] ?? '')
+        return (
+          <Box key={`catf-${c.id}-${f}`} flexDirection="row" gap={1} alignItems="center">
+            <Box width={28} flexShrink={0}><Text>{label}</Text></Box>
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              <In key={`catfi-${c.id}-${f}-${v}`} value={v} placeholder={placeholder} submitLabel="set" onSubmit={val => change(s => setCategoryText(s, c.id, f, val))} />
+            </Box>
+          </Box>
+        )
+      }
+
+      const categories = (
+        <Box flexDirection="column" gap={1}>
+          {(now.bugs.categories ?? []).map((c, i, all) => {
+            const open = section === `categories:${c.id}`
+            return (
+              <Box key={`cat-${c.id}`} flexDirection="column">
+                <Box flexDirection="row" gap={1} alignItems="center">
+                  <Text color={c.color}>{c.icon ?? '●'}</Text>
+                  <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                    <Button key={`catopen-${c.id}`} plain label={`${open ? '▾' : '▸'} ${c.label}`} onPress={() => void $.state.set(bugsSectionS, open ? 'categories' : `categories:${c.id}`)} />
+                  </Box>
+                  {i > 0 && <Button key={`catup-${c.id}`} label="↑" onPress={() => change(s => moveCategory(s, c.id, -1))} />}
+                  {i < all.length - 1 && <Button key={`catdown-${c.id}`} label="↓" onPress={() => change(s => moveCategory(s, c.id, 1))} />}
+                  <Button key={`catrm-${c.id}`} label="Remove" onPress={() => change(s => removeCategory(s, c.id))} />
+                </Box>
+                <Box marginLeft={3}><Text dimColor wrap="wrap">{describeCategory(c)}</Text></Box>
+                {open && (
+                  <Box flexDirection="column" marginLeft={3} marginTop={1} gap={1} borderStyle="round" borderColor={C.line} paddingX={1}>
+                    {catText(c, 'label', 'Name', 'Quick wins')}
+                    {catText(c, 'icon', 'Icon', '⚡')}
+                    {catText(c, 'color', 'Colour (#rrggbb)', '#3f9a63')}
+                    {catText(c, 'eachTag', 'One chip per tag matching', 'a pattern, e.g. ^\\d+\\.\\d+ for versions; {value} in the name is the tag')}
+                    {catText(c, 'eachField', 'One chip per value of', 'a field, e.g. area')}
+                    <Box flexDirection="column">
+                      <Text bold>Rules</Text>
+                      <Text dimColor wrap="wrap">All of these must hold.</Text>
+                      {ruleEditor(c, null)}
+                    </Box>
+                    {(c.any ?? []).map((a, i2) => (
+                      <Box key={`alt-${c.id}-${i2}`} flexDirection="column" borderStyle="round" borderColor={C.line} paddingX={1}>
+                        <Box flexDirection="row" gap={1} alignItems="center">
+                          <Box flexGrow={1}><Text bold>{`Alternative ${i2 + 1}`}</Text></Box>
+                          <Button key={`altrm-${c.id}-${i2}`} label="Remove" onPress={() => change(s => updateCategory(s, c.id, x => removeAlternative(x, i2)))} />
+                        </Box>
+                        {ruleEditor(c, i2)}
+                      </Box>
+                    ))}
+                    <Box flexDirection="row" gap={1} alignItems="center">
+                      <Button key={`altadd-${c.id}`} label="+ Add an alternative" onPress={() => change(s => updateCategory(s, c.id, x => addAlternative(x)))} />
+                      <Text dimColor wrap="wrap">{(c.any ?? []).length ? 'And at least one alternative must hold.' : 'An alternative is another set of rules, any one of which will do.'}</Text>
+                    </Box>
+                  </Box>
+                )}
+              </Box>
+            )
+          })}
+          <In key={`catnew-${(now.bugs.categories ?? []).length}`} placeholder="Name of a new category" submitLabel="add" onSubmit={addCat} />
+        </Box>
+      )
+
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
+            <Box flexGrow={1} flexShrink={1} minWidth={0}><Text bold>⚙ Settings</Text></Box>
+            <Button key="cfg-open-sdd" label="Open sdd.json" onPress={() => openSettingsFile('sdd')} />
+            <Button key="cfg-open-dev" label="Open developers.json" onPress={() => openSettingsFile('developers')} />
+          </Box>
+          <Text dimColor wrap="wrap">Change what you need and press Save. Only the settings you change are written; the rest of both files stays as it is.</Text>
+          {dirty && (
+            <Box flexDirection="column" borderStyle="round" borderColor={problems.length ? C.revoked : C.now} paddingX={1}>
+              <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
+                <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                  <Text bold color={C.now} wrap="wrap">{`✎ ${n} setting${n === 1 ? '' : 's'} changed, not saved yet`}</Text>
+                </Box>
+                <Button key="cfg-save" variant="primary" label="Save settings" onPress={saveSettings} />
+                <Button key="cfg-revert" label="Revert" onPress={revertSettings} />
+              </Box>
+              {problems.map((p, i) => <Text key={`prob-${i}`} color={C.revoked} wrap="wrap">{`⚠ ${p}`}</Text>)}
+              {needsSync(d) && <Text dimColor wrap="wrap">A change to what Sync pulls shows after the next Sync.</Text>}
+            </Box>
+          )}
+          {SECTIONS.map(sec => {
+            const open = sOpen(sec.id)
+            const changed = sectionDirty(d, sec.id)
+            return (
+              <Box key={`sec-${sec.id}`} flexDirection="column" borderStyle="round" borderColor={changed ? C.now : C.line} paddingX={1}>
+                <Box flexDirection="row" gap={1} alignItems="center">
+                  <Box flexGrow={1} flexShrink={1} minWidth={0}>
+                    <Button key={`secopen-${sec.id}`} plain label={`${open ? '▾' : '▸'} ${sec.label}${changed ? ' ✎' : ''}`} onPress={() => void $.state.set(bugsSectionS, open ? null : sec.id)} />
+                  </Box>
+                  <Text dimColor>{sec.where}</Text>
+                </Box>
+                {open && (
+                  <Box flexDirection="column" marginTop={1}>
+                    <Text dimColor wrap="wrap">{sec.help}</Text>
+                    <Box flexDirection="column" marginTop={1}>
+                      {sec.id === 'categories' ? categories : fieldsOf(sec.id).map(fieldEditor)}
+                    </Box>
+                    <Box flexDirection="row" gap={1}>
+                      <Button key={`secreset-${sec.id}`} label={sec.id === 'team' ? 'Clear the dev team' : 'Back to the plugin\'s own'} onPress={() => resetSettings(sec.id)} />
+                    </Box>
+                  </Box>
+                )}
+              </Box>
+            )
+          })}
+        </Box>
+      )
+    }
+
+    if (view === 'settings' && cfg && draft0) {
+      return (
+        <Box flexDirection="column" width={cols} gap={1}>
+          {drawHeader()}
+          {drawSettings()}
+        </Box>
+      )
+    }
 
     if (!index || !cfg) {
       return (

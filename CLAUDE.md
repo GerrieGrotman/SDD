@@ -25,7 +25,7 @@ the user's view; this file is for working on the plugin itself.
 | `scripts/adowrite.py`, `proof.py`, `nextpick.py`, `metrics.py` | ADO writes; recorded test runs; next-item rules; metrics.json — logic as plain functions, tested without ADO |
 | `scripts/bugs/` | The bug manager's mechanics (`/sdd-bugs`), in PowerShell: `Sync-Bugs`, `Get-BugDetail`, `Save-BugChanges` (rev-tested batch writes), `Find-BugEvidence` (git, no tokens); `BugsCommon.ps1` is what they share, `defaults.json` the one source of the `bugs` settings (sddlib, the scripts and the view all read it) |
 | `scripts/fakeado.py` | Offline ADO for tests and evals: on when `SDD_FAKE_ADO` names a JSON world file |
-| `hooks/` | `question_guard.py`, `agent_guard.py`, `edit_guard.py`, and `register.tsx` + `view/model.ts` (the sdd view, a mod), `view/worktrees.ts` (pure helpers of the `/sdd-worktrees` page, whose hooks live in `register.tsx`), `view/bugs.ts` (pure helpers of the `/sdd-bugs` bug manager: categories, filters, staged changes, the probable-cause prompt) |
+| `hooks/` | `question_guard.py`, `agent_guard.py`, `edit_guard.py`, and `register.tsx` + `view/model.ts` (the sdd view, a mod), `view/worktrees.ts` (pure helpers of the `/sdd-worktrees` page, whose hooks live in `register.tsx`), `view/bugs.ts` (pure helpers of the `/sdd-bugs` bug manager: categories, filters, staged changes, the probable-cause prompt), `view/settings.ts` (pure helpers of its ⚙ Config panel: the draft, the fields, the category rules, and `applyToSdd` / `applyToDevelopers`, which write only changed keys) |
 | `agents/` | `investigator` and `skeptic`, the read-only sub-agents |
 | `evals/` | `claude plugin eval` cases; `_fixtures/workspace.py` builds each case's workspace |
 | `repowatch/` | A second, standalone plugin (sdd depends on it, same marketplace): tracks many git repos and worktrees. `scripts/repowatch.py` does the git mechanics and writes `.claude/repowatch/state.json`; `hooks/register.tsx` draws the pane and status line from it, and runs a clean-up only after `plan`, a confirm and `apply` (which re-checks). Has its own `plugin.json` and version |
@@ -93,4 +93,7 @@ to trust the plugin directory, and each case is a paid agent run. A full TypeScr
   line in the item's `cost.jsonl`; `view` reports the totals). Otherwise `register.tsx` reads `env.py view` and posts the user's
   messages. It never passes a gate or runs another state-changing command. The bug manager (`/sdd-bugs`) is
   apart: it writes the staged changes to `<bugs folder>/pending.json` and a probable cause to `items/<id>.analysis.json`,
-  and runs the bug scripts on the person's press; its one model call is the probable cause, on a press.
+  and runs the bug scripts on the person's press; its one model call is the probable cause, on a press. Its ⚙ Config
+  panel is the one place the view writes config: on Save it rewrites `.claude/sdd.json` (only the `bugs` keys that
+  changed) and the dev team file, each read fresh first and refused if it is not valid JSON. A new `bugs` key needs a
+  `FIELDS` entry in `view/settings.ts` (or a place in the category rules) to show in the panel.

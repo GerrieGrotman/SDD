@@ -125,6 +125,8 @@ async function mount($: any, w: World, args = '') {
 
 async function settle(ui: any, want: RegExp) {
   for (let i = 0; i < 100 && !want.test(await texts(ui) + '\n' + (await labels(ui)).join('\n')); i++) await new Promise(r => setTimeout(r, 10))
+  const seen = await texts(ui) + '\n' + (await labels(ui)).join('\n')
+  if (!want.test(seen)) throw new Error(`never saw ${want}:\n${seen.slice(0, 1500)}`)
 }
 
 test('desktop: the list shows the synced items, the categories and the filters', async ($: any, on: any) => {
@@ -157,16 +159,151 @@ test('desktop: the list shows the synced items, the categories and the filters',
 })
 
 for (const synced of [true, false]) {
-  test(`desktop: the Config button opens the workspace's sdd.json (${synced ? 'synced' : 'not synced yet'})`, async ($: any, on: any) => {
+  test(`desktop: the Config button opens the settings panel, and Back returns (${synced ? 'synced' : 'not synced yet'})`, async ($: any, on: any) => {
     const w = world(on, { synced })
     const ui = await mount($, w)
     if (!ui) return
     expect(await labels(ui)).toContain('⚙ Config')
     await ui.press({ key: 'bugs-config' })
-    for (let i = 0; i < 100 && !w.runs.some(r => r.includes(`${ROOT}/.claude/sdd.json`)); i++) await new Promise(r => setTimeout(r, 10))
-    expect(w.runs.find(r => r.includes(`${ROOT}/.claude/sdd.json`))).toEqual(['open', `${ROOT}/.claude/sdd.json`])
+    await settle(ui, /⚙ Settings/)
+    expect(await labels(ui)).toEqual(expect.arrayContaining(['← Back to the list', 'Open sdd.json', 'Open developers.json', '▸ Dev team', '▸ Categories']))
+    // nothing is edited, so there is nothing to save
+    expect(await labels(ui)).not.toContain('Save settings')
+    await ui.press({ key: 'bugs-config' })
+    await settle(ui, /^(?![\s\S]*⚙ Settings)/)
+    expect(await labels(ui)).toContain('⚙ Config')
   })
 }
+
+test('desktop: the panel opens the two files on a press', async ($: any, on: any) => {
+  const w = world(on)
+  const ui = await mount($, w)
+  if (!ui) return
+  await ui.press({ key: 'bugs-config' })
+  await settle(ui, /⚙ Settings/)
+  await ui.press({ key: 'cfg-open-sdd' })
+  await ui.press({ key: 'cfg-open-dev' })
+  for (let i = 0; i < 100 && w.runs.filter(r => r[0] === 'open').length < 2; i++) await new Promise(r => setTimeout(r, 10))
+  expect(w.runs.filter(r => r[0] === 'open')).toEqual([['open', `${ROOT}/.claude/sdd.json`], ['open', `${ROOT}/.claude/developers.json`]])
+})
+
+test('desktop: the dev team is edited, and Save writes only what changed to the two files', async ($: any, on: any) => {
+  const w = world(on)
+  w.files[`${ROOT}/.claude/sdd.json`] = JSON.stringify({ specRoot: 'docs/spec', ado: { org: 'Org', projects: ['Proj'] }, bugs: { me: 'me@x.co' } })
+  w.files[`${ROOT}/.claude/developers.json`] = JSON.stringify({ note: 'keep me', developers: ['ann bee', 'Raj Patel'] })
+  const ui = await mount($, w)
+  if (!ui) return
+  await ui.press({ key: 'bugs-config' })
+  await settle(ui, /⚙ Settings/)
+  await ui.press({ key: 'secopen-team' })
+  await settle(ui, /Display names as ADO shows them/)
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['ann bee ✕', 'Raj Patel ✕']))
+  await ui.input({ key: 'add-developers-2', text: 'Kim Lee', kind: 'submit' })
+  await settle(ui, /Kim Lee ✕/)
+  await ui.press({ key: 'rm-developers-Raj Patel' })
+  await settle(ui, /^(?![\s\S]*Raj Patel ✕)/)
+  await ui.input({ key: 'add-areas-0', text: 'Proj\\Payments\\*', kind: 'submit' })
+  await settle(ui, /Proj\\Payments\\\* ✕/)
+  await settle(ui, /2 settings changed, not saved yet/)
+  // nothing is written until Save
+  expect(JSON.parse(w.files[`${ROOT}/.claude/sdd.json`]).bugs).toEqual({ me: 'me@x.co' })
+  await ui.press({ key: 'cfg-save' })
+  await settle(ui, /^(?![\s\S]*not saved yet)/)
+  expect(JSON.parse(w.files[`${ROOT}/.claude/sdd.json`])).toEqual({ specRoot: 'docs/spec', ado: { org: 'Org', projects: ['Proj'] }, bugs: { me: 'me@x.co' } })
+  expect(JSON.parse(w.files[`${ROOT}/.claude/developers.json`])).toEqual({ note: 'keep me', areaPath: 'Proj\\Payments\\*', developers: ['ann bee', 'Kim Lee'] })
+  expect(w.toasts.join('\n')).toContain('Settings saved to')
+})
+
+test('desktop: a choice is saved as the only key written, next to the ones already there', async ($: any, on: any) => {
+  const w = world(on)
+  w.files[`${ROOT}/.claude/sdd.json`] = JSON.stringify({ specRoot: 'docs/spec', bugs: { me: 'me@x.co' } })
+  const ui = await mount($, w)
+  if (!ui) return
+  await ui.press({ key: 'bugs-config' })
+  await settle(ui, /⚙ Settings/)
+  await ui.press({ key: 'secopen-analysis' })
+  await settle(ui, /The model call behind/)
+  await ui.select({ key: 'sel-bugs.analysis.model', value: 'opus' })
+  await settle(ui, /1 setting changed, not saved yet/)
+  await ui.press({ key: 'cfg-save' })
+  await settle(ui, /^(?![\s\S]*not saved yet)/)
+  expect(JSON.parse(w.files[`${ROOT}/.claude/sdd.json`])).toEqual({ specRoot: 'docs/spec', bugs: { me: 'me@x.co', analysis: { model: 'opus' } } })
+  expect(JSON.parse(w.files[`${ROOT}/.claude/developers.json`])).toEqual({ developers: ['ann bee', 'Raj Patel'] })   // not touched
+})
+
+test('desktop: Revert drops the edits, and a number that is not one is refused', async ($: any, on: any) => {
+  const w = world(on)
+  const before = w.files[`${ROOT}/.claude/sdd.json`]
+  const ui = await mount($, w)
+  if (!ui) return
+  await ui.press({ key: 'bugs-config' })
+  await settle(ui, /⚙ Settings/)
+  await ui.press({ key: 'secopen-sync' })
+  await settle(ui, /The most items one Sync reads/)
+  await ui.input({ key: 'val-bugs.query.top-1000', text: 'many', kind: 'submit' })
+  await new Promise(r => setTimeout(r, 50))
+  expect(await labels(ui)).not.toContain('Save settings')                              // refused: the draft is as it was
+  expect(w.toasts.join('\n')).toMatch(/whole number/i)
+  await ui.input({ key: 'val-bugs.query.top-1000', text: '250', kind: 'submit' })
+  await settle(ui, /1 setting changed, not saved yet/)
+  expect(await texts(ui)).toContain('shows after the next Sync')                        // a change to what Sync pulls
+  await ui.press({ key: 'cfg-revert' })
+  await settle(ui, /^(?![\s\S]*not saved yet)/)
+  expect(w.files[`${ROOT}/.claude/sdd.json`]).toBe(before)
+  expect(w.toasts.join('\n')).toContain('Settings changes dropped')
+})
+
+test('desktop: a category is added, opened, given a rule and an alternative, moved and removed; Save writes the list', async ($: any, on: any) => {
+  const w = world(on)
+  const ui = await mount($, w)
+  if (!ui) return
+  await ui.press({ key: 'bugs-config' })
+  await settle(ui, /⚙ Settings/)
+  await ui.press({ key: 'secopen-categories' })
+  await settle(ui, /Quick wins/)
+  await ui.input({ key: 'catnew-3', text: 'Urgent ones', kind: 'submit' })
+  await settle(ui, /Alternative|Rules/)                                                // the new category opens
+  expect(await labels(ui)).toContain('▾ Urgent ones')
+  await ui.select({ key: 'radd-urgent-ones-base-0', value: 'tags' })
+  await settle(ui, /Has any of these tags/)
+  await ui.input({ key: 'rin-urgent-ones-base-tags-', text: 'Urgent', kind: 'submit' })
+  await settle(ui, /Urgent/)
+  await ui.press({ key: 'altadd-urgent-ones' })
+  await settle(ui, /Alternative 1/)
+  await ui.select({ key: 'radd-urgent-ones-0-0', value: 'tags' })
+  await ui.input({ key: 'rin-urgent-ones-0-tags-', text: 'Hot', kind: 'submit' })
+  await settle(ui, /not saved yet/)
+  await ui.press({ key: 'catup-urgent-ones' })
+  await ui.press({ key: 'catrm-in-progress' })
+  await settle(ui, /^(?![\s\S]*▸ In progress)/)
+  await ui.press({ key: 'cfg-save' })
+  await settle(ui, /^(?![\s\S]*not saved yet)/)
+  const saved = JSON.parse(w.files[`${ROOT}/.claude/sdd.json`]).bugs.categories
+  expect(saved.map((c: any) => c.id)).toEqual(['quick-wins', 'urgent-ones', 'version'])
+  expect(saved[1]).toMatchObject({ label: 'Urgent ones', tags: ['Urgent'], any: [{ tags: ['Hot'] }] })
+  // the list follows the saved categories after a re-read
+  await ui.press({ key: 'bugs-config' })
+  await settle(ui, /^(?![\s\S]*⚙ Settings)/)
+  expect(await labels(ui)).toEqual(expect.arrayContaining(['● Urgent ones 0']))
+})
+
+test('desktop: a problem blocks Save, and a developers.json that cannot be read is not overwritten', async ($: any, on: any) => {
+  const w = world(on)
+  w.files[`${ROOT}/.claude/developers.json`] = '{ not json'
+  const ui = await mount($, w)
+  if (!ui) return
+  await ui.press({ key: 'bugs-config' })
+  await settle(ui, /⚙ Settings/)
+  await ui.press({ key: 'secopen-team' })
+  await settle(ui, /Display names as ADO shows them/)
+  await ui.input({ key: 'add-developers-0', text: 'Kim Lee', kind: 'submit' })
+  await settle(ui, /1 setting changed/)
+  await ui.press({ key: 'cfg-save' })
+  for (let i = 0; i < 100 && !w.toasts.some(t => t.includes('Not saved')); i++) await new Promise(r => setTimeout(r, 10))
+  expect(w.toasts.join('\n')).toContain('Not saved')
+  expect(w.files[`${ROOT}/.claude/developers.json`]).toBe('{ not json')
+  expect(await labels(ui)).toContain('Save settings')                                   // still there to fix and try again
+})
 
 test('desktop: Hide resolved/closed shows all the rest, and says so when nothing is left', async ($: any, on: any) => {
   const w = world(on)

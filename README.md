@@ -82,8 +82,14 @@ A pane in the Claude Desktop app for triaging bugs and issues; the **Bugs** butt
 It costs no tokens to use: PowerShell scripts (`scripts/bugs/*.ps1`) do the ADO and git work, and the pane
 reads the files they write. Only **Find probable cause** calls a model, once, with a short prompt.
 
-- **⚙ Config**, beside Sync, opens the workspace's `.claude/sdd.json` in the app the computer uses for it:
-  the categories and the other `bugs` settings are in it.
+- **⚙ Config**, beside Sync, opens the settings panel, so nobody has to dig around in the JSON files. Its sections
+  are the dev team and its area paths (`.claude/developers.json`), what Sync pulls, the categories (name, icon,
+  colour, rules, alternatives, order), the state, severity and priority pickers, the probable-cause model, and your
+  e-mail and PowerShell. Edits wait in a draft; **Save settings** writes the `bugs` part of `.claude/sdd.json` and
+  `developers.json`, only the settings you changed, and leaves every other key and the rest of both files as they
+  were. **Revert** drops the draft; a section's reset puts the plugin's own values back. A bad value (a rule with no
+  values, a missing id) blocks Save and says which. A change to what Sync pulls shows after the next Sync. A file
+  that is not valid JSON is never overwritten. **Open sdd.json** and **Open developers.json** are still there.
 - **Sync from ADO** (`Sync-Bugs.ps1`) pulls the bugs and issues of your ADO projects into the spec folder:
   `<specRoot>/.bugs/index.json` (the list), `items/<id>.json` (repro steps, description, comments).
 - **Categories** sort the list: quick wins, high severity, in progress, ready for deployment, and one per

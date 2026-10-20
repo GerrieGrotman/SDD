@@ -144,7 +144,9 @@ Self-check: `python ${CLAUDE_PLUGIN_ROOT}/hooks/test_question_guard.py`.
 
 `"bugs"` in `.claude/sdd.json` over `scripts/bugs/defaults.json` (an object one level down is merged key
 by key; a list, such as `categories`, replaces the default whole). `folder` and `categories` are
-written into the file at the next session after a plugin update, so they are there to tune.
+written into the file at the next session after a plugin update, so they are there to tune. The **⚙ Config**
+panel of the bug manager edits all of these (and the dev team file) and writes only the keys that differ from the
+defaults, so nobody has to open the files.
 
 | Key | What |
 | --- | --- |
